@@ -1,0 +1,19 @@
+# T0-5 悬浮窗可见性时间线日志（原始 logcat 证据）
+# 设备: vivo V2463A / Android 16 (API 36) / 1440x3168
+# 抓取: adb logcat -d -s MM-Foreground MM-Floating
+# 时间: 2026-09-11 20:31-20:38（含安装重装后服务重连、A4 切后台/回前台全链条）
+--------- beginning of main
+09-11 20:31:01.304 17455 17455 I MM-Foreground: 前台状态变化: NOT_FOREGROUND -> FOREGROUND（来源: 窗口事件）
+09-11 20:31:01.472 17455 17455 I MM-Floating: 悬浮窗已挂载
+09-11 20:31:03.449 17455 17455 I MM-Floating: 悬浮窗已移除
+09-11 20:31:03.450 17455 17455 I MM-Foreground: 前台状态变化: FOREGROUND -> NOT_FOREGROUND（来源: 重置（服务已断开））
+09-11 20:31:04.480 17455 17455 I MM-Foreground: 前台状态变化: NOT_FOREGROUND -> FOREGROUND（来源: 服务已连接）
+09-11 20:31:04.492 17455 17455 I MM-Floating: 悬浮窗已挂载
+09-11 20:32:44.774 17455 17455 I MM-Foreground: 前台状态变化: FOREGROUND -> NOT_FOREGROUND（来源: 窗口事件）
+09-11 20:32:44.777 17455 17455 I MM-Floating: 悬浮窗已移除
+09-11 20:34:22.058 21543 21543 I MM-Foreground: 前台状态变化: NOT_FOREGROUND -> FOREGROUND（来源: 窗口事件）
+09-11 20:34:22.151 21543 21543 I MM-Floating: 悬浮窗已挂载
+09-11 20:37:14.274 21543 21543 I MM-Foreground: 前台状态变化: FOREGROUND -> NOT_FOREGROUND（来源: 窗口事件）
+09-11 20:37:14.276 21543 21543 I MM-Floating: 悬浮窗已移除
+09-11 20:37:56.424 21543 21543 I MM-Foreground: 前台状态变化: NOT_FOREGROUND -> FOREGROUND（来源: 窗口事件）
+09-11 20:37:56.436 21543 21543 I MM-Floating: 悬浮窗已挂载

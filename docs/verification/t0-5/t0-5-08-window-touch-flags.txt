@@ -1,0 +1,32 @@
+# T0-5 悬浮窗触摸属性与几何证据（dumpsys window 原始摘录）
+# 设备: vivo V2463A / Android 16 (API 36) / 1440x3168
+# 抓取: adb shell dumpsys window（提取 com.example.mastermechanic 悬浮窗段）
+# 时间: 2026-09-11 20:40 前后（游戏前台、悬浮窗已挂载）
+# 要点: type=2032（TYPE_ACCESSIBILITY_OVERLAY）；fl=NOT_FOCUSABLE NOT_TOUCHABLE
+#       —— 系统不向该窗口分发焦点与触摸（触摸穿透的系统级机制，A5 佐证）；
+#       Requested w=176 h=105；SurfPosition=(2944,480)（横屏物理坐标 —— 右上角 12dp/120dp 停靠）
+  Window #0 Window{com.example.mastermechanic:3708dcd u0 com.example.mastermechanic type=2032 }:
+    mDisplayId=0 mSession=Session{f1f4a9a 21543:u0a10452} mClient=android.os.BinderProxy@92fc764
+    mOwnerUid=10452 showForAllUsers=false package=com.example.mastermechanic appop=CREATE_ACCESSIBILITY_OVERLAY
+    mAttrs={(48,480)(wrapxwrap) gr=TOP END CENTER sim={adjust=pan} ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+      fl=NOT_FOCUSABLE NOT_TOUCHABLE HARDWARE_ACCELERATED
+      pfl=INSET_PARENT_FRAME_BY_IME
+      bhv=DEFAULT
+      fitTypes=STATUS_BARS NAVIGATION_BARS CAPTION_BAR
+      frameRateBoostOnTouch=true
+      dvrrWindowFrameRateHint=true vivoFlags:0x0 homeIndicatorState=-1 keepFullScreen=0 internalFlag=0x0 decorFitsSystemWindows=true forcedNavigationBarColor=false navigationBarColor=0 showChinBar=false showSpaceRatio=-1.0 relativeLayeringToIme=true aiImeLayeringToIme=false}
+    Requested w=176 h=105 mLayoutSeq=994044
+    mHasSurface=true isReadyForDisplay()=true mWindowRemovalAllowed=false
+    WindowStateAnimator{55db8a1 }:
+      Surface: shown=true    isOnScreen=true
+    isVisible=true
+    keepClearAreas: restricted=[], unrestricted=[]
+    mPrepareSyncSeqId=0
+    SurfPosition=Point(2944, 480)
+  Window #1 Window{li.songe.gkd:40760a2 u0 li.songe.gkd type=2032 }:
+    mDisplayId=0 mSession=Session{6ca05c0 9221:u0a10362} mClient=android.os.BinderProxy@a277c6d
+    mOwnerUid=10362 showForAllUsers=false package=li.songe.gkd appop=CREATE_ACCESSIBILITY_OVERLAY
+    mAttrs={(0,0)(1x1) gr=TOP START CENTER sim={adjust=pan} ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+      fl=NOT_FOCUSABLE NOT_TOUCHABLE HARDWARE_ACCELERATED
+      pfl=INSET_PARENT_FRAME_BY_IME
+      bhv=DEFAULT
