@@ -1,0 +1,25 @@
+# T0-3 前台判定时序日志（原始 logcat 证据）
+# 设备: vivo V2463A / Android 16 (API 36) / 1440x3168
+# 抓取: adb logcat -d -s MM-Foreground:I MM-Marker:I
+# 时间: 2026-09-11 20:05-20:10
+
+--------- beginning of main
+09-11 20:05:28.378 24551 24551 I MM-Foreground: 前台状态变化: NOT_FOREGROUND -> FOREGROUND（来源: 窗口事件）
+09-11 20:05:55.667 26404 26404 I MM-Marker: 步骤A-发出: 按HOME切后台
+09-11 20:05:56.010 24551 24551 I MM-Foreground: 前台状态变化: FOREGROUND -> NOT_FOREGROUND（来源: 窗口事件）
+09-11 20:05:58.871 26513 26513 I MM-Marker: 步骤B-发出: am start 回游戏
+09-11 20:06:05.765 24551 24551 I MM-Foreground: 前台状态变化: NOT_FOREGROUND -> FOREGROUND（来源: 窗口事件）
+09-11 20:06:21.865 27054 27054 I MM-Marker: 步骤B2a-发出: 热态切到ChatGPT
+09-11 20:06:22.313 24551 24551 I MM-Foreground: 前台状态变化: FOREGROUND -> NOT_FOREGROUND（来源: 窗口事件）
+09-11 20:06:26.077 27222 27222 I MM-Marker: 步骤B2b-发出: 热态切回游戏
+09-11 20:06:27.692 24551 24551 I MM-Foreground: 前台状态变化: NOT_FOREGROUND -> FOREGROUND（来源: 窗口事件）
+09-11 20:06:38.637 24551 24551 I MM-Foreground: 前台状态变化: FOREGROUND -> NOT_FOREGROUND（来源: 窗口事件）
+09-11 20:06:50.369 28283 28283 I MM-Marker: 步骤E-发出: 尝试解除锁屏
+09-11 20:06:55.472 24551 24551 I MM-Foreground: 前台状态变化: NOT_FOREGROUND -> FOREGROUND（来源: 窗口事件）
+09-11 20:07:11.759 28935 28935 I MM-Marker: 步骤G-发出: 熄屏键
+09-11 20:07:12.731 24551 24551 I MM-Foreground: 前台状态变化: FOREGROUND -> NOT_FOREGROUND（来源: 窗口事件）
+09-11 20:07:14.979 29076 29076 I MM-Marker: 步骤H-发出: 亮屏并上滑解锁
+09-11 20:07:24.865 29399 29399 I MM-Marker: 步骤H2-发出: 再次上滑解锁
+09-11 20:07:30.158 24551 24551 I MM-Foreground: 前台状态变化: NOT_FOREGROUND -> FOREGROUND（来源: 窗口事件）
+09-11 20:08:06.397 24551 24551 I MM-Foreground: 前台状态变化: FOREGROUND -> NOT_FOREGROUND（来源: 窗口事件）
+09-11 20:09:54.675 32231 32231 I MM-Marker: 步骤I-发出: 切回游戏验证服务重连
