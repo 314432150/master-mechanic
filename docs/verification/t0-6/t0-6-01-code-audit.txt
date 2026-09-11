@@ -1,0 +1,31 @@
+# T0-6（验收 A6）零点击审计 —— 代码静态审计报告
+# 项目：MasterMechanic ｜ 分支 stage/m0 ｜ 审计基点：commit 7341c5b（T0-5 完成后）
+# 审计范围：app/src 全部源码与资源、AndroidManifest.xml、Gradle 依赖清单
+# 方法：对全部 *.kt 全文正则检索注入类 API 与进程执行 API，核对命中项
+# 结论：M0 代码不含任何点击 / 手势 / 按键注入路径；唯一命中为 androidTest 模板文件的标准测试 API（不进入发布 APK）
+
+## 审计命令与结果
+
+[1] dispatchGesture|GestureDescription|performAction|performGlobalAction|injectInputEvent|sendKeyEvent|Instrumentation|MotionEvent
+    命中 2 处，均在 app/src/androidTest/.../ExampleInstrumentedTest.kt：
+      - import androidx.test.platform.app.InstrumentationRegistry
+      - InstrumentationRegistry.getInstrumentation().targetContext
+    性质澄清：Android Studio 模板自带插桩测试（共 24 行，仅 useAppContext 一个测试方法，断言包名）；
+    属测试代码且不打包进发布 APK，文件内无任何注入调用。
+    主源码（app/src/main）与单元测试（app/src/test）：0 命中。
+
+[2] ProcessBuilder|Runtime\.getRuntime|exec\(|/system/bin|instrumentation|dispatchGenericMotionEvent
+    0 命中（无子进程执行、无 shell 调用）。
+
+[3] KEYCODE|keyevent|input tap|performClick|callOnClick|setOnClickListener|gesture|stroke
+    0 命中（无按键注入、无点击模拟、无手势构造）。
+
+## 支撑项核对
+
+- 业务日志点全量：Log.i/w( 调用共 5 处（FloatingWindow.kt 4 处：挂载 / 移除及其失败分支；
+  ForegroundSignal.kt 1 处：状态变化）——全部为状态类，无点击类。
+- AndroidManifest 权限仅 3 项：POST_NOTIFICATIONS、FOREGROUND_SERVICE、FOREGROUND_SERVICE_SPECIAL_USE；
+  无输入注入相关权限（INJECT_EVENTS 无法为非系统应用获得）。
+- 服务配置：accessibility_service_config.xml 声明 canPerformGestures="true"（ADR-002 赋予的能力声明，
+  M1+ 手势的既定通道）；M0 代码对该能力零调用。
+- 依赖清单（app/build.gradle.kts）：仅 AndroidX / Compose 标准库，无任何第三方自动化 / 注入类库。

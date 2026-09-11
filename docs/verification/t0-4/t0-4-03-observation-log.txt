@@ -1,0 +1,40 @@
+T0-4 常驻服务观察记录（A3）
+========================================
+设备 / 系统：vivo V2463A / Android 16（API 36）
+观察日期：2026-09-11（设备时间，CST）
+观察对象：ResidentService —— 前台服务（specialUse 类型），常驻通知「MasterMechanic 守护运行中」
+观察方式：应用界面操作启动后，以 adb shell dumpsys activity services com.example.mastermechanic
+          关键行摘录核对服务存活；dumpsys power 确认屏幕状态（软件注入，非人工目测）。
+
+时间线（相对间隔 + 关键时间锚点）
+----------------------------------------
+[~20:19:5x] 应用界面点击「启动守护」→ +2s 检查：
+    * ServiceRecord{... com.example.mastermechanic/.service.ResidentService}
+      isForeground=true foregroundId=1 types=0x40000000
+      foregroundNoti=Notification(channel=resident flags=ONGOING_EVENT|FOREGROUND_SERVICE category=service)
+      createdFromFg=true startRequested=true
+[20:20]     界面「运行状态」显示「运行中」（截图 t0-4-02-ui-running.png）；
+            通知中心可见「MasterMechanic 守护运行中 / 常驻后台；点击打开应用 / 现在」
+            （截图 t0-4-01-notification-panel.png）
+[+20s]      按 HOME 切后台
+[+30s]      切后台检查：isForeground=true startRequested=true（存活）
+[+120s]     切后台检查：isForeground=true startRequested=true（存活；通知 flags 增补 NO_CLEAR）
+[+10s]      按 POWER 熄屏 → 检查：mWakefulness=Asleep（熄屏确认）
+[+30s]      熄屏检查：isForeground=true startRequested=true（存活）
+[+120s]     熄屏检查：isForeground=true startRequested=true（存活）
+[20:25:3x]  亮屏 → mWakefulness=Awake；检查：isForeground=true startRequested=true（存活）
+[20:25:52]  最终检查（设备时间核对）：isForeground=true（服务持续运行）
+
+结论
+----------------------------------------
+1. 切后台 2 分钟、熄屏 2 分钟观察期内，前台服务实例持续存在（isForeground=true），
+   系统未中止；常驻通知始终在列（NO_CLEAR 标记出现，不可被随手划掉）。
+2. 界面「运行状态」与系统通知一致呈现「运行中」，无静默失败（FR-08 提示语义）。
+
+补充说明
+----------------------------------------
+- 启动路径由真机界面点击触发；服务类型 specialUse（types=0x40000000）在 Android 16 上生效。
+- 锁屏期间（vivo 双指上滑锁屏，adb 无法模拟解锁手势）服务同样保持运行，属额外存活佐证。
+- 「停止」按钮路径（context.stopService）本次未能在真机复核：设备锁屏无法操作 UI，
+  且 vivo ROM 拒绝 shell 侧 am stop-service（Error stopping service）；留待后续真机复核。
+- 观察结束后服务保持运行状态（设备上守护处于开启状态）。
