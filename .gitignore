@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# 会话级临时工作目录（真机采集 / 调试中间产物，不入库）
+_tmp_check/
