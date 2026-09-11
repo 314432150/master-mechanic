@@ -35,6 +35,9 @@
     <string name="resident_channel_desc">常驻展示后台守护是否在运行，便于随时确认程序未被中止</string>
     <string name="resident_notification_title">MasterMechanic 守护运行中</string>
     <string name="resident_notification_text">常驻后台；点击打开应用</string>
+
+    <!-- 悬浮窗壳（M0-T0-5） -->
+    <string name="floating_handle_text">待命</string>
     <string name="accessibility_service_label">MasterMechanic</string>
     <string name="accessibility_service_description">用于代替手动重复操作：点击由本服务执行，不会读取或修改游戏数据。</string>
 </resources>
