@@ -10,7 +10,8 @@
     <string name="auth_capture_label">屏幕采集</string>
     <string name="auth_capture_desc">用于识别游戏画面；授权弹窗可选择共享范围时，请选择《王者荣耀》；系统要求每次采集会话都需重新授权</string>
     <string name="auth_capture_action">授予采集权限</string>
-    <string name="auth_capture_status_granted">本会话已授权</string>
+    <string name="auth_capture_action_stop">停止采集</string>
+    <string name="auth_capture_status_granted">采集中</string>
     <string name="auth_capture_status_missing">未授权</string>
     <string name="auth_notifications_label">通知</string>
     <string name="auth_notifications_desc">用于展示常驻运行状态，避免「什么都不发生」的静默失败</string>
@@ -35,6 +36,12 @@
     <string name="resident_channel_desc">常驻展示后台守护是否在运行，便于随时确认程序未被中止</string>
     <string name="resident_notification_title">MasterMechanic 守护运行中</string>
     <string name="resident_notification_text">常驻后台；点击打开应用</string>
+
+    <!-- 采集会话（M1-T1-2） -->
+    <string name="capture_channel_name">屏幕采集</string>
+    <string name="capture_channel_desc">采集会话期间常驻展示，便于随时确认与停止</string>
+    <string name="capture_notification_title">屏幕采集中</string>
+    <string name="capture_notification_text">用于识别游戏画面；点击打开应用</string>
 
     <!-- 悬浮窗壳（M0-T0-5） -->
     <string name="floating_handle_text">待命</string>

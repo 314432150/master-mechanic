@@ -27,11 +27,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +48,9 @@ import com.example.mastermechanic.auth.AuthStatus
 import com.example.mastermechanic.auth.AuthorizationChecks
 import com.example.mastermechanic.auth.AuthorizationSummary
 import com.example.mastermechanic.auth.CaptureSessionState
+import com.example.mastermechanic.capture.CaptureSessionSignal
+import com.example.mastermechanic.capture.CaptureSessionStatus
+import com.example.mastermechanic.service.CaptureService
 import com.example.mastermechanic.service.ResidentService
 import com.example.mastermechanic.ui.theme.MasterMechanicTheme
 import kotlinx.coroutines.delay
@@ -60,40 +63,55 @@ import kotlinx.coroutines.delay
 @Composable
 fun AuthorizationRoute(resumeTick: Int) {
     val context = LocalContext.current
-    var captureSession by rememberSaveable { mutableStateOf(CaptureSessionState.NOT_GRANTED) }
+    var captureActive by remember { mutableStateOf(CaptureSessionSignal.isActive) }
     var refreshTick by remember { mutableStateOf(0) }
     var residentRunning by remember { mutableStateOf(false) }
     var notificationsEnabled by remember { mutableStateOf(true) }
     var reconcileTick by remember { mutableStateOf(0) }
 
-    val statuses = remember(resumeTick, captureSession, refreshTick) {
-        AuthorizationChecks.collect(context, captureSession)
+    val statuses = remember(resumeTick, captureActive, refreshTick) {
+        AuthorizationChecks.collect(
+            context,
+            if (captureActive) CaptureSessionState.GRANTED else CaptureSessionState.NOT_GRANTED,
+        )
     }
 
-    fun refreshResident() {
+    fun refreshRuntime() {
         residentRunning = ResidentService.isRunning(context)
         notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+        captureActive = CaptureSessionSignal.isActive
+    }
+
+    // 采集会话状态以真实信号为准（T1-2）：会话建立 / 终止（含系统侧）均实时反映到界面
+    DisposableEffect(Unit) {
+        val listener: (CaptureSessionStatus) -> Unit = {
+            captureActive = it == CaptureSessionStatus.ACTIVE
+        }
+        CaptureSessionSignal.addListener(listener)
+        onDispose { CaptureSessionSignal.removeListener(listener) }
     }
 
     // 进入 / 回到前台时刷新运行状态（含从系统设置页返回）
-    LaunchedEffect(resumeTick) { refreshResident() }
+    LaunchedEffect(resumeTick) { refreshRuntime() }
 
     // 启动 / 停止后乐观更新，再延迟校正一次（服务启停为异步操作）
     LaunchedEffect(reconcileTick) {
         if (reconcileTick > 0) {
             delay(400)
-            refreshResident()
+            refreshRuntime()
         }
     }
 
     val captureLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            captureSession = CaptureSessionState.GRANTED
-            // 授权凭证不落盘、不复用（ADR-001）；真实采集会话随采集层任务接入（M0 只做状态展示）
+        val data = result.data
+        if (result.resultCode == Activity.RESULT_OK && data != null) {
+            // 授权凭证不落盘、不复用（ADR-001）；授权通过即建立真实采集会话（T1-2）
+            CaptureService.start(context, result.resultCode, data)
         }
         refreshTick++
+        reconcileTick++
     }
 
     val notificationLauncher = rememberLauncherForActivityResult(
@@ -130,6 +148,10 @@ fun AuthorizationRoute(resumeTick: Int) {
             residentRunning = false // 乐观更新，400ms 后由 reconcileTick 校正
             reconcileTick++
         },
+        onStopCapture = {
+            context.stopService(Intent(context, CaptureService::class.java))
+            reconcileTick++ // 服务停止后本页状态延迟校正
+        },
     )
 }
 
@@ -143,6 +165,7 @@ fun AuthorizationScreen(
     onRequestNotifications: () -> Unit,
     onStartResident: () -> Unit,
     onStopResident: () -> Unit,
+    onStopCapture: () -> Unit,
 ) {
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -170,6 +193,17 @@ fun AuthorizationScreen(
                         AuthItem.SCREEN_CAPTURE -> onRequestCapture
                         AuthItem.NOTIFICATIONS -> onRequestNotifications
                     },
+                    trailing = if (
+                        status.item == AuthItem.SCREEN_CAPTURE && status.state == AuthState.GRANTED
+                    ) {
+                        {
+                            OutlinedButton(onClick = onStopCapture) {
+                                Text(text = stringResource(R.string.auth_capture_action_stop))
+                            }
+                        }
+                    } else {
+                        null
+                    },
                 )
             }
             SummaryText(statuses = statuses)
@@ -184,7 +218,11 @@ fun AuthorizationScreen(
 }
 
 @Composable
-private fun AuthorizationCard(status: AuthStatus, onAction: () -> Unit) {
+private fun AuthorizationCard(
+    status: AuthStatus,
+    onAction: () -> Unit,
+    trailing: (@Composable () -> Unit)? = null,
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -219,6 +257,10 @@ private fun AuthorizationCard(status: AuthStatus, onAction: () -> Unit) {
                 Button(onClick = onAction) {
                     Text(text = stringResource(itemActionText(status.item)))
                 }
+            }
+            if (trailing != null) {
+                Spacer(modifier = Modifier.height(2.dp))
+                trailing()
             }
         }
     }
@@ -359,6 +401,7 @@ private fun AuthorizationScreenPreview() {
             onRequestNotifications = {},
             onStartResident = {},
             onStopResident = {},
+            onStopCapture = {},
         )
     }
 }
