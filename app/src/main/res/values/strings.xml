@@ -8,7 +8,7 @@
     <string name="auth_accessibility_desc">用于点击注入、悬浮窗与前台判定，是核心授权</string>
     <string name="auth_accessibility_action">去开启</string>
     <string name="auth_capture_label">屏幕采集</string>
-    <string name="auth_capture_desc">用于识别游戏画面；系统要求每次采集会话都需重新授权</string>
+    <string name="auth_capture_desc">用于识别游戏画面；授权弹窗可选择共享范围时，请选择《王者荣耀》；系统要求每次采集会话都需重新授权</string>
     <string name="auth_capture_action">授予采集权限</string>
     <string name="auth_capture_status_granted">本会话已授权</string>
     <string name="auth_capture_status_missing">未授权</string>
