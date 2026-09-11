@@ -16,7 +16,7 @@
 
 ## 下一步
 
-1. M1 里程碑计划编制与启动（识别闭环，见 `plans/`）
+1. M1-T1-1：落地 ADR-003（识别技术路线，见 `plans/m1-recognition.md`）
 2. 并行推进 R-1、R-2 研究任务的样本收集
 
 ## 阻塞与待确认
@@ -39,3 +39,4 @@
 - 完成 T0-4 服务壳：常驻前台服务（`ResidentService`，specialUse 类型）+ 常驻通知 + 界面「运行状态」卡片（启动 / 停止 + 通知不可见警示）；真机观察（vivo V2463A）切后台 / 熄屏各 2 分钟服务保持存活、通知常驻可见，证据见 `verification/t0-4/`；范围界定：真实采集会话（mediaProjection 类型服务 + 虚拟显示）顺延至采集层任务，详见任务卡备注。
 - 完成 T0-5 悬浮窗壳：无障碍悬浮窗收起态手柄（`TYPE_ACCESSIBILITY_OVERLAY`，整窗不可触摸 / 不可聚焦恒穿透，右上角停靠），可见性由前台信号驱动——前台挂载、非前台整窗移除、回前台收起态重建；`:app:test` 回归通过、`:app:assembleDebug` 通过；真机核对（vivo V2463A + 王者荣耀）：三态可见性截图 + 覆盖区点击穿透对比（游戏静音图标状态切换）+ 窗口 NOT_TOUCHABLE 属性与几何证据，证据见 `verification/t0-5/`。
 - 完成 T0-6（验收 A6）零点击审计：①代码静态审计——全库 `*.kt` 检索注入类 API（dispatchGesture / performAction / MotionEvent / KEYCODE / shell 执行等）零调用（唯一命中为 androidTest 模板测试的标准 API，不进入发布 APK）；②真机运行采样（守护场景静置 + 前后台切换）——应用进程全量日志仅「前台状态变化」与「悬浮窗挂载 / 移除」两类，无注入动作记录；起止截图确认游戏始终停留登录页未被推进。M0 六项验收 A1–A6 全部通过，DoD 达成，计划文件状态置「已完成」。证据见 `verification/t0-6/`。
+- 里程碑流转：M0 经 PR #1 合入 `main`（merge commit d3c5c53），自 `main` 新建 `stage/m1`；建立 M1 计划 `plans/m1-recognition.md`（识别闭环：采集会话 / 识别引擎 / 状态机 / 标定 / 回放与指标 / 演练模式；验收清单 A1–A9；任务卡 T1-1 ~ T1-7，其中 T1-1 = 落地 ADR-003 识别技术路线，先行）。
