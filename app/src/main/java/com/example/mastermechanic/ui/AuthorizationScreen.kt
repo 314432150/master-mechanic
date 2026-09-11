@@ -23,9 +23,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +39,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.example.mastermechanic.R
 import com.example.mastermechanic.auth.AuthItem
 import com.example.mastermechanic.auth.AuthState
@@ -44,7 +48,9 @@ import com.example.mastermechanic.auth.AuthStatus
 import com.example.mastermechanic.auth.AuthorizationChecks
 import com.example.mastermechanic.auth.AuthorizationSummary
 import com.example.mastermechanic.auth.CaptureSessionState
+import com.example.mastermechanic.service.ResidentService
 import com.example.mastermechanic.ui.theme.MasterMechanicTheme
+import kotlinx.coroutines.delay
 
 /**
  * 授权流入口（M0-T0-2）：展示各关键授权状态，并提供一键前往授予。
@@ -56,9 +62,28 @@ fun AuthorizationRoute(resumeTick: Int) {
     val context = LocalContext.current
     var captureSession by rememberSaveable { mutableStateOf(CaptureSessionState.NOT_GRANTED) }
     var refreshTick by remember { mutableStateOf(0) }
+    var residentRunning by remember { mutableStateOf(false) }
+    var notificationsEnabled by remember { mutableStateOf(true) }
+    var reconcileTick by remember { mutableStateOf(0) }
 
     val statuses = remember(resumeTick, captureSession, refreshTick) {
         AuthorizationChecks.collect(context, captureSession)
+    }
+
+    fun refreshResident() {
+        residentRunning = ResidentService.isRunning(context)
+        notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+    }
+
+    // 进入 / 回到前台时刷新运行状态（含从系统设置页返回）
+    LaunchedEffect(resumeTick) { refreshResident() }
+
+    // 启动 / 停止后乐观更新，再延迟校正一次（服务启停为异步操作）
+    LaunchedEffect(reconcileTick) {
+        if (reconcileTick > 0) {
+            delay(400)
+            refreshResident()
+        }
     }
 
     val captureLauncher = rememberLauncherForActivityResult(
@@ -66,7 +91,7 @@ fun AuthorizationRoute(resumeTick: Int) {
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             captureSession = CaptureSessionState.GRANTED
-            // 授权凭证不落盘、不复用（ADR-001）；采集会话的创建与维持由 T0-4 服务壳接入
+            // 授权凭证不落盘、不复用（ADR-001）；真实采集会话随采集层任务接入（M0 只做状态展示）
         }
         refreshTick++
     }
@@ -77,6 +102,8 @@ fun AuthorizationRoute(resumeTick: Int) {
 
     AuthorizationScreen(
         statuses = statuses,
+        residentRunning = residentRunning,
+        notificationsEnabled = notificationsEnabled,
         onOpenAccessibilitySettings = {
             context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         },
@@ -90,15 +117,32 @@ fun AuthorizationRoute(resumeTick: Int) {
                 notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         },
+        onStartResident = {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, ResidentService::class.java),
+            )
+            residentRunning = true // 乐观更新，400ms 后由 reconcileTick 校正
+            reconcileTick++
+        },
+        onStopResident = {
+            context.stopService(Intent(context, ResidentService::class.java))
+            residentRunning = false // 乐观更新，400ms 后由 reconcileTick 校正
+            reconcileTick++
+        },
     )
 }
 
 @Composable
 fun AuthorizationScreen(
     statuses: List<AuthStatus>,
+    residentRunning: Boolean,
+    notificationsEnabled: Boolean,
     onOpenAccessibilitySettings: () -> Unit,
     onRequestCapture: () -> Unit,
     onRequestNotifications: () -> Unit,
+    onStartResident: () -> Unit,
+    onStopResident: () -> Unit,
 ) {
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -129,6 +173,12 @@ fun AuthorizationScreen(
                 )
             }
             SummaryText(statuses = statuses)
+            ResidentCard(
+                running = residentRunning,
+                notificationsEnabled = notificationsEnabled,
+                onStart = onStartResident,
+                onStop = onStopResident,
+            )
         }
     }
 }
@@ -168,6 +218,65 @@ private fun AuthorizationCard(status: AuthStatus, onAction: () -> Unit) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Button(onClick = onAction) {
                     Text(text = stringResource(itemActionText(status.item)))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ResidentCard(
+    running: Boolean,
+    notificationsEnabled: Boolean,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.resident_label),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = stringResource(
+                        if (running) R.string.resident_status_running else R.string.resident_status_stopped
+                    ),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (running) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+            Text(
+                text = stringResource(R.string.resident_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (running && !notificationsEnabled) {
+                Text(
+                    text = stringResource(R.string.resident_notify_warning),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+            if (running) {
+                OutlinedButton(onClick = onStop) {
+                    Text(text = stringResource(R.string.resident_action_stop))
+                }
+            } else {
+                Button(onClick = onStart) {
+                    Text(text = stringResource(R.string.resident_action_start))
                 }
             }
         }
@@ -243,9 +352,13 @@ private fun AuthorizationScreenPreview() {
                 AuthStatus(AuthItem.SCREEN_CAPTURE, AuthState.MISSING),
                 AuthStatus(AuthItem.NOTIFICATIONS, AuthState.MISSING),
             ),
+            residentRunning = false,
+            notificationsEnabled = true,
             onOpenAccessibilitySettings = {},
             onRequestCapture = {},
             onRequestNotifications = {},
+            onStartResident = {},
+            onStopResident = {},
         )
     }
 }

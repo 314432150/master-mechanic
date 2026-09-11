@@ -22,6 +22,19 @@
     <string name="auth_status_not_applicable">无需授权（Android 13 以下）</string>
     <string name="auth_summary_ready">全部就绪</string>
     <string name="auth_summary_missing">还缺：%1$s</string>
+
+    <!-- 常驻服务（M0-T0-4） -->
+    <string name="resident_label">运行状态</string>
+    <string name="resident_status_running">运行中</string>
+    <string name="resident_status_stopped">未运行</string>
+    <string name="resident_desc">常驻后台运行；切后台或熄屏时不会中断，运行与否以本状态与系统通知为准。</string>
+    <string name="resident_notify_warning">通知不可见：通知权限未开启，运行状态将仅在本页可见。</string>
+    <string name="resident_action_start">启动守护</string>
+    <string name="resident_action_stop">停止</string>
+    <string name="resident_channel_name">运行状态</string>
+    <string name="resident_channel_desc">常驻展示后台守护是否在运行，便于随时确认程序未被中止</string>
+    <string name="resident_notification_title">MasterMechanic 守护运行中</string>
+    <string name="resident_notification_text">常驻后台；点击打开应用</string>
     <string name="accessibility_service_label">MasterMechanic</string>
     <string name="accessibility_service_description">用于代替手动重复操作：点击由本服务执行，不会读取或修改游戏数据。</string>
 </resources>
