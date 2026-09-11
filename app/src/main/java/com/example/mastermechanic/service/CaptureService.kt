@@ -12,6 +12,7 @@ import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -29,6 +30,9 @@ import com.example.mastermechanic.R
 import com.example.mastermechanic.capture.CaptureSessionSignal
 import com.example.mastermechanic.capture.CaptureSessionStatus
 import com.example.mastermechanic.capture.FrameThrottle
+import com.example.mastermechanic.capture.RgbaToGray
+import com.example.mastermechanic.decision.RecognitionLoop
+import com.example.mastermechanic.foreground.ForegroundSignal
 
 /**
  * 采集会话服务（T1-2，ADR-001）：以 mediaProjection 类型前台服务承载一次采集会话。
@@ -37,7 +41,8 @@ import com.example.mastermechanic.capture.FrameThrottle
  * - Android 14+ 顺序要求：先 startForeground（mediaProjection 类型）再创建会话；
  * - 会话终止两条路径（系统侧回收 / 应用主动停止）均汇聚到 [CaptureSessionSignal]，
  *   输出带来源的终态日志（验收 A1 证据本体）；「用户切到别的应用」不触发终止（FR-09）；
- * - 帧管线：ImageReader 取帧 → [FrameThrottle] 节流 → 处理点（识别循环于 T1-4 接入），
+ * - 帧管线（T1-4 起）：ImageReader 取帧 → [FrameThrottle] 节流（NFR-02 两档自适应）→
+ *   帧转换 → [RecognitionLoop]（检测 / 映射 / 滞回）→ 状态变化日志；
  *   每 10s 输出一条存活统计；全程零点击（红线 1/2）。
  *
  * 分辨率 / 密度运行时从系统读取（ADR-001 第 4 条：零设备常量）。
@@ -48,7 +53,10 @@ class CaptureService : Service() {
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private var frameThread: HandlerThread? = null
-    private var frameThrottle = FrameThrottle(FRAME_THROTTLE_MS)
+    private var frameThrottle = FrameThrottle(ACTIVE_INTERVAL_MS)
+
+    /** 识别循环（T1-4 接入）：标定产物（T1-5）就绪前以空配置运行，仅验证链路与日志。仅帧线程访问。 */
+    private var recognitionLoop = RecognitionLoop.uncalibrated()
 
     /** 会话终止来源；null 表示会话仍存活。仅主线程访问。 */
     private var stopSource: String? = null
@@ -56,9 +64,13 @@ class CaptureService : Service() {
     // 帧管线统计（仅帧线程访问）
     private var framesReceived = 0L
     private var framesProcessed = 0L
+    private var cyclesRun = 0L
     private var lastStatsAt = 0L
     private var lastFrameWidth = 0
     private var lastFrameHeight = 0
+
+    /** 上轮是否冻结（null = 尚未处理过），用于冻结 / 恢复只记一次日志。仅帧线程访问。 */
+    private var lastLoopFrozen: Boolean? = null
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -145,9 +157,13 @@ class CaptureService : Service() {
             frameHandler,
         )
 
-        frameThrottle = FrameThrottle(FRAME_THROTTLE_MS)
+        // 会话（重）建立：重建节流与识别循环（滞回状态不跨会话连续）
+        frameThrottle = FrameThrottle(ACTIVE_INTERVAL_MS)
+        recognitionLoop = RecognitionLoop.uncalibrated()
         framesReceived = 0
         framesProcessed = 0
+        cyclesRun = 0
+        lastLoopFrozen = null
         lastStatsAt = SystemClock.elapsedRealtime()
         CaptureSessionSignal.update(CaptureSessionStatus.ACTIVE, SOURCE_USER_CREATED)
     }
@@ -171,9 +187,7 @@ class CaptureService : Service() {
     }
 
     /**
-     * 帧到达回调（帧线程）：取最新帧并释放旧帧，节流后交给处理点。
-     *
-     * 处理点当前仅记录帧元数据（管线存活证据）；T1-4 识别循环在此接入，帧数据不落盘。
+     * 帧到达回调（帧线程）：取最新帧并释放旧帧，节流后交给识别处理点（帧数据不落盘）。
      */
     private fun handleFrameAvailable() {
         val reader = imageReader ?: return
@@ -189,21 +203,70 @@ class CaptureService : Service() {
             framesProcessed++
             lastFrameWidth = image.width
             lastFrameHeight = image.height
+            processFrame(image)
         }
         image.close()
         maybeLogStats(now)
     }
 
+    /**
+     * 帧处理点（T1-4）：帧 → 灰度 → 识别循环 → 状态机；按 NFR-02 自适应调整节流间隔。
+     *
+     * 非前台轮由识别循环内部冻结（§1.2 不识别、FR-09 不消耗滞回计数）；
+     * 调用方保证本方法返回前 [image] 未被关闭（buffer 有效）。
+     */
+    private fun processFrame(image: Image) {
+        val gray = try {
+            val plane = image.planes[0]
+            val buffer = plane.buffer
+            buffer.rewind()
+            val bytes = ByteArray(buffer.remaining())
+            buffer.get(bytes)
+            RgbaToGray.toGray(bytes, image.width, image.height, plane.rowStride)
+        } catch (t: RuntimeException) {
+            // 预期外的帧布局 / 数据不足：跳过本轮（不进入滞回），记录备查（不静默失败）
+            Log.w(TAG, "帧转换失败，跳过本轮识别：${t.javaClass.simpleName} ${t.message}")
+            return
+        }
+
+        val result = recognitionLoop.process(gray, ForegroundSignal.isForeground)
+        cyclesRun++
+
+        if (result.frozen != lastLoopFrozen) {
+            lastLoopFrozen = result.frozen
+            Log.i(
+                TAG,
+                if (result.frozen) {
+                    "识别循环冻结：目标不在前台，本轮不消耗滞回计数（FR-09）"
+                } else {
+                    "识别循环恢复：目标回到前台"
+                },
+            )
+        }
+
+        // NFR-02 自适应两档：稳定轮用长间隔，其余（含刚发生状态变化）用短间隔
+        if (!result.frozen) {
+            frameThrottle.setInterval(if (result.stable) STABLE_INTERVAL_MS else ACTIVE_INTERVAL_MS)
+        }
+
+        result.transition?.let {
+            Log.i(TAG, "界面状态变化: ${it.from.label} -> ${it.to.label}（${it.reason}）")
+        }
+    }
+
     private fun maybeLogStats(now: Long) {
         if (now - lastStatsAt < STATS_WINDOW_MS) return
+        val signalNote = if (recognitionLoop.signalCount == 0) "，未标定（无判定）" else ""
         Log.i(
             TAG,
             "帧管线统计: 窗口 ${now - lastStatsAt}ms 接收 $framesReceived 帧 / 处理 $framesProcessed 帧；" +
-                "最近帧 ${lastFrameWidth}x$lastFrameHeight",
+                "识别 $cyclesRun 轮（信号 ${recognitionLoop.signalCount} 个$signalNote），" +
+                "当前界面状态「${recognitionLoop.state.label}」；最近帧 ${lastFrameWidth}x$lastFrameHeight",
         )
         lastStatsAt = now
         framesReceived = 0
         framesProcessed = 0
+        cyclesRun = 0
     }
 
     private fun startForegroundCompat() {
@@ -259,8 +322,9 @@ class CaptureService : Service() {
         private const val NOTIFICATION_ID = 2
         private const val VIRTUAL_DISPLAY_NAME = "MM-Capture"
 
-        /** T1-2 固定节流间隔：仅维持帧管线；NFR-02 自适应间隔随识别循环（T1-4）接入。 */
-        private const val FRAME_THROTTLE_MS = 1000L
+        /** NFR-02 自适应两档（需求区间 0.5~1s / 3~5s 的保守取值）：T1-4 起按稳定度切换。 */
+        private const val ACTIVE_INTERVAL_MS = 1000L
+        private const val STABLE_INTERVAL_MS = 3000L
         private const val STATS_WINDOW_MS = 10_000L
         private const val MAX_IMAGES = 2
 
