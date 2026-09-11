@@ -1,3 +1,27 @@
 <resources>
     <string name="app_name">MasterMechanic</string>
+
+    <!-- 授权流（M0-T0-2） -->
+    <string name="auth_title">授权状态</string>
+    <string name="auth_subtitle">以下授权全部就绪后程序才能正常工作；缺失项会明确提示，不会静默跳过。</string>
+    <string name="auth_accessibility_label">无障碍服务</string>
+    <string name="auth_accessibility_desc">用于点击注入、悬浮窗与前台判定，是核心授权</string>
+    <string name="auth_accessibility_action">去开启</string>
+    <string name="auth_capture_label">屏幕采集</string>
+    <string name="auth_capture_desc">用于识别游戏画面；系统要求每次采集会话都需重新授权</string>
+    <string name="auth_capture_action">授予采集权限</string>
+    <string name="auth_capture_status_granted">本会话已授权</string>
+    <string name="auth_capture_status_missing">未授权</string>
+    <string name="auth_notifications_label">通知</string>
+    <string name="auth_notifications_desc">用于展示常驻运行状态，避免「什么都不发生」的静默失败</string>
+    <string name="auth_notifications_action">允许通知</string>
+    <string name="auth_notifications_status_granted">已允许</string>
+    <string name="auth_notifications_status_missing">未允许</string>
+    <string name="auth_status_enabled">已开启</string>
+    <string name="auth_status_disabled">未开启</string>
+    <string name="auth_status_not_applicable">无需授权（Android 13 以下）</string>
+    <string name="auth_summary_ready">全部就绪</string>
+    <string name="auth_summary_missing">还缺：%1$s</string>
+    <string name="accessibility_service_label">MasterMechanic</string>
+    <string name="accessibility_service_description">用于代替手动重复操作：点击由本服务执行，不会读取或修改游戏数据。</string>
 </resources>

@@ -16,8 +16,9 @@
 
 ## 下一步
 
-1. T0-2：授权流（授权状态展示与一键前往授予，见 `plans/m0-skeleton.md`）
-2. 并行启动 R-1、R-2 研究任务的样本收集
+1. T0-2 真机核对：授权状态矩阵（全部已授 / 缺一项 / 全缺）截图，记入 `docs/verification/`
+2. T0-3：前台判定（见 `plans/m0-skeleton.md`）
+3. 并行启动 R-1、R-2 研究任务的样本收集
 
 ## 阻塞与待确认
 
@@ -32,3 +33,4 @@
 - 建立 `AGENTS.md` 与 `docs/` 文档体系骨架（本条目之后的所有变更按工作流记录）。
 - `requirements.md` 迁移入 `docs/requirements.md`，同步更新 `AGENTS.md` 与 `docs/README.md` 的引用。
 - 完成 T0-1：四条 ADR 状态为「接受」（[ADR-001](decisions/ADR-001-画面采集手段.md)、[ADR-002](decisions/ADR-002-输入注入途径.md)、[ADR-004](decisions/ADR-004-悬浮窗实现途径.md)、[ADR-005](decisions/ADR-005-前台判定途径.md)）；`architecture.md` 开放决策表已同步；ADR-002 确定「间隔 ≥300ms」唯一实现点为执行层点击转发器（口径：前次手势完成 → 下次手势开始不低于 300ms）。
+- 完成 T0-2 授权流代码：三项关键授权（无障碍 / 屏幕采集会话 / 通知（Android 13+））状态展示与一键授予引导；`:app:test` 通过（AuthorizationSummaryTest 4 例 + 模板 1 例）、`:app:assembleDebug` 通过；真机核对（授权矩阵截图）待执行。

@@ -4,44 +4,27 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.runtime.mutableIntStateOf
+import com.example.mastermechanic.ui.AuthorizationRoute
 import com.example.mastermechanic.ui.theme.MasterMechanicTheme
 
 class MainActivity : ComponentActivity() {
+
+    /** 每次回到前台自增：从系统设置页返回后需要刷新授权状态（M0-T0-2）。 */
+    private val resumeTick = mutableIntStateOf(0)
+
+    override fun onResume() {
+        super.onResume()
+        resumeTick.intValue++
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             MasterMechanicTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
-                    )
-                }
+                AuthorizationRoute(resumeTick = resumeTick.intValue)
             }
         }
-    }
-}
-
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    MasterMechanicTheme {
-        Greeting("Android")
     }
 }
