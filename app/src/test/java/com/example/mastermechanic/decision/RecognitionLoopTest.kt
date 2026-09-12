@@ -1,5 +1,6 @@
 package com.example.mastermechanic.decision
 
+import com.example.mastermechanic.capture.RgbaToGray
 import com.example.mastermechanic.recognition.GrayImage
 import com.example.mastermechanic.recognition.MatchParams
 import com.example.mastermechanic.recognition.SearchWindow
@@ -100,5 +101,71 @@ class RecognitionLoopTest {
             )
         }
         assertEquals(run(), run())
+    }
+
+    @Test
+    fun windowRegionsMapEverySignalWindow() {
+        // 多个信号窗口（不同比例）：窗口区域逐个映射为其像素范围（floor/ceil 口径）
+        val windowA = SearchWindow(0.25, 0.5, 0.5, 0.75)
+        val windowB = SearchWindow(0.1, 0.1, 0.9, 0.9)
+        val template = Template(4, 4, SyntheticImages.pattern(4, 4, seed = 82))
+        val loop = RecognitionLoop(
+            listOf(
+                SignalSpec("信号甲", windowA, listOf(template)),
+                SignalSpec("信号乙", windowB, listOf(template)),
+            ),
+            params,
+            SignalStateMapping(emptyList()),
+        )
+
+        val regions = loop.windowRegions(400, 300)
+        assertEquals(2, regions.size)
+        assertEquals(windowA.pixelBounds(400, 300), regions[0])
+        assertEquals(windowB.pixelBounds(400, 300), regions[1])
+    }
+
+    @Test
+    fun uncalibratedLoopHasNoWindowRegions() {
+        assertTrue(RecognitionLoop.uncalibrated().windowRegions(400, 300).isEmpty())
+    }
+
+    @Test
+    fun windowedGrayConversionKeepsDetectionIdentical() {
+        // T1-10b 端到端等价：同一帧，全帧灰度 vs 窗口化灰度（仅信号窗口区域）→ 判定逐字段一致。
+        // 窗口设为恰好装下模板（[30,50)×[40,56)）：覆盖模板贴满窗口的极限情况。
+        val width = 400
+        val height = 300
+        val image = SyntheticImages.background(width, height, seed = 91)
+        val pattern = SyntheticImages.pattern(20, 16, seed = 92)
+        SyntheticImages.drawPattern(image, 30, 40, 20, 16, pattern)
+        val template = SyntheticImages.crop(image, 30, 40, 20, 16)
+        val window = SearchWindow(30.0 / width, 40.0 / height, 50.0 / width, 56.0 / height)
+        val loop = RecognitionLoop(
+            listOf(SignalSpec("信号", window, listOf(template))),
+            params,
+            SignalStateMapping(emptyList()),
+        )
+
+        // 灰度 ByteArray → RGBA 字节流（R=G=B=gray，A=255；BT.601 往返为恒等）
+        val rgba = ByteArray(width * height * 4)
+        for (i in 0 until width * height) {
+            val v = image.pixels[i]
+            rgba[i * 4] = v
+            rgba[i * 4 + 1] = v
+            rgba[i * 4 + 2] = v
+            rgba[i * 4 + 3] = 0xFF.toByte()
+        }
+
+        val full = RgbaToGray.toGray(rgba, width, height, width * 4)
+        val windowed = RgbaToGray.toGrayRegions(
+            rgba, width, height, width * 4,
+            loop.windowRegions(width, height),
+        )
+
+        val fullRound = loop.process(full, isForeground = true)
+        val windowedRound = loop.process(windowed, isForeground = true)
+        assertEquals(fullRound.records, windowedRound.records)
+        assertEquals(fullRound.state, windowedRound.state)
+        assertTrue("场景应命中：${windowedRound.records}", windowedRound.records.first().matched)
     }
 }

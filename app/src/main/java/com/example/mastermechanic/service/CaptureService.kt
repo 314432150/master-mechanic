@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -32,6 +33,7 @@ import com.example.mastermechanic.calibration.CalibrationStore
 import com.example.mastermechanic.capture.CaptureSessionSignal
 import com.example.mastermechanic.capture.CaptureSessionStatus
 import com.example.mastermechanic.capture.FrameThrottle
+import com.example.mastermechanic.capture.FrameTimingStats
 import com.example.mastermechanic.capture.RgbaToGray
 import com.example.mastermechanic.decision.RecognitionLoop
 import com.example.mastermechanic.decision.UiStateSignal
@@ -46,7 +48,8 @@ import com.example.mastermechanic.foreground.ForegroundSignal
  *   输出带来源的终态日志（验收 A1 证据本体）；「用户切到别的应用」不触发终止（FR-09）；
  * - 帧管线（T1-4 起）：ImageReader 取帧 → [FrameThrottle] 节流（NFR-02 两档自适应）→
  *   帧转换 → [RecognitionLoop]（检测 / 映射 / 滞回）→ 状态变化输出 [UiStateSignal]
- *   （T1-7：悬浮窗等订阅方随识别结论展示）；每 10s 输出一条存活统计；全程零点击（红线 1/2）。
+ *   （T1-7：悬浮窗等订阅方随识别结论展示）；每 10s 输出一条存活统计；单帧处理耗时按
+ *   连续 100 帧窗口统计输出（T1-9，NFR-01）；全程零点击（红线 1/2）。
  *
  * 分辨率 / 密度运行时从系统读取（ADR-001 第 4 条：零设备常量）。
  */
@@ -78,6 +81,14 @@ class CaptureService : Service() {
     private var lastStatsAt = 0L
     private var lastFrameWidth = 0
     private var lastFrameHeight = 0
+
+    /** 单帧处理耗时统计（T1-9，NFR-01）：连续 100 帧一窗；总段 / 灰度段 / 识别段同窗同步记录。仅帧线程访问。 */
+    private val timingStats = FrameTimingStats()
+    private val grayTimingStats = FrameTimingStats()
+    private val detectTimingStats = FrameTimingStats()
+
+    /** 节流目标档位上次生效值（T1-9 切换日志用）。仅帧线程访问。 */
+    private var lastAppliedIntervalMs = ACTIVE_INTERVAL_MS
 
     /** 上轮是否冻结（null = 尚未处理过），用于冻结 / 恢复只记一次日志。仅帧线程访问。 */
     private var lastLoopFrozen: Boolean? = null
@@ -150,7 +161,8 @@ class CaptureService : Service() {
         val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, MAX_IMAGES)
         imageReader = reader
 
-        val thread = HandlerThread("MM-CaptureFrames")
+        // 帧线程提升为前台优先级（T1-10b）：降低后台调度把重处理挤到小核的概率
+        val thread = HandlerThread("MM-CaptureFrames", Process.THREAD_PRIORITY_FOREGROUND)
         thread.start()
         frameThread = thread
         val frameHandler = Handler(thread.looper)
@@ -191,6 +203,10 @@ class CaptureService : Service() {
         framesProcessed = 0
         cyclesRun = 0
         lastLoopFrozen = null
+        timingStats.reset()
+        grayTimingStats.reset()
+        detectTimingStats.reset()
+        lastAppliedIntervalMs = ACTIVE_INTERVAL_MS
         lastStatsAt = SystemClock.elapsedRealtime()
         CaptureSessionSignal.update(CaptureSessionStatus.ACTIVE, SOURCE_USER_CREATED)
     }
@@ -241,7 +257,8 @@ class CaptureService : Service() {
     }
 
     /**
-     * 帧处理点（T1-4）：帧 → 灰度 → 识别循环 → 状态机；按 NFR-02 自适应调整节流间隔。
+     * 帧处理点（T1-4）：帧 → 灰度 → 识别循环 → 状态机；按 NFR-02 自适应调整节流间隔；
+     * 单帧处理耗时按 T1-9 口径测量（灰度转换 + 识别循环，含滞回）。
      *
      * 非前台轮由识别循环内部冻结（§1.2 不识别、FR-09 不消耗滞回计数）；
      * 调用方保证本方法返回前 [image] 未被关闭（buffer 有效）。
@@ -257,20 +274,30 @@ class CaptureService : Service() {
                     "${calibratedFrameWidth}x$calibratedFrameHeight 不一致，识别结果可能不可用",
             )
         }
+        val startNs = SystemClock.elapsedRealtimeNanos()
         val gray = try {
             val plane = image.planes[0]
             val buffer = plane.buffer
             buffer.rewind()
             val bytes = ByteArray(buffer.remaining())
             buffer.get(bytes)
-            RgbaToGray.toGray(bytes, image.width, image.height, plane.rowStride)
+            // 窗口化灰度（T1-10b）：仅转换信号窗口区域，窗口外置零不影响判定
+            RgbaToGray.toGrayRegions(
+                bytes,
+                image.width,
+                image.height,
+                plane.rowStride,
+                recognitionLoop.windowRegions(image.width, image.height),
+            )
         } catch (t: RuntimeException) {
             // 预期外的帧布局 / 数据不足：跳过本轮（不进入滞回），记录备查（不静默失败）
             Log.w(TAG, "帧转换失败，跳过本轮识别：${t.javaClass.simpleName} ${t.message}")
             return
         }
+        val grayNs = SystemClock.elapsedRealtimeNanos() - startNs
 
         val result = recognitionLoop.process(gray, ForegroundSignal.isForeground)
+        recordProcessingCost(SystemClock.elapsedRealtimeNanos() - startNs, grayNs)
         cyclesRun++
 
         if (result.frozen != lastLoopFrozen) {
@@ -287,12 +314,37 @@ class CaptureService : Service() {
 
         // NFR-02 自适应两档：稳定轮用长间隔，其余（含刚发生状态变化）用短间隔
         if (!result.frozen) {
-            frameThrottle.setInterval(if (result.stable) STABLE_INTERVAL_MS else ACTIVE_INTERVAL_MS)
+            val target = if (result.stable) STABLE_INTERVAL_MS else ACTIVE_INTERVAL_MS
+            if (target != lastAppliedIntervalMs) {
+                Log.i(
+                    TAG,
+                    "节流间隔切换: ${lastAppliedIntervalMs}ms -> ${target}ms" +
+                        "（${if (result.stable) "稳定轮" else "变化 / 过渡轮"}）",
+                )
+                lastAppliedIntervalMs = target
+                frameThrottle.setInterval(target)
+            }
         }
 
         result.transition?.let {
             UiStateSignal.update(it.to, it.reason)
         }
+    }
+
+    /**
+     * 记录一帧处理耗时并输出汇总（T1-9，NFR-01）：满窗（连续 100 帧）输出一行；
+     * 三个统计器逐帧同步记录（必须全部记录后再判断总段是否满窗，否则分段样本会漏记）。
+     */
+    private fun recordProcessingCost(totalNs: Long, grayNs: Long) {
+        val gray = grayTimingStats.record(grayNs / 1_000_000.0)
+        val detect = detectTimingStats.record((totalNs - grayNs) / 1_000_000.0)
+        val total = timingStats.record(totalNs / 1_000_000.0) ?: return
+        Log.i(
+            TAG,
+            "单帧处理耗时统计: 连续 ${total.sampleCount} 帧，总 P95 ${total.p95DisplayMs}ms" +
+                "（灰度 ${gray?.p95DisplayMs}ms / 识别 ${detect?.p95DisplayMs}ms），" +
+                "平均 ${total.avgDisplayMs}ms，最大 ${total.maxDisplayMs}ms（NFR-01 阈值 20ms）",
+        )
     }
 
     private fun maybeLogStats(now: Long) {

@@ -3,6 +3,7 @@ package com.example.mastermechanic.decision
 import com.example.mastermechanic.recognition.DetectionRecord
 import com.example.mastermechanic.recognition.GrayImage
 import com.example.mastermechanic.recognition.MatchParams
+import com.example.mastermechanic.recognition.PixelBounds
 import com.example.mastermechanic.recognition.SignalDetector
 import com.example.mastermechanic.recognition.SignalSpec
 
@@ -16,7 +17,7 @@ import com.example.mastermechanic.recognition.SignalSpec
  * - 全部依赖为纯逻辑（recognition / decision 包），本类可在 JVM 离线重跑（§5-4）。
  */
 class RecognitionLoop(
-    signals: List<SignalSpec>,
+    private val signals: List<SignalSpec>,
     params: MatchParams,
     private val mapping: SignalStateMapping,
 ) {
@@ -26,6 +27,14 @@ class RecognitionLoop(
 
     private val detector: SignalDetector? =
         if (signals.isEmpty()) null else SignalDetector(signals, params)
+
+    /**
+     * 识别所需的最小像素区域（各信号窗口的像素范围）：采集层据此仅转换窗口区域
+     * 的灰度（T1-10b）——判定只读取窗口内像素，窗口外置零与全帧转换在判定上等价。
+     * 未标定（空信号）时返回空列表。
+     */
+    fun windowRegions(frameWidth: Int, frameHeight: Int): List<PixelBounds> =
+        signals.map { it.window.pixelBounds(frameWidth, frameHeight) }
 
     private val stateMachine = UiStateMachine()
 
