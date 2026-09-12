@@ -64,11 +64,11 @@ class CaptureService : Service() {
     /** 识别循环（T1-4 接入）：会话建立时加载标定产物（T1-5）；缺失 / 解析失败回退空配置。仅帧线程访问。 */
     private var recognitionLoop = RecognitionLoop.uncalibrated()
 
-    /** 标定产物记录的帧尺寸（0 = 未标定）；用于与运行帧对照告警。仅帧线程访问。 */
+    /** 标定产物记录的帧尺寸（0 = 未标定）；与运行帧不同时按画面区归一（T1-11c）。仅帧线程访问。 */
     private var calibratedFrameWidth = 0
     private var calibratedFrameHeight = 0
 
-    /** 本会话是否已告警过帧尺寸不一致（只告警一次）。仅帧线程访问。 */
+    /** 本会话是否已记录过「运行画布与标定帧方向不同」（只记录一次）。仅帧线程访问。 */
     private var frameSizeWarned = false
 
     /** 会话终止来源；null 表示会话仍存活。仅主线程访问。 */
@@ -257,8 +257,8 @@ class CaptureService : Service() {
     }
 
     /**
-     * 帧处理点（T1-4）：帧 → 灰度 → 识别循环 → 状态机；按 NFR-02 自适应调整节流间隔；
-     * 单帧处理耗时按 T1-9 口径测量（灰度转换 + 识别循环，含滞回）。
+     * 帧处理点（T1-4）：帧 → 灰度 → 识别循环（含方向归一，T1-11c）→ 状态机；按 NFR-02 自适应调整节流间隔；
+     * 单帧处理耗时按 T1-9 口径测量（灰度转换 + 识别循环含归一，含滞回）。
      *
      * 非前台轮由识别循环内部冻结（§1.2 不识别、FR-09 不消耗滞回计数）；
      * 调用方保证本方法返回前 [image] 未被关闭（buffer 有效）。
@@ -268,10 +268,11 @@ class CaptureService : Service() {
             (image.width != calibratedFrameWidth || image.height != calibratedFrameHeight)
         ) {
             frameSizeWarned = true
-            Log.w(
+            Log.i(
                 TAG,
-                "帧尺寸 ${image.width}x${image.height} 与标定产物记录 " +
-                    "${calibratedFrameWidth}x$calibratedFrameHeight 不一致，识别结果可能不可用",
+                "运行画布 ${image.width}x${image.height} 与标定帧 " +
+                    "${calibratedFrameWidth}x$calibratedFrameHeight 方向不同（建会话时机不同），" +
+                    "已按画面区几何归一后继续识别（T1-11c）",
             )
         }
         val startNs = SystemClock.elapsedRealtimeNanos()
@@ -281,7 +282,8 @@ class CaptureService : Service() {
             buffer.rewind()
             val bytes = ByteArray(buffer.remaining())
             buffer.get(bytes)
-            // 窗口化灰度（T1-10b）：仅转换信号窗口区域，窗口外置零不影响判定
+            // 窗口化灰度（T1-10b）：仅转换识别所需区域，区域外置零不影响判定；
+            // 区域已是「标定窗口按画面区换算到运行帧」的结果（T1-11c），供归一化采样
             RgbaToGray.toGrayRegions(
                 bytes,
                 image.width,

@@ -60,3 +60,36 @@
 | 清单标注 | 正样本信号统一 launch_start，期望位置为模板（131×37）落位 651,1744 的比例坐标；负样本三类干扰分列（mask / motion / similar） |
 
 备注：批次为固定一批（§5-4），收录后不再增删；重跑比对以同清单 + 同参数集（calib-v1）为准。已知边界：1 帧正样本（「开始游戏」按下高亮瞬态）未命中——属点击后瞬态、不在识别时机范围；1 帧曾误标（切区流程中的选择服务器页）已在清单中修正为 neg-similar。
+
+## set-20260912-04 — 画布方向对照帧对（T1-11a 测量输入）
+
+| 项 | 内容 |
+| --- | --- |
+| 采集设备 | vivo V2463A / Android 16（API 36） |
+| 采集日期 | 2026-09-12 |
+| 构成 | 竖画布帧 1 帧（1440×3168，取 `set-20260912-01` 代表帧）+ 横画布侧帧 1 帧（3168×1440，adb 截屏，来自 T1-10d 会话 1 取证） |
+| 场景 | 《王者荣耀》启动页（两帧会话不同、启动页美术不同；「开始游戏」等 UI 元素位置一致） |
+| 用途 | T1-11a 两向帧几何映射测量（探针 `CanvasOrientationProbeTest`）；锚点 = calib-v1 模板 launch_start |
+| 帧文件 | 复用既有归档，不重复入库：`samples/t1-5-launch-start-frame.png`、`../verification/t1-10/t1-10-05-launch-page-session1.png` |
+| 结论 | [research/research-canvas-orientation.md](research/research-canvas-orientation.md)（无旋转；等比缩放 2.2 + 居中平移 1256） |
+
+备注：本帧对**不是**同一会话，也不构成误报率统计样本（不进 `set-20260912-03` 固定批次）；横侧帧为 adb 截屏而非横画布采集会话帧，
+真机横画布会话样本已补（见 `set-20260912-05`，2026-09-12），结论按真机会话样本复核一致。另存边界形态证据 [samples/t1-11a-transition-frame.png](samples/t1-11a-transition-frame.png)
+（会话**首帧**的「旋转满幅」画布过渡帧，画布尺寸不变、内容被 90° 旋转铺满，机制见研究文档 §9）。
+
+## set-20260912-05 — 横画布会话样本（T1-11a 待补项闭合 / T1-11d 同批）
+
+| 项 | 内容 |
+| --- | --- |
+| 采集设备 | vivo V2463A / Android 16（API 36） |
+| 采集日期 | 2026-09-12（18:05:46–18:07:47，录制开关区间） |
+| 场景 | 《王者荣耀》启动页（微信56区 白色死神·城市天际线版），演练模式（只识别、不点击）静置 |
+| 数量 | 37 帧（每秒 1 帧，仅目标前台时录制） |
+| 帧画布 | **3168×1440（横画布会话）**——与标定帧 1440×3168 互为转置，即 T1-11 要适配的形态 |
+| 命名 | frame-<补零毫秒数>.png（字典序 = 时间序） |
+| 用途 | T1-11a 几何对照的真机输入（探针复跑）；T1-11c 判定一致性的真实帧证据 |
+| 批次位置 | `app/build/replay-work/horiz-frames/`（37 帧原始 PNG，本地不入库）；探针输入副本 `app/build/replay-work/t1-11a-horizontal-frame.png` |
+| 代表帧 | [t1-11a-horizontal-session-frame.png](samples/t1-11a-horizontal-session-frame.png)（frame-0002929364364） |
+| 结论 | [research/research-canvas-orientation.md](research/research-canvas-orientation.md)（真机会话样本复核：旋转 0° 唯一成立，缩放 2.2，带内相关 0.7419，锚点残差 0,1px） |
+
+备注：与 T1-11d 真机核对同批会话（`../verification/t1-11d/`）；本集不进固定批次 `set-20260912-03`（画布尺寸不同、无清单标注）。
