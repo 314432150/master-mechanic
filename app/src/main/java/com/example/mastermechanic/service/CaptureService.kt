@@ -27,6 +27,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import com.example.mastermechanic.MainActivity
 import com.example.mastermechanic.R
+import com.example.mastermechanic.calibration.CalibrationFramePool
+import com.example.mastermechanic.calibration.CalibrationStore
 import com.example.mastermechanic.capture.CaptureSessionSignal
 import com.example.mastermechanic.capture.CaptureSessionStatus
 import com.example.mastermechanic.capture.FrameThrottle
@@ -55,8 +57,15 @@ class CaptureService : Service() {
     private var frameThread: HandlerThread? = null
     private var frameThrottle = FrameThrottle(ACTIVE_INTERVAL_MS)
 
-    /** 识别循环（T1-4 接入）：标定产物（T1-5）就绪前以空配置运行，仅验证链路与日志。仅帧线程访问。 */
+    /** 识别循环（T1-4 接入）：会话建立时加载标定产物（T1-5）；缺失 / 解析失败回退空配置。仅帧线程访问。 */
     private var recognitionLoop = RecognitionLoop.uncalibrated()
+
+    /** 标定产物记录的帧尺寸（0 = 未标定）；用于与运行帧对照告警。仅帧线程访问。 */
+    private var calibratedFrameWidth = 0
+    private var calibratedFrameHeight = 0
+
+    /** 本会话是否已告警过帧尺寸不一致（只告警一次）。仅帧线程访问。 */
+    private var frameSizeWarned = false
 
     /** 会话终止来源；null 表示会话仍存活。仅主线程访问。 */
     private var stopSource: String? = null
@@ -157,9 +166,26 @@ class CaptureService : Service() {
             frameHandler,
         )
 
-        // 会话（重）建立：重建节流与识别循环（滞回状态不跨会话连续）
+        // 会话（重）建立：重建节流与识别循环（滞回状态不跨会话连续）；标定产物重新加载（保存后重开会话即生效）
         frameThrottle = FrameThrottle(ACTIVE_INTERVAL_MS)
-        recognitionLoop = RecognitionLoop.uncalibrated()
+        val calibration = try {
+            CalibrationStore.load(this)
+        } catch (t: IllegalArgumentException) {
+            Log.w(TAG, "标定产物加载失败，回退未标定运行：${t.message}")
+            null
+        }
+        recognitionLoop = calibration?.toLoop() ?: RecognitionLoop.uncalibrated()
+        calibratedFrameWidth = calibration?.frameWidth ?: 0
+        calibratedFrameHeight = calibration?.frameHeight ?: 0
+        frameSizeWarned = false
+        if (calibration != null) {
+            Log.i(
+                TAG,
+                "标定产物已加载：信号 ${calibration.signals.size} 个（标定帧 ${calibration.frameWidth}x${calibration.frameHeight}）",
+            )
+        } else {
+            Log.i(TAG, "未加载标定产物（未标定），以空配置运行")
+        }
         framesReceived = 0
         framesProcessed = 0
         cyclesRun = 0
@@ -199,6 +225,8 @@ class CaptureService : Service() {
 
         framesReceived++
         val now = SystemClock.elapsedRealtime()
+        // 标定帧录制（T1-5b）：旁路于识别节流，每秒最多 1 帧；仅目标前台时保存
+        CalibrationFramePool.maybeCapture(this, image, now, ForegroundSignal.isForeground)
         if (frameThrottle.shouldProcess(now)) {
             framesProcessed++
             lastFrameWidth = image.width
@@ -216,6 +244,16 @@ class CaptureService : Service() {
      * 调用方保证本方法返回前 [image] 未被关闭（buffer 有效）。
      */
     private fun processFrame(image: Image) {
+        if (calibratedFrameWidth != 0 && !frameSizeWarned &&
+            (image.width != calibratedFrameWidth || image.height != calibratedFrameHeight)
+        ) {
+            frameSizeWarned = true
+            Log.w(
+                TAG,
+                "帧尺寸 ${image.width}x${image.height} 与标定产物记录 " +
+                    "${calibratedFrameWidth}x$calibratedFrameHeight 不一致，识别结果可能不可用",
+            )
+        }
         val gray = try {
             val plane = image.planes[0]
             val buffer = plane.buffer

@@ -59,9 +59,10 @@ import kotlinx.coroutines.delay
  * 授权流入口（M0-T0-2）：展示各关键授权状态，并提供一键前往授予。
  *
  * @param resumeTick 每次回到前台自增，用于从系统设置页返回后刷新状态。
+ * @param onOpenCalibration 进入「识别标定」页（T1-5b）。
  */
 @Composable
-fun AuthorizationRoute(resumeTick: Int) {
+fun AuthorizationRoute(resumeTick: Int, onOpenCalibration: () -> Unit) {
     val context = LocalContext.current
     var captureActive by remember { mutableStateOf(CaptureSessionSignal.isActive) }
     var refreshTick by remember { mutableStateOf(0) }
@@ -152,6 +153,7 @@ fun AuthorizationRoute(resumeTick: Int) {
             context.stopService(Intent(context, CaptureService::class.java))
             reconcileTick++ // 服务停止后本页状态延迟校正
         },
+        onOpenCalibration = onOpenCalibration,
     )
 }
 
@@ -166,6 +168,7 @@ fun AuthorizationScreen(
     onStartResident: () -> Unit,
     onStopResident: () -> Unit,
     onStopCapture: () -> Unit,
+    onOpenCalibration: () -> Unit,
 ) {
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -213,6 +216,12 @@ fun AuthorizationScreen(
                 onStart = onStartResident,
                 onStop = onStopResident,
             )
+            OutlinedButton(
+                onClick = onOpenCalibration,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = stringResource(R.string.auth_open_calibration))
+            }
         }
     }
 }
@@ -402,6 +411,7 @@ private fun AuthorizationScreenPreview() {
             onStartResident = {},
             onStopResident = {},
             onStopCapture = {},
+            onOpenCalibration = {},
         )
     }
 }
