@@ -34,6 +34,7 @@ import com.example.mastermechanic.capture.CaptureSessionStatus
 import com.example.mastermechanic.capture.FrameThrottle
 import com.example.mastermechanic.capture.RgbaToGray
 import com.example.mastermechanic.decision.RecognitionLoop
+import com.example.mastermechanic.decision.UiStateSignal
 import com.example.mastermechanic.foreground.ForegroundSignal
 
 /**
@@ -44,8 +45,8 @@ import com.example.mastermechanic.foreground.ForegroundSignal
  * - 会话终止两条路径（系统侧回收 / 应用主动停止）均汇聚到 [CaptureSessionSignal]，
  *   输出带来源的终态日志（验收 A1 证据本体）；「用户切到别的应用」不触发终止（FR-09）；
  * - 帧管线（T1-4 起）：ImageReader 取帧 → [FrameThrottle] 节流（NFR-02 两档自适应）→
- *   帧转换 → [RecognitionLoop]（检测 / 映射 / 滞回）→ 状态变化日志；
- *   每 10s 输出一条存活统计；全程零点击（红线 1/2）。
+ *   帧转换 → [RecognitionLoop]（检测 / 映射 / 滞回）→ 状态变化输出 [UiStateSignal]
+ *   （T1-7：悬浮窗等订阅方随识别结论展示）；每 10s 输出一条存活统计；全程零点击（红线 1/2）。
  *
  * 分辨率 / 密度运行时从系统读取（ADR-001 第 4 条：零设备常量）。
  */
@@ -210,6 +211,8 @@ class CaptureService : Service() {
         mediaProjection = null
         frameThread?.quitSafely()
         frameThread = null
+        // 识别循环随会话终止停止更新：界面状态信号回到「未知」（不得残留旧状态误导展示）
+        UiStateSignal.reset("采集会话终止")
     }
 
     /**
@@ -288,7 +291,7 @@ class CaptureService : Service() {
         }
 
         result.transition?.let {
-            Log.i(TAG, "界面状态变化: ${it.from.label} -> ${it.to.label}（${it.reason}）")
+            UiStateSignal.update(it.to, it.reason)
         }
     }
 

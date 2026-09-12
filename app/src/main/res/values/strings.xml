@@ -43,8 +43,8 @@
     <string name="capture_notification_title">屏幕采集中</string>
     <string name="capture_notification_text">用于识别游戏画面；点击打开应用</string>
 
-    <!-- 悬浮窗壳（M0-T0-5） -->
-    <string name="floating_handle_text">待命</string>
+    <!-- 悬浮窗壳（M0-T0-5）与状态展示（M1-T1-7） -->
+    <string name="floating_status_text">状态：%1$s</string>
     <string name="accessibility_service_label">MasterMechanic</string>
     <string name="accessibility_service_description">用于代替手动重复操作：点击由本服务执行，不会读取或修改游戏数据。</string>
 
@@ -99,4 +99,9 @@
     <string name="calibration_error_frame_decode">帧文件解码失败</string>
     <string name="calibration_error_selection_too_small">选区太小：原图至少需要 %1$d×%2$d 像素</string>
     <string name="calibration_error_signal_state_conflict">信号「%1$s」已归属「%2$s」，不能改为「%3$s」</string>
+
+    <!-- 运行方式（M1-T1-7 演练模式） -->
+    <string name="run_mode_label">运行方式</string>
+    <string name="run_mode_dry_run">演练（只识别、不点击）</string>
+    <string name="run_mode_desc">当前版本只识别画面状态、不产生任何点击，用于在目标设备上验证识别能力；识别到的界面状态会实时显示在游戏内的悬浮窗上。自动点击能力将在后续版本开放，演练模式将长期保留用于回归验证。</string>
 </resources>

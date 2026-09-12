@@ -216,6 +216,7 @@ fun AuthorizationScreen(
                 onStart = onStartResident,
                 onStop = onStopResident,
             )
+            RunModeCard()
             OutlinedButton(
                 onClick = onOpenCalibration,
                 modifier = Modifier.fillMaxWidth(),
@@ -330,6 +331,43 @@ private fun ResidentCard(
                     Text(text = stringResource(R.string.resident_action_start))
                 }
             }
+        }
+    }
+}
+
+/**
+ * 运行方式卡片（T1-7）：明示当前为演练模式（只识别、不点击）。
+ *
+ * M1 无点击能力（演练即唯一运行方式）：静态展示，无开关；点击能力在 M2 首次开放后，
+ * 本卡改为展示用户选择的运行方式（演练模式长期保留用于回归验证）。
+ */
+@Composable
+private fun RunModeCard() {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.run_mode_label),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = stringResource(R.string.run_mode_dry_run),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Text(
+                text = stringResource(R.string.run_mode_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
