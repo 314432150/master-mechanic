@@ -1,0 +1,96 @@
+T1-5l 标定流程重构 —— 离线验证记录（2026-09-12）
+================================================================
+
+对象：标定流程重构（锚点移除 / 废除草稿模型 / 框完即写入产物 / 产物可查看可删除 /
+      参数属产物级且编辑合法即写入 / 画布几何不一致拒绝写入）
+代码：工作区变更（分支 stage/m1，尚未提交）
+设备：本次为纯离线 JVM 验证（vivo V2463A 真机核对见「四、待执行」）
+
+----------------------------------------------------------------
+一、变更清单（相对 HEAD）
+----------------------------------------------------------------
+
+新增：
+  app/src/main/java/com/example/mastermechanic/calibration/CalibrationSignals.kt
+      —— 产物直接写入（覆盖写入 / 删除 / 改参数 / 几何校验）+ 选区 → 窗口策略
+         （SelectionWindow 由被删的 CalibrationDraft.kt 迁入，语义不变）
+  app/src/test/java/com/example/mastermechanic/calibration/CalibrationSignalsTest.kt
+
+删除：
+  app/src/main/java/com/example/mastermechanic/calibration/CalibrationDraft.kt（草稿模型）
+  app/src/test/java/com/example/mastermechanic/calibration/CalibrationDraftTest.kt
+
+改写：
+  app/src/main/java/com/example/mastermechanic/calibration/FrameEdit.kt
+      —— 去锚点 / 去拉伸 / 去外层操作框；命中只剩「框内移动 / 框外新建」
+  app/src/main/java/com/example/mastermechanic/ui/CalibrationScreen.kt
+      —— 全屏工作台 + 产物清单（查看 / 删除）+ 参数即时写入；删除页内预览大图与缩略图条
+  app/src/main/res/values/strings.xml
+      —— 新增工作台 / 产物清单 / 模板详情文案；清理草稿与「提取为模板」文案
+  app/src/test/java/com/example/mastermechanic/calibration/FrameEditTest.kt（按新 API 重写）
+
+----------------------------------------------------------------
+二、验收对照（任务卡 T1-5l ①–⑥）
+----------------------------------------------------------------
+
+① 框选 + 选归属状态即落盘（同名覆盖、无中间步骤）
+   实现：工作台点归属状态 chip → writeSignalFromSelection() 立即 upsert + CalibrationStore.save；
+        全库无「提取为模板 / 保存产物」二次确认，无进程内草稿（CalibrationDraft 已删除）
+   单测：upsertCreatesArtifactFromNothing / upsertReplacesSameNameEntirely /
+        upsertReassignsStateOfSameName / upsertGroupsRulesByFirstAppearanceOrder
+
+② 删除单条信号后产物立即更新，删空则产物文件删除（回到「无产物」）
+   实现：CalibrationSignals.remove() 返回 null → CalibrationStore.delete()；否则立即覆盖写回
+   单测：removeDropsSignalAndItsRule / removeLastSignalReturnsNull / removeMissingNameIsIdempotent
+
+③ 产物信号可查看（模板灰度图 + 尺寸 + 窗口帧像素）并可删除
+   实现：产物清单逐条列出「名称 → 状态 / 模板 WxH / 窗口帧像素」；
+        TemplateDetailDialog 展示模板灰度图（CalibrationFrames.templateBitmap）+ 尺寸 + 窗口
+        （SearchWindow.pixelBounds，floor/ceil 确定性换算）；单条删除 + 整体删除
+   单测：windowAlwaysCoversSelectionInPixels（窗口覆盖选区）/ windowExpandsBySelectionSizeAndClampsToFrame
+
+④ 无锚点后选框边缘与角完全无遮挡，命中区仅「框内移动 / 框外新建 / 左上关闭」三类
+   实现：FrameEdit 删除 FrameHandle / resize / outerFrame / handleCenters，绘制层删除手柄与外层框，
+        只保留红色真实选框 + 左上角外置关闭钮（外扩 16dp、半径 8dp、热区 20dp）
+   单测：hitTestNearEdgesIsInside / hitTestOnSelectionBorderIsOutside / hitTestOutsideRegionIsOutside /
+        closeButtonCenterSitsOutsideSelectionCorner / closeButtonCenterClampsToFrameBounds /
+        hitCloseButtonHitsAtExternalCenter / hitCloseButtonRequiresBothAxes /
+        hitCloseButtonNeverFiresInsideSelection / zoomAllowsPixelLevelAlignment（MAX_SCALE 16×）
+
+⑤ 几何不一致的写入被拒绝且提示明确
+   实现：写入前 CalibrationSignals.geometryError() 校验标注帧几何与产物记录几何；
+        不一致直接返回提示「画布几何不一致：本次帧 AxB，产物 CxD。请先删除产物后重标，
+        或在与产物相同方向的画布下建会话。」（不写盘）
+   单测：geometryErrorIsNullWithoutArtifactOrWhenEqual / geometryErrorReportsMismatch /
+        upsertRejectsGeometryMismatch
+
+⑥ 零设备绑定不破（模板 / 窗口 / 参数仍全部来自产物）
+   实现：模板 = 标注帧原分辨率裁剪（TemplateExtractor）；窗口 = 选区比例外扩一倍（SelectionWindow）；
+        参数 = 产物级文本编辑（CalibrationSignals.parseParams）；工作台无任何设备相关常量
+   单测：parseParamsAcceptsValidAndRejectsInvalid / defaultParamsMatchDefaultTexts /
+        FrameEditTest 全部（比例坐标、与帧分辨率解耦）
+
+----------------------------------------------------------------
+三、回归与构建（可复跑）
+----------------------------------------------------------------
+
+命令（Windows PowerShell）：
+  $env:JAVA_HOME="D:\Program Files\Android\Android Studio\jbr"
+  .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --console=plain
+
+结果（2026-09-12 20:41）：
+  - 单测：27 套件 198 例，零失败
+      CalibrationSignalsTest 21 例（新增，覆盖写入 / 删除 / 参数 / 几何 / 选区窗口）
+      FrameEditTest 21 例（按 T1-5l API 重写：无锚点命中 + 外置关闭钮 + 视图变换）
+      CalibrationDraftTest 8 例随草稿模型一并删除
+  - 构建：app-debug.apk 31,844,690 字节（app/build/outputs/apk/debug/app-debug.apk）
+  - 静态检查：IDE 诊断零错误零警告（改动文件）
+
+----------------------------------------------------------------
+四、真机核对（已执行，见 t1-5l-12）
+----------------------------------------------------------------
+
+真机工作台截图 + 产物文件对照已完成（2026-09-12 晚，vivo V2463A）：见
+[t1-5l-12-real-device-verification.txt](t1-5l-12-real-device-verification.txt)（时间线 / 产物文件对照 / md5）。
+其中**发现并修复一个缺陷**：参数编辑写入落后一次编辑（界面 0.86 / 产物 0.80）——根因是 `applyParams()`
+使用组合期快照值；修复为实时读取编辑框 + 现读盘上产物，复测通过。截图证据 t1-5l-02 ~ t1-5l-11。

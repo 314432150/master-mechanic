@@ -29,20 +29,13 @@ data class RatioRect(
 }
 
 /**
- * 选框可拉伸手柄：右上 / 左下 / 右下角 + 四边中点（图片工具交互，T1-5d）。
- * 左上角自 T1-5e 起为关闭按钮，不再作为拉伸手柄（见 [FrameEditMath.hitCloseButton]）。
+ * 手势起始位置的命中结果（T1-5l：锚点已移除，只剩两类）。
  */
-enum class FrameHandle { T, TR, L, R, BL, B, BR }
-
-/** 手势起始位置的命中结果（T1-5d）。 */
 sealed interface FrameHit {
-    /** 命中手柄：拖动 = 拉伸手柄对应的边 / 角。 */
-    data class Handle(val handle: FrameHandle) : FrameHit
-
-    /** 命中框内：拖动 = 整体移动。 */
+    /** 命中选框内部：拖动 = 整体移动。 */
     object Inside : FrameHit
 
-    /** 框外：拖动 = 新建选框。 */
+    /** 选框外（含选框边框上）：拖动 = 新建选框。 */
     object Outside : FrameHit
 }
 
@@ -57,55 +50,69 @@ data class ViewTransform(
 )
 
 /**
- * 帧标注编辑的纯运算（T1-5d）：选框编辑（命中 / 移动 / 拉伸）与视图变换（缩放 / 平移 / 坐标反算）。
+ * 帧标注编辑的纯运算（T1-5d）：选框编辑（命中 / 移动）与视图变换（缩放 / 平移 / 坐标反算）。
  *
- * 全部以帧比例坐标表达，帧尺寸、视图像素尺寸与手柄热区由调用方换算传入；
+ * T1-5l 起**不再有拉伸手柄**：选框大小由「拖出即定」决定，不满意就点左上角关闭钮重画
+ * （真机反馈：锚点压住选区边缘、影响画面判读）。因此本对象不再包含 [resize] 与手柄几何。
+ *
+ * 全部以帧比例坐标表达，帧尺寸、视图像素尺寸与关闭钮热区由调用方换算传入；
  * 不含任何安卓依赖，可在 JVM 离线单测（与识别口径一致：无设备绑定常量）。
  */
 object FrameEditMath {
 
-    /** 视图缩放范围：1 = 适应视图（整帧可见）；上限保证横屏内容区的小标志放大到可框选粒度。 */
+    /** 视图缩放范围：1 = 适应视图（整帧可见）；上限 16 保证小标志放大到可逐像素对齐边缘的粒度（T1-5k 提高）。 */
     const val MIN_SCALE = 1f
-    const val MAX_SCALE = 8f
-
-    /** 选框最小边长（帧比例）：约 7px @ 1440 宽帧，与模板提取下限（8px）同量级，防止拉伸翻转。 */
-    const val MIN_SIZE = 0.005f
+    const val MAX_SCALE = 16f
 
     /**
-     * 命中测试（帧比例坐标）：手柄热区（rx / ry 为帧比例半径）优先于框内，框外为新建。
-     * 角先于边（角热区与边热区重叠时角优先）；左上角为关闭按钮，由 [hitCloseButton]
-     * 单独判定并在手势层优先处理，这里不再产生其手柄命中。
+     * 关闭钮中心（帧比例）：选框左上角外侧 [marginX] / [marginY]，clamp 在帧界内（T1-5k 外置，T1-5l 保留）。
+     * 选框贴帧界时退化为该角本身——仍在选框之外或恰在角上，[hitCloseButton] 的「选区内不命中」判定不受影响。
      */
-    fun hitTest(rect: RatioRect?, x: Float, y: Float, rx: Float, ry: Float): FrameHit {
+    fun closeButtonCenter(rect: RatioRect, marginX: Float, marginY: Float): Pair<Float, Float> =
+        (rect.left - marginX).coerceAtLeast(0f) to (rect.top - marginY).coerceAtLeast(0f)
+
+    /**
+     * 外层操作框（T1-5k 引入，T1-5l 短暂移除后按 T1-5m 用户口径恢复**仅视觉**部分）：
+     * 选框各方向外扩 [marginX] / [marginY] 并 clamp 在帧界内；只用于绘制白色细线，
+     * 不参与命中测试（命中区仍只有「框内移动 / 框外新建 / 左上 ✕」三类）。
+     */
+    fun outerFrame(rect: RatioRect, marginX: Float, marginY: Float): RatioRect = RatioRect(
+        left = (rect.left - marginX).coerceAtLeast(0f),
+        top = (rect.top - marginY).coerceAtLeast(0f),
+        right = (rect.right + marginX).coerceAtMost(1f),
+        bottom = (rect.bottom + marginY).coerceAtMost(1f),
+    )
+
+    /**
+     * 命中测试（帧比例坐标）：**选框内 = 整体移动，选框外 = 新建**（T1-5l 口径）。
+     * 关闭钮由 [hitCloseButton] 单独判定并在手势层优先处理，这里不产生其命中。
+     */
+    fun hitTest(rect: RatioRect?, x: Float, y: Float): FrameHit {
         if (rect == null) return FrameHit.Outside
-        val midX = (rect.left + rect.right) / 2f
-        val midY = (rect.top + rect.bottom) / 2f
-        val handles = listOf(
-            FrameHandle.TR to (rect.right to rect.top),
-            FrameHandle.BL to (rect.left to rect.bottom),
-            FrameHandle.BR to (rect.right to rect.bottom),
-            FrameHandle.T to (midX to rect.top),
-            FrameHandle.B to (midX to rect.bottom),
-            FrameHandle.L to (rect.left to midY),
-            FrameHandle.R to (rect.right to midY),
-        )
-        for ((handle, center) in handles) {
-            if (abs(x - center.first) <= rx && abs(y - center.second) <= ry) {
-                return FrameHit.Handle(handle)
-            }
-        }
-        if (x in rect.left..rect.right && y in rect.top..rect.bottom) return FrameHit.Inside
-        return FrameHit.Outside
+        val inside = x > rect.left && y > rect.top && x < rect.right && y < rect.bottom
+        return if (inside) FrameHit.Inside else FrameHit.Outside
     }
 
     /**
-     * 左上角「关闭」按钮命中（帧比例坐标；rx / ry 为热区半径，与手柄同量级）。
-     * 按钮位于选框左上角（原 TL 拉伸锚点位置）；命中优先于手柄与框内判定，
-     * 由手势层在抬手（未超过滑动阈值）时清除当前选框。
+     * 「关闭」按钮命中（帧比例坐标；rx / ry 为热区半径，屏幕视觉恒定由调用方按缩放补偿）。
+     * 按钮位于**选框左上角外侧**；命中优先于移动 / 新建判定，由手势层在抬手（未超过滑动阈值）时清除当前选框。
+     *
+     * **选区内一律不算关闭钮命中**（T1-5k 起）：热区会侵入面积较小的选框，若不加此保护，
+     * 想拖动选框内部（移动）会误清掉整条选框。
      */
-    fun hitCloseButton(rect: RatioRect?, x: Float, y: Float, rx: Float, ry: Float): Boolean {
+    fun hitCloseButton(
+        rect: RatioRect?,
+        x: Float,
+        y: Float,
+        marginX: Float,
+        marginY: Float,
+        rx: Float,
+        ry: Float,
+    ): Boolean {
         if (rect == null) return false
-        return abs(x - rect.left) <= rx && abs(y - rect.top) <= ry
+        if (x > rect.left && y > rect.top && x < rect.right && y < rect.bottom) return false
+        val center = closeButtonCenter(rect, marginX, marginY)
+        return abs(x - center.first) <= rx && abs(y - center.second) <= ry
     }
 
     /** 整体移动：clamp 使框始终位于帧界内。 */
@@ -113,27 +120,6 @@ object FrameEditMath {
         val ddx = dx.coerceIn(-rect.left, 1f - rect.right)
         val ddy = dy.coerceIn(-rect.top, 1f - rect.bottom)
         return RatioRect(rect.left + ddx, rect.top + ddy, rect.right + ddx, rect.bottom + ddy)
-    }
-
-    /** 拉伸：只移动手柄对应的边 / 角，对边固定；clamp 边界并使边长不小于 MIN_SIZE。 */
-    fun resize(rect: RatioRect, handle: FrameHandle, dx: Float, dy: Float): RatioRect {
-        var l = rect.left
-        var t = rect.top
-        var r = rect.right
-        var b = rect.bottom
-        if (handle == FrameHandle.L || handle == FrameHandle.BL) {
-            l = (l + dx).coerceIn(0f, r - MIN_SIZE)
-        }
-        if (handle == FrameHandle.TR || handle == FrameHandle.R || handle == FrameHandle.BR) {
-            r = (r + dx).coerceIn(l + MIN_SIZE, 1f)
-        }
-        if (handle == FrameHandle.T || handle == FrameHandle.TR) {
-            t = (t + dy).coerceIn(0f, b - MIN_SIZE)
-        }
-        if (handle == FrameHandle.BL || handle == FrameHandle.B || handle == FrameHandle.BR) {
-            b = (b + dy).coerceIn(t + MIN_SIZE, 1f)
-        }
-        return RatioRect(l, t, r, b)
     }
 
     /**

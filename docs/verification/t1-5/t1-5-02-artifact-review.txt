@@ -31,3 +31,6 @@ template=launch_start|131|37|X19gYGBhYWFhYWJiYmJiY2RjamxlY2NjY2JiYm...（base64 
   一个选框尺寸，即 3 倍范围）与 JVM 全分辨率回放实测（代表帧命中 0.9989 @ 651,1744
   = 选框原点；同批 11 帧复测 0.995-0.9995 @ 同一锚点），确认模板为选框 1:1 裁剪。
 - 修正后运行时链路完全自洽：全分辨率帧 + 1:1 模板匹配，与真机 08:03 状态命中记录一致。
+- 代码位变更（2026-09-12，T1-5l）：被引用的 `SelectionWindow.forSelection` 随草稿模型废除迁至
+  `calibration/CalibrationSignals.kt`（同名对象，语义与本文结论不变；窗口仍是「选区向四周各扩一个
+  选区尺寸、裁剪到帧内」）。

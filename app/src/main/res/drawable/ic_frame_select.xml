@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    框选图标（T1-5m）：四角取景角标 + 中央选区块，用于标定工作台底部工具栏的「框选」入口
+    （图标在上、文字在下，参照系统相册大图底部工具栏样式）。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 四角角标（描边） -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M9,5H5V9"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="square" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M15,5H19V9"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="square" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M9,19H5V15"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="square" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M15,19H19V15"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="square" />
+    <!-- 中央选区块（实心） -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M10,10h4v4h-4z" />
+</vector>

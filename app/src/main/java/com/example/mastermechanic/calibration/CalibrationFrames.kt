@@ -2,11 +2,12 @@ package com.example.mastermechanic.calibration
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import com.example.mastermechanic.recognition.Template
 import java.io.File
 import java.nio.ByteBuffer
 
 /**
- * 标定帧文件工具（T1-5b）：PNG 帧的解码——预览缩略图与原始 RGBA 读出。
+ * 标定帧文件工具（T1-5b）：PNG 帧的解码——预览缩略图、原始 RGBA 读出与模板灰度预览。
  *
  * 依赖安卓框架，仅 UI 侧使用；模板提取本身为纯逻辑（见 [TemplateExtractor]）。
  */
@@ -28,6 +29,15 @@ object CalibrationFrames {
         } finally {
             bitmap.recycle()
         }
+    }
+
+    /** 模板灰度 → 预览位图（T1-5l 产物查看）：模板像素即灰度值，展开为不透明 ARGB 灰。 */
+    fun templateBitmap(template: Template): Bitmap {
+        val argb = IntArray(template.width * template.height) { i ->
+            val gray = template.pixels[i].toInt() and 0xFF
+            (0xFF shl 24) or (gray shl 16) or (gray shl 8) or gray
+        }
+        return Bitmap.createBitmap(argb, template.width, template.height, Bitmap.Config.ARGB_8888)
     }
 
     /** 解码预览缩略图（宽 ≤ maxWidth 的最大 2 次幂下采样）；失败返回 null。 */
