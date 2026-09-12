@@ -1,5 +1,6 @@
 package com.example.mastermechanic.calibration
 
+import com.example.mastermechanic.decision.ActiveSignalSelector
 import com.example.mastermechanic.decision.RecognitionLoop
 import com.example.mastermechanic.decision.SignalStateMapping
 import com.example.mastermechanic.decision.UiState
@@ -60,14 +61,17 @@ class CalibrationData(
      * 产物 → 识别循环（T1-4 编排）：标定产物是识别能力的唯一参数来源。
      * 画布几何（T1-11c）同源建立：以产物记录的标定帧尺寸为准，运行帧与之不同几何时按「画面区」归一。
      */
-    fun toLoop(): RecognitionLoop = RecognitionLoop(
-        signals = signals.map { SignalSpec(it.name, it.window, it.templates) },
-        params = params,
-        mapping = SignalStateMapping(
-            stateRules.map { SignalStateMapping.Rule(it.state, it.signalNames.toSet()) },
-        ),
-        geometry = CanvasGeometry.of(frameWidth, frameHeight),
-    )
+    fun toLoop(): RecognitionLoop {
+        val rules = stateRules.map { SignalStateMapping.Rule(it.state, it.signalNames.toSet()) }
+        return RecognitionLoop(
+            signals = signals.map { SignalSpec(it.name, it.window, it.templates) },
+            params = params,
+            mapping = SignalStateMapping(rules),
+            geometry = CanvasGeometry.of(frameWidth, frameHeight),
+            // T1-10g：按状态启用信号子集（附加信号默认空；未搜到的信号不产生判定记录）
+            selector = ActiveSignalSelector.fromRules(rules),
+        )
+    }
 
     companion object {
 

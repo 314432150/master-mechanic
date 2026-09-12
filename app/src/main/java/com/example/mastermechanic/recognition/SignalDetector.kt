@@ -15,7 +15,17 @@ package com.example.mastermechanic.recognition
 class SignalDetector(private val signals: List<SignalSpec>, private val params: MatchParams) {
 
     /** 对全部信号逐个判定；输出顺序与构造时一致（确定性）。 */
-    fun detect(image: GrayImage): List<DetectionRecord> = signals.map { detectSignal(image, it) }
+    fun detect(image: GrayImage): List<DetectionRecord> = detect(image, names = null)
+
+    /**
+     * 只判定 [names] 内的信号（`null` = 全部）；输出顺序与构造时一致（确定性）。
+     *
+     * T1-10g「按状态启用信号子集」：未进入子集的信号**不产生判定记录**（不是「记为未命中」）——
+     * 状态机据此不会因「本轮没搜」而累计离开计数（同 FR-09 冻结语义）。
+     */
+    fun detect(image: GrayImage, names: Set<String>?): List<DetectionRecord> =
+        (if (names == null) signals else signals.filter { it.name in names })
+            .map { detectSignal(image, it) }
 
     /** 单信号判定：多模板峰值合并后按规则给出结论。 */
     fun detectSignal(image: GrayImage, signal: SignalSpec): DetectionRecord {

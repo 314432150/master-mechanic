@@ -30,6 +30,11 @@ class RecognitionLoop(
      * null = 不做方向适配（视运行帧与标定帧同几何），仅供未标定与同几何测试使用。
      */
     private val geometry: CanvasGeometry? = null,
+    /**
+     * 按状态启用信号子集（T1-10g）：null = 每轮全扫（旧行为 / 未标定）。
+     * 子集外的信号**不产生判定记录**，状态机不会因"没搜"而累计离开计数。
+     */
+    private val selector: ActiveSignalSelector? = null,
 ) {
 
     /** 标定信号数量（0 = 未标定，运行日志据此明示）。 */
@@ -56,33 +61,73 @@ class RecognitionLoop(
 
     private val stateMachine = UiStateMachine()
 
+    /** 前台轮计数（供子集兜底全扫周期使用）。 */
+    private var round = 0
+
+    /** 上一轮当前状态是否未命中（疑似正在转移 → 下一轮全扫以发现新状态）。 */
+    private var probing = false
+
     /** 当前界面状态（滞回结论）。 */
     val state: UiState get() = stateMachine.current
 
-    /** 处理一轮：前台时执行「方向归一 → 检测 → 映射 → 状态机」；非前台时冻结（不产生判定数据）。 */
+    /** 处理一轮：前台时执行「选子集 → 方向归一 → 检测 → 映射 → 状态机」；非前台时冻结（不产生判定数据）。 */
     fun process(gray: GrayImage, isForeground: Boolean): RoundResult {
-        val records = if (isForeground) detector?.detect(normalized(gray)).orEmpty() else emptyList()
+        val active = if (isForeground) selector?.select(stateMachine.current, probing, round) else null
+        val records = if (isForeground) detectWithFallback(gray, active) else emptyList()
         val hits = if (isForeground) mapping.resolve(records) else emptySet()
         val transition = stateMachine.update(hits, foreground = isForeground)
+        if (isForeground) {
+            probing = stateMachine.current != UiState.UNKNOWN && stateMachine.current !in hits
+            round++
+        }
         return RoundResult(
             records = records,
             hits = hits,
             transition = transition,
             state = stateMachine.current,
             frozen = !isForeground,
+            searched = if (isForeground && !scanAllThisRound) active else null,
         )
+    }
+
+    /** 上一轮是否触发了补扫（决定本轮 [RoundResult.searched] 是否记为全扫）。 */
+    private var scanAllThisRound = false
+
+    /**
+     * 子集匹配的**按需补扫**（T1-10g）：先按子集判定；若本轮**当前状态未命中**
+     * （子集已包含当前状态的信号，说明画面可能已切换），则在同一轮补扫其余信号。
+     *
+     * 这样既保留了"稳定态只搜子集"的成本收益，又让转移当轮的信息量与全扫**完全一致**——
+     * 状态序列不因子集而延迟（否则会晚一轮才发现新状态）。补扫只在未命中轮发生。
+     */
+    private fun detectWithFallback(gray: GrayImage, subset: Set<String>?): List<DetectionRecord> {
+        val detector = this.detector ?: return emptyList()
+        scanAllThisRound = false
+        if (subset == null) {
+            scanAllThisRound = true
+            return detector.detect(normalized(gray, null), null)
+        }
+        val first = detector.detect(normalized(gray, subset), subset)
+        val missedCurrent = stateMachine.current != UiState.UNKNOWN &&
+            stateMachine.current !in mapping.resolve(first)
+        if (!missedCurrent) return first
+        val rest = signals.map { it.name }.toSet() - subset
+        if (rest.isEmpty()) return first
+        scanAllThisRound = true
+        return first + detector.detect(normalized(gray, null), rest)
     }
 
     /**
      * 运行帧 → 标定画布几何（T1-11c）：无几何或画面区一致时原样返回（零开销快路径）。
      * 归一后判定输入恒处于标定几何，模板 / 窗口 / 阈值 / 判定语义均不变。
      */
-    private fun normalized(gray: GrayImage): GrayImage {
+    private fun normalized(gray: GrayImage, active: Set<String>?): GrayImage {
         val canvas = geometry?.mappingFor(gray.width, gray.height) ?: return gray
         if (canvas.isIdentity) return gray
-        val regions = signals.map {
-            it.window.pixelBounds(canvas.calibrationWidth, canvas.calibrationHeight)
-        }
+        // 只归一本轮真正要判定的信号窗口（子集模式下更省，判定语义不变）
+        val regions = signals
+            .filter { active == null || it.name in active }
+            .map { it.window.pixelBounds(canvas.calibrationWidth, canvas.calibrationHeight) }
         return FrameNormalizer.normalize(gray, canvas, regions)
     }
 
@@ -118,6 +163,11 @@ data class RoundResult(
     val transition: UiStateTransition?,
     val state: UiState,
     val frozen: Boolean,
+    /**
+     * 本轮实际参与匹配的信号名集合（T1-10g）：null = 全扫（未知 / 转移探测 / 周期兜底 / 未启用子集）。
+     * 供运行日志与审计使用，便于确认"这一轮到底搜了哪些信号"。
+     */
+    val searched: Set<String>? = null,
 ) {
     /** 本轮无状态变化（可用于下调检测频率）。 */
     val stable: Boolean get() = !frozen && transition == null
