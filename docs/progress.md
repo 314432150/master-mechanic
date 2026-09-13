@@ -221,6 +221,12 @@
     两个都不勾时 ✓ 置灰 + 行尾提示「至少选一个角色」。
     实现备注：material3 1.4.0 起 `MultiChoiceSegmentedButtonRow` 为 `@Deprecated(HIDDEN)`（仅二进制兼容），
     用 `MultiChoiceRowScopeBridge` 桥接 `MultiChoiceSegmentedButtonRowScope` 继续使用其公开的多选 `SegmentedButton`。
+  - **T2-3g′ 「写入为」行真机修订（已完成；当天第二次反馈）**：① 修 BUG —— 一个都不勾时底栏变高（分段按钮按
+    `weight` 抢占整行剩余宽度，把同一 `Row` 里右侧的红字提示挤成 0 宽、逐字换行，看不见却撑高整行）→ 该行只留
+    分段控件、提示改由 ✓ 按钮文案承担；② 角色初始**一个都不勾**（原默认「标志」），避免顺手误写；③ 文案与选项
+    名称对齐（「先选角色」→「先选标志或锚点」，`calibration_need_selection` 同步去掉「标志」二字）；④ 一个都不勾时
+    选框主色改**中性白**（原标志红像已选中标志），帮助文案同步。验证同上（268 例 0 失败 + `assembleDebug`），
+    界面真机核对并入 T2-3e。
   - **验证**：`CalibrationCodecTest` / `CalibrationModelTest` / `CalibrationSignalsTest` 37 例（v1 兼容、角色往返、
     角色守卫；T2-3d 新增 3 例、T2-3g 新增 6 例 = 角色顺序 / 双角色命名 / 已占名让位 / 非法入参 / 一次写两条共用几何 /
     按角色计数）、`FrameEditTest` 32 例（T2-3f 净增 9 例）、`AnchorLocatorTest` 7 例、`ClickGateTest` 9 例、
