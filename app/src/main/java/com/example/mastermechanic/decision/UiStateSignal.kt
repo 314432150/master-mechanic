@@ -1,6 +1,6 @@
 package com.example.mastermechanic.decision
 
-import android.util.Log
+import com.example.mastermechanic.log.MmLog
 import java.util.concurrent.CopyOnWriteArraySet
 
 /**
@@ -39,7 +39,7 @@ object UiStateSignal {
         if (next == current) return
         val previous = current
         current = next
-        Log.i(TAG, "界面状态变化: ${previous.label} -> ${next.label}（$reason）")
+        MmLog.i(TAG, "界面状态变化: ${previous.label} -> ${next.label}（$reason）")
         listeners.forEach { it(next) }
     }
 

@@ -20,13 +20,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,6 +46,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.mastermechanic.R
+import com.example.mastermechanic.action.ClickDispatch
+import com.example.mastermechanic.action.ClickMode
 import com.example.mastermechanic.auth.AuthItem
 import com.example.mastermechanic.auth.AuthState
 import com.example.mastermechanic.auth.AuthStatus
@@ -336,13 +342,19 @@ private fun ResidentCard(
 }
 
 /**
- * 运行方式卡片（T1-7）：明示当前为演练模式（只识别、不点击）。
+ * 运行方式卡片（T1-7 引入；T2-6 开放实点开关，对应 B5）：展示当前模式并允许用户切换。
  *
- * M1 无点击能力（演练即唯一运行方式）：静态展示，无开关；点击能力在 M2 首次开放后，
- * 本卡改为展示用户选择的运行方式（演练模式长期保留用于回归验证）。
+ * **开启实点必须二次确认**（默认拒绝）：实点会让程序真的点击游戏界面，误触代价不可逆。
+ * **三条安全边界**（默认一律回到演练，实点只能由用户在本次会话内显式开启）：
+ * 进程启动 = 演练；无障碍服务断开 / 被中断（[ClickDispatch.uninstall]）= 回演练；
+ * 采集会话（重）建立（[com.example.mastermechanic.service.CaptureService]）= 回演练。
  */
 @Composable
 private fun RunModeCard() {
+    val mode by ClickDispatch.modeFlow.collectAsState()
+    var confirming by remember { mutableStateOf(false) }
+    val live = mode == ClickMode.LIVE
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -358,17 +370,68 @@ private fun RunModeCard() {
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    text = stringResource(R.string.run_mode_dry_run),
+                    text = stringResource(
+                        if (live) R.string.run_mode_live else R.string.run_mode_dry_run,
+                    ),
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = if (live) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
                 )
             }
             Text(
-                text = stringResource(R.string.run_mode_desc),
+                text = stringResource(
+                    if (live) R.string.run_mode_live_desc else R.string.run_mode_drill_desc,
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.run_mode_live_switch),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Switch(
+                    checked = live,
+                    onCheckedChange = { checked ->
+                        if (checked) {
+                            confirming = true // 开启先确认；取消 = 保持演练（默认拒绝）
+                        } else {
+                            ClickDispatch.enableDrill()
+                        }
+                    },
+                )
+            }
         }
+    }
+
+    if (confirming) {
+        AlertDialog(
+            onDismissRequest = { confirming = false },
+            title = { Text(stringResource(R.string.run_mode_live_confirm_title)) },
+            text = { Text(stringResource(R.string.run_mode_live_confirm_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        ClickDispatch.enableLive()
+                        confirming = false
+                    },
+                ) {
+                    Text(stringResource(R.string.run_mode_confirm_ok))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirming = false }) {
+                    Text(stringResource(R.string.run_mode_confirm_cancel))
+                }
+            },
+        )
     }
 }
 

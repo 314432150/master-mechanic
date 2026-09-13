@@ -1,7 +1,7 @@
 package com.example.mastermechanic.recognition
 
 import com.example.mastermechanic.calibration.CalibrationCodec
-import com.example.mastermechanic.decision.ActiveSignalSelector
+import com.example.mastermechanic.decision.ExpectedSignals
 import com.example.mastermechanic.decision.RecognitionLoop
 import com.example.mastermechanic.decision.SignalStateMapping
 import com.example.mastermechanic.decision.UiState
@@ -369,20 +369,20 @@ class SpeedupProbeTest {
         val rules = data.stateRules.map { SignalStateMapping.Rule(it.state, it.signalNames.toSet()) }
         val specs = data.signals.map { SignalSpec(it.name, it.window, it.templates) }
 
-        fun loop(selector: ActiveSignalSelector?): RecognitionLoop = RecognitionLoop(
+        fun loop(expected: ExpectedSignals): RecognitionLoop = RecognitionLoop(
             signals = specs,
             params = data.params,
             mapping = SignalStateMapping(rules),
-            selector = selector,
+            expectedSignals = expected,
         )
 
         /** 跑整套：第 1 轮预热，后 2 轮记录每帧耗时与状态（状态序列在两轮间应一致）。 */
-        fun run(selector: ActiveSignalSelector?): Triple<List<Long>, List<UiState>, List<Int>> {
+        fun run(expected: ExpectedSignals): Triple<List<Long>, List<UiState>, List<Int>> {
             var times: List<Long> = emptyList()
             var states: List<UiState> = emptyList()
             var searched: List<Int> = emptyList()
             repeat(3) { pass ->
-                val loop = loop(selector)
+                val loop = loop(expected)
                 val t = ArrayList<Long>(files.size)
                 val s = ArrayList<UiState>(files.size)
                 val n = ArrayList<Int>(files.size)
@@ -392,7 +392,7 @@ class SpeedupProbeTest {
                     val result = loop.process(gray, isForeground = true)
                     t += (System.nanoTime() - started) / 1_000_000
                     s += result.state
-                    n += result.searched?.size ?: data.signals.size
+                    n += result.searched.size
                 }
                 if (pass == 1) {
                     times = t
@@ -405,13 +405,14 @@ class SpeedupProbeTest {
             return Triple(times, states, searched)
         }
 
-        // 附加集：产物暂无 tutorial_* 信号（T1-8a 未标定），当前只能附加已标定的 popup_close
+        // T2-1：生产路径已改为「期望集合驱动」（不外扩、不兜底）。本探针为**对比搜索成本**保留三种试验口径：
+        // ① 全集（ExpectedSignals.ALL）——等价改动前的「全扫」；
+        // ② 试验性复刻旧「按状态子集」（仅供成本对比，生产已无此路径）；
+        // ③ 子集 + 附加集（产物暂无 tutorial_* 信号，只能附加已标定的 popup_close）
         val attachedAll = UiState.entries.filter { it.isCandidate }.associateWith { setOf("popup_close") }
-        val (fullTimes, fullStates, _) = run(null)
-        val (subsetTimes, subsetStates, subsetSearched) = run(ActiveSignalSelector.fromRules(rules))
-        val (attachedTimes, attachedStates, attachedSearched) = run(
-            ActiveSignalSelector.fromRules(rules, attached = attachedAll),
-        )
+        val (fullTimes, fullStates, _) = run(ExpectedSignals.ALL)
+        val (subsetTimes, subsetStates, subsetSearched) = run(StateSubsetExpected(rules))
+        val (attachedTimes, attachedStates, attachedSearched) = run(StateSubsetExpected(rules, attachedAll))
 
         fun stats(times: List<Long>): Triple<Double, Double, Double> {
             val sorted = times.sorted()
@@ -451,9 +452,10 @@ class SpeedupProbeTest {
         lines += "全扫状态分布：" + fullStates.groupingBy { it }.eachCount().entries.joinToString(" / ") { "${it.key}=${it.value}" }
         lines += "子集状态分布：" + subsetStates.groupingBy { it }.eachCount().entries.joinToString(" / ") { "${it.key}=${it.value}" }
         lines += ""
-        lines += "说明：采集图是**逐帧换场景**的序列，未知状态（无信号命中）必然全扫，因此整体提速偏低；"
-        lines += "T1-13 取消补扫后，状态切换轮**不再**全扫（改为连续未命中 → 转未知 → 全扫），"
-        lines += "故本探针的「状态序列差异」在 T1-13 后会变大——这是预期行为，不是回归。"
+        lines += "说明：采集图是**逐帧换场景**的序列，未知状态（无信号命中）必然搜全集，因此整体提速偏低；"
+        lines += "T1-13 取消补扫、T2-1 改为期望集合驱动后，生产路径不再有「全扫兜底」——"
+        lines += "本探针的「全扫 / 子集」两列只是**成本对比口径**（子集列由探针自带的模拟源复刻旧口径），"
+        lines += "故「状态序列差异」变大属预期行为，不是回归。"
         lines += "真实运行时会在同一界面连续停留多轮，应以「稳态帧」为准："
         lines += ""
         lines += "子集模式「每帧实际搜索信号数」分布（7 = 全扫）：" +
@@ -925,5 +927,31 @@ class SpeedupProbeTest {
         const val DEVICE_DESKTOP_RATIO = 27.0
 
         fun fmt(value: Double): String = String.format(Locale.ROOT, "%.2f", value)
+    }
+
+    /**
+     * 试验用「按状态选子集」模拟源——**仅探针用于成本对比**，复刻 T1-10g 的旧口径
+     * （状态未知 → 全集；否则当前状态的信号 ∪ 附加集；无信号的状态回落全集）。
+     *
+     * 生产路径已无此逻辑：T2-1 起搜索范围一律由外部注入的期望集合决定。
+     * 状态近似用「上一轮命中」而非滞回结论（探针只关心每帧搜索几个信号的成本）。
+     */
+    private class StateSubsetExpected(
+        private val rules: List<SignalStateMapping.Rule>,
+        private val attached: Map<UiState, Set<String>> = emptyMap(),
+    ) : ExpectedSignals {
+
+        private var current: UiState = UiState.UNKNOWN
+
+        override fun expected(known: Set<String>): Set<String> {
+            if (current == UiState.UNKNOWN) return known
+            val own = rules.firstOrNull { it.state == current }?.signalNames.orEmpty()
+            val subset = own + attached[current].orEmpty()
+            return if (subset.isEmpty()) known else subset
+        }
+
+        override fun onRound(hits: Set<UiState>) {
+            hits.minByOrNull { it.ordinal }?.let { current = it }
+        }
     }
 }

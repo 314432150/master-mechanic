@@ -1,0 +1,220 @@
+09-13 21:06:09.574 31654 31654 I MM-Foreground: 前台状态变化: FOREGROUND -> NOT_FOREGROUND（来源: 周期复核）
+09-13 21:06:09.605 31654 31654 I MM-Floating: 悬浮窗已移除
+09-13 21:06:09.686 31654 31654 I MM-Foreground: 前台状态变化: NOT_FOREGROUND -> FOREGROUND（来源: 窗口事件）
+09-13 21:06:09.699 31654 31654 I MM-Floating: 悬浮窗已挂载（状态：未知）
+09-13 21:06:50.116 31654 31654 I MM-Foreground: 前台状态变化: FOREGROUND -> NOT_FOREGROUND（来源: 窗口事件）
+09-13 21:06:50.118 31654 31654 I MM-Floating: 悬浮窗已移除
+09-13 21:06:51.612 12927 12940 I artd    : GetBestInfo: odex next to the dex file (/data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/oat/arm64/base.odex) is kOatUpToDate with filter 'speed-profile' executable 'false'
+09-13 21:06:51.641 12927 12940 I artd    : GetBestInfo: odex next to the dex file (/data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/oat/arm64/base.odex) is kOatUpToDate with filter 'speed-profile' executable 'false'
+09-13 21:06:52.775 13998 13998 I nt.mm:appbrand1: Thread[1,tid=13998,Native,Thread*=0xb400006f2e65af50,peer=0x55acf78,"main"] recursive attempt to load library "/data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libtrace-canary.so"
+09-13 21:06:52.775 13999 13999 I nt.mm:appbrand0: Thread[1,tid=13999,Native,Thread*=0xb400006f2e65af50,peer=0x55acf78,"main"] recursive attempt to load library "/data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libtrace-canary.so"
+09-13 21:06:52.775 13999 13999 I nt.mm:appbrand0: Thread[1,tid=13999,Native,Thread*=0xb400006f2e65af50,peer=0x55acf78,"main"] recursive attempt to load library "/data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libtrace-canary.so"
+09-13 21:06:52.775 13998 13998 I nt.mm:appbrand1: Thread[1,tid=13998,Native,Thread*=0xb400006f2e65af50,peer=0x55acf78,"main"] recursive attempt to load library "/data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libtrace-canary.so"
+09-13 21:06:52.775 13999 13999 I nt.mm:appbrand0: Thread[1,tid=13999,Native,Thread*=0xb400006f2e65af50,peer=0x55acf78,"main"] recursive attempt to load library "/data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libtrace-canary.so"
+09-13 21:06:52.775 13998 13998 I nt.mm:appbrand1: Thread[1,tid=13998,Native,Thread*=0xb400006f2e65af50,peer=0x55acf78,"main"] recursive attempt to load library "/data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libtrace-canary.so"
+09-13 21:06:52.970 13999 14342 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libvoipCodec.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes7.dex): ok
+09-13 21:06:52.970 13998 14333 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libvoipCodec.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes7.dex): ok
+09-13 21:06:52.971 13999 14343 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwechatnormsg.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes7.dex): ok
+09-13 21:06:52.973 13998 14340 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwechatnormsg.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes7.dex): ok
+09-13 21:06:52.974 13999 14332 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libcommonimgdec.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes7.dex): ok
+09-13 21:06:52.977 13998 14339 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libcommonimgdec.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes7.dex): ok
+09-13 21:06:52.986 13998 14334 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libandromeda.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes7.dex): ok
+09-13 21:06:52.995 13999 14332 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwechatcommon.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes7.dex): ok
+09-13 21:06:52.996 13998 14339 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwechatcommon.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes7.dex): ok
+09-13 21:06:53.005 13998 14334 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwechatmm.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes7.dex): ok
+09-13 21:06:53.071 13998 14479 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libhardcoder.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes7.dex): ok
+09-13 21:06:53.075 13998 14467 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libcso.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.084 13999 14456 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libhardcoder.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes7.dex): ok
+09-13 21:06:53.086 13999 14452 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libcso.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.087 13998 14464 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwechatbacktrace.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.088 13998 14462 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmatrix-fd.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.090 13998 14467 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmmnode.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.091 13998 14467 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libcrypto.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.096 13998 14065 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmmskia.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.097 13998 14467 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwechatboost.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.100 13998 14464 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmatrix-junwind.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.103 13999 14460 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwechatbacktrace.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.105 13998 14467 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmmj2v8.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.118 13998 14065 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libnative-iv.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.119 13998 14535 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libssl.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.122 13999 14460 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmatrix-junwind.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.123 13998 14464 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwxperf-tkill.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.129 13998 14467 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwxa-runtime-binding.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.129 13999 14568 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libcrypto.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.130 13998 14535 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libminizip.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.130 13999 14568 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libssl.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.131 13999 14568 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwechatboost.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.132 13999 14449 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmatrix-fd.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.133 13998 14065 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmagicbrush-nano.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.133 13999 14460 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwxperf-tkill.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.136 13999 14568 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libminizip.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.139 13999 14568 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmmnode.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.142 13998 14535 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libweapp_core.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.154 13998 14464 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmatrix-stack-tracer.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.155 13999 14568 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libweapp_core.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.162 13998 14273 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libowl.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.164 13998 14273 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libzlog_binding.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.176 13998 14273 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmatrix-mallctl.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.200 13999 14452 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmmj2v8.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.212 13999 14452 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwxa-runtime-binding.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.242 13999 14460 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmatrix-stack-tracer.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.311 13999 14249 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libowl.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.313 13999 14249 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libzlog_binding.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.325 13998 14535 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmmudp.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.347 13998 14535 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmmtcp.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.358 13998 14535 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmmlockstep.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.391 13998 14535 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwxVcodec3.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.400 13998 14535 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwxVcodec1.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.401 13998 14535 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libxffmpeg.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.404 13998 14535 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmmmedia.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.414 13998 14535 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwxaudio.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:53.489 13999 14278 D nativeloader: Load /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libmatrix-mallctl.so using class loader ns clns-11 (caller=/data/user/0/com.tencent.mm/tinker/patch-f656cefd/dex/tinker_classN.apk!classes12.dex): ok
+09-13 21:06:54.028 13999 13999 I XWeb.Core.fake_dlfcn: 6d158ca000-6d15954000 r-xp 00000000 fe:4e 2163472                        /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwechatxlog.so
+09-13 21:06:54.028 13999 13999 I XWeb.Core.fake_dlfcn: /data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libwechatxlog.so loaded in Android at 0x6d158ca000
+09-13 21:06:55.544 12927 12940 I artd    : GetBestInfo: odex next to the dex file (/data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/oat/arm64/base.odex) is kOatUpToDate with filter 'speed-profile' executable 'false'
+09-13 21:06:55.554 12927 12940 I artd    : GetBestInfo: odex next to the dex file (/data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/oat/arm64/base.odex) is kOatUpToDate with filter 'speed-profile' executable 'false'
+09-13 21:06:55.924 14989 14989 I XWeb.Core: [XWEB_MULTI_PROCESS][Linker]setLibraryPath:/data/app/~~iV6o5jCL1EXyaCUM3vl8iQ==/com.tencent.mm-kRIs6x-9OFz1d5Dckr82MA==/lib/arm64/libxweb_linker.so
+09-13 21:07:48.226 23029 23029 E adbd    : service_to_fd shell,v2,TERM=xterm-256color:export ANDROID_LOG_TAGS=''; exec logcat '-T' '50' '-v' 'threadtime' '-s' 'MM-Capture:V' 'MM-UiState:V' 'MM-Foreground:V' 'MM-Floating:V' 'MM-Marker:V'
+09-13 21:08:26.217 20617 20617 I MM-Capture: 标定产物已加载：信号 10 个（其中锚点 1 个），标定帧 1440x3168
+09-13 21:08:26.217 20617 20617 I MM-Capture: 采集会话状态变化: INACTIVE -> ACTIVE（来源: 用户授权会话建立）
+09-13 21:08:26.276 20617 20617 I MM-Foreground: 前台状态变化: NOT_FOREGROUND -> FOREGROUND（来源: 窗口事件）
+09-13 21:08:26.284 20617 20617 I MM-Floating: 悬浮窗已挂载（状态：未知）
+09-13 21:08:27.079 20617 28155 I MM-Capture: 本轮搜索集合变化: 「popup_close、popup_close2、popup_close5」
+09-13 21:08:27.079 20617 28155 I MM-Capture: 识别循环恢复：目标回到前台
+09-13 21:08:27.079 20617 28155 I MM-Capture: FR-01 不动作: 未见活动弹窗
+09-13 21:08:36.465 20617 28155 I MM-Capture: 帧管线统计: 窗口 10140ms 接收 145 帧 / 处理 15 帧；识别 16 轮（信号 9 个），实际参与匹配 48 次（16 轮：单信号 0 轮 / 多信号 16 轮 / 不搜 0 轮）；当前界面状态「未知」；最近帧 1440x3168
+09-13 21:08:45.766 20617 28155 I MM-Capture: FR-01 不动作: 弹窗刚命中、尚未确认（等下一轮）
+09-13 21:08:46.155 20617 28155 I MM-Capture: 状态转移: 未知 -> 活动弹窗（连续 2 次命中（进入））；本轮搜索 「popup_close、popup_close2、popup_close5」
+09-13 21:08:46.155 20617 28155 I MM-UiState: 界面状态变化: 未知 -> 活动弹窗（连续 2 次命中（进入））
+09-13 21:08:46.179 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-1
+09-13 21:08:46.179 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-1）
+09-13 21:08:46.360 20617 28155 I MM-Capture: 帧管线统计: 窗口 10003ms 接收 300 帧 / 处理 26 帧；识别 26 轮（信号 9 个），实际参与匹配 78 次（26 轮：单信号 0 轮 / 多信号 26 轮 / 不搜 0 轮）；当前界面状态「活动弹窗」；最近帧 1440x3168
+09-13 21:08:46.560 20617 28155 I MM-Capture: 节流间隔切换: 200ms -> 1000ms（确实稳定轮）
+09-13 21:08:46.588 20617 28155 I MM-Capture: FR-01 不动作: 未标定 / 未命中关闭控件锚点（不猜位置）
+09-13 21:08:47.788 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-2
+09-13 21:08:47.788 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-2）
+09-13 21:08:48.995 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-3
+09-13 21:08:48.995 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-3）
+09-13 21:08:50.191 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-4
+09-13 21:08:50.191 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-4）
+09-13 21:08:51.401 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-5
+09-13 21:08:51.401 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-5）
+09-13 21:08:52.600 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-6
+09-13 21:08:52.600 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-6）
+09-13 21:08:53.803 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-7
+09-13 21:08:53.803 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-7）
+09-13 21:08:55.021 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-8
+09-13 21:08:55.021 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-8）
+09-13 21:08:56.225 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-9
+09-13 21:08:56.225 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-9）
+09-13 21:08:56.364 20617 28155 I MM-Capture: 帧管线统计: 窗口 10003ms 接收 505 帧 / 处理 9 帧；识别 9 轮（信号 9 个），实际参与匹配 27 次（9 轮：单信号 0 轮 / 多信号 9 轮 / 不搜 0 轮）；当前界面状态「活动弹窗」；最近帧 1440x3168
+09-13 21:08:57.443 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-10
+09-13 21:08:57.443 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-10）
+09-13 21:08:58.662 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-11
+09-13 21:08:58.662 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-11）
+09-13 21:08:59.869 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-12
+09-13 21:08:59.869 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-12）
+09-13 21:09:01.080 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-13
+09-13 21:09:01.080 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-13）
+09-13 21:09:02.290 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-14
+09-13 21:09:02.290 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-14）
+09-13 21:09:03.507 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-15
+09-13 21:09:03.507 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-15）
+09-13 21:09:04.733 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-16
+09-13 21:09:04.733 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-16）
+09-13 21:09:05.931 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-17
+09-13 21:09:05.931 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-17）
+09-13 21:09:06.366 20617 28155 I MM-Capture: 帧管线统计: 窗口 10002ms 接收 511 帧 / 处理 8 帧；识别 8 轮（信号 9 个），实际参与匹配 24 次（8 轮：单信号 0 轮 / 多信号 8 轮 / 不搜 0 轮）；当前界面状态「活动弹窗」；最近帧 1440x3168
+09-13 21:09:07.143 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-18
+09-13 21:09:07.143 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-18）
+09-13 21:09:08.357 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-19
+09-13 21:09:08.357 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-19）
+09-13 21:09:09.562 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-20
+09-13 21:09:09.562 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-20）
+09-13 21:09:10.766 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-21
+09-13 21:09:10.767 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-21）
+09-13 21:09:11.983 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-22
+09-13 21:09:11.983 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-22）
+09-13 21:09:13.195 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-23
+09-13 21:09:13.195 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-23）
+09-13 21:09:14.411 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-24
+09-13 21:09:14.411 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-24）
+09-13 21:09:15.631 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-25
+09-13 21:09:15.631 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-25）
+09-13 21:09:16.368 20617 28155 I MM-Capture: 帧管线统计: 窗口 10003ms 接收 512 帧 / 处理 8 帧；识别 8 轮（信号 9 个），实际参与匹配 24 次（8 轮：单信号 0 轮 / 多信号 8 轮 / 不搜 0 轮）；当前界面状态「活动弹窗」；最近帧 1440x3168
+09-13 21:09:16.832 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-26
+09-13 21:09:16.832 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-26）
+09-13 21:09:18.043 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-27
+09-13 21:09:18.043 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-27）
+09-13 21:09:19.258 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-28
+09-13 21:09:19.258 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-28）
+09-13 21:09:20.474 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-29
+09-13 21:09:20.474 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-29）
+09-13 21:09:21.683 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-30
+09-13 21:09:21.683 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-30）
+09-13 21:09:22.879 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-31
+09-13 21:09:22.879 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-31）
+09-13 21:09:24.102 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-32
+09-13 21:09:24.102 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-32）
+09-13 21:09:25.306 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-33
+09-13 21:09:25.306 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-33）
+09-13 21:09:26.519 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-34
+09-13 21:09:26.519 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-34）
+09-13 21:09:26.521 20617 28155 I MM-Capture: 帧管线统计: 窗口 10153ms 接收 512 帧 / 处理 9 帧；识别 9 轮（信号 9 个），实际参与匹配 27 次（9 轮：单信号 0 轮 / 多信号 9 轮 / 不搜 0 轮）；当前界面状态「活动弹窗」；最近帧 1440x3168
+09-13 21:09:27.743 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-35
+09-13 21:09:27.743 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-35）
+09-13 21:09:28.950 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-36
+09-13 21:09:28.950 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-36）
+09-13 21:09:30.157 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-37
+09-13 21:09:30.158 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-37）
+09-13 21:09:31.374 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-38
+09-13 21:09:31.374 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-38）
+09-13 21:09:32.596 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-39
+09-13 21:09:32.597 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-39）
+09-13 21:09:33.792 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-40
+09-13 21:09:33.792 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-40）
+09-13 21:09:34.990 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-41
+09-13 21:09:34.990 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-41）
+09-13 21:09:36.210 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-42
+09-13 21:09:36.211 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-42）
+09-13 21:09:36.522 20617 28155 I MM-Capture: 帧管线统计: 窗口 10001ms 接收 512 帧 / 处理 8 帧；识别 8 轮（信号 9 个），实际参与匹配 24 次（8 轮：单信号 0 轮 / 多信号 8 轮 / 不搜 0 轮）；当前界面状态「活动弹窗」；最近帧 1440x3168
+09-13 21:09:37.424 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-43
+09-13 21:09:37.424 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-43）
+09-13 21:09:38.639 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-44
+09-13 21:09:38.639 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-44）
+09-13 21:09:39.849 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-45
+09-13 21:09:39.849 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-45）
+09-13 21:09:41.058 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-46
+09-13 21:09:41.058 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-46）
+09-13 21:09:42.269 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-47
+09-13 21:09:42.269 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-47）
+09-13 21:09:43.484 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-48
+09-13 21:09:43.485 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-48）
+09-13 21:09:44.698 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-49
+09-13 21:09:44.698 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-49）
+09-13 21:09:45.913 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-50
+09-13 21:09:45.913 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-50）
+09-13 21:09:46.541 20617 28155 I MM-Capture: 帧管线统计: 窗口 10018ms 接收 515 帧 / 处理 8 帧；识别 8 轮（信号 9 个），实际参与匹配 24 次（8 轮：单信号 0 轮 / 多信号 8 轮 / 不搜 0 轮）；当前界面状态「活动弹窗」；最近帧 1440x3168
+09-13 21:09:47.125 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-51
+09-13 21:09:47.125 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-51）
+09-13 21:09:48.336 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-52
+09-13 21:09:48.336 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-52）
+09-13 21:09:49.547 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-53
+09-13 21:09:49.547 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-53）
+09-13 21:09:50.753 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-54
+09-13 21:09:50.753 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-54）
+09-13 21:09:51.961 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-55
+09-13 21:09:51.961 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-55）
+09-13 21:09:53.165 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-56
+09-13 21:09:53.165 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-56）
+09-13 21:09:54.363 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-57
+09-13 21:09:54.364 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-57）
+09-13 21:09:55.558 20617 28155 I MM-Capture: 单帧处理耗时统计: 连续 100 帧，总 P95 267.9ms（灰度 18.5ms / 识别 259.0ms），平均 180.1ms，最大 878.9ms（NFR-01 阈值 20ms）
+09-13 21:09:55.558 20617 28155 I MM-Capture: 信号耗时统计: popup_close 连续 100 次，P95 122.1ms，平均 78.9ms，最大 442.9ms
+09-13 21:09:55.558 20617 28155 I MM-Capture: 信号耗时统计: popup_close5 连续 100 次，P95 34.0ms，平均 20.8ms，最大 134.0ms
+09-13 21:09:55.558 20617 28155 I MM-Capture: 信号耗时统计: popup_close2 连续 100 次，P95 105.7ms，平均 67.0ms，最大 139.5ms
+09-13 21:09:55.581 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-58
+09-13 21:09:55.581 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-58）
+09-13 21:09:56.543 20617 28155 I MM-Capture: 帧管线统计: 窗口 10002ms 接收 514 帧 / 处理 8 帧；识别 8 轮（信号 9 个），实际参与匹配 24 次（8 轮：单信号 0 轮 / 多信号 8 轮 / 不搜 0 轮）；当前界面状态「活动弹窗」；最近帧 1440x3168
+09-13 21:09:56.794 20617 28155 I MM-Click: 点击拒绝（演练模式：只识别不下发）｜来源: FR-01 活动弹窗自动关闭｜锚点: popup_close_anchor｜点: (1219, 1348)｜状态: 活动弹窗｜前台: true｜模式: 演练（只识别）｜判定: fr01-59
+09-13 21:09:56.794 20617 28155 I MM-Capture: FR-01 判定: 活动弹窗已确认，关闭控件「popup_close_anchor」点击点 (1219, 1348)（运行帧坐标），第 1 次尝试 → 演练模式：只识别不下发（判定 fr01-59）

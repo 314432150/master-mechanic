@@ -1,5 +1,6 @@
 package com.example.mastermechanic.calibration
 
+import com.example.mastermechanic.decision.ExpectedSignals
 import com.example.mastermechanic.decision.UiState
 import com.example.mastermechanic.recognition.MatchParams
 import com.example.mastermechanic.recognition.SearchWindow
@@ -14,7 +15,8 @@ import org.junit.Test
 
 /**
  * 标定产物直接写入单测（T1-5l，纯逻辑）：覆盖写入 / 覆盖同名 / 状态重归属 / 几何校验 /
- * 删除与删空 / 参数编辑 / 参数解析，以及随草稿模型迁入的选区 → 搜索窗口策略。
+ * 删除与删空 / 参数编辑 / 参数解析，同状态多条记录的命名（T2-2 方案 A），
+ * 以及随草稿模型迁入的选区 → 搜索窗口策略。
  *
  * 全部以帧比例与帧像素表达，不含任何设备绑定值。
  */
@@ -37,6 +39,7 @@ class CalibrationSignalsTest {
         params: MatchParams = defaultParams,
         frameWidth: Int = 1000,
         frameHeight: Int = 800,
+        role: SignalRole = SignalRole.MARKER,
     ): CalibrationData = CalibrationSignals.upsert(
         current = current,
         name = name,
@@ -46,7 +49,173 @@ class CalibrationSignalsTest {
         params = params,
         frameWidth = frameWidth,
         frameHeight = frameHeight,
+        role = role,
     )
+
+    // --- 角色（T2-3）：标志与锚点分流，同一状态可两者都有 ---
+
+    @Test
+    fun upsertKeepsMarkersAndAnchorsInSeparateRuleLists() {
+        var data = upsert(null, "popup_close", UiState.ACTIVITY_POPUP)
+        data = upsert(data, "popup_close_x", UiState.ACTIVITY_POPUP, role = SignalRole.ANCHOR)
+
+        val rule = data.stateRules.single()
+        assertEquals(UiState.ACTIVITY_POPUP, rule.state)
+        assertEquals(listOf("popup_close"), rule.signalNames)
+        assertEquals(listOf("popup_close_x"), rule.anchorNames)
+        assertEquals(listOf("popup_close_x"), data.anchorsFor(UiState.ACTIVITY_POPUP))
+        // 锚点不参与状态判定：识别循环只吃标志
+        assertEquals(listOf("popup_close"), data.markerSpecs().map { it.name })
+        assertEquals(1, data.toLoop(ExpectedSignals.ALL).signalCount)
+    }
+
+    @Test
+    fun upsertReassignsRoleOfSameName() {
+        val asMarker = upsert(null, "popup_close_x", UiState.ACTIVITY_POPUP)
+        val asAnchor = upsert(asMarker, "popup_close_x", UiState.ACTIVITY_POPUP, role = SignalRole.ANCHOR)
+
+        assertEquals(SignalRole.ANCHOR, asAnchor.roleOf("popup_close_x"))
+        assertEquals(emptyList<String>(), asAnchor.stateRules.single().signalNames)
+        assertEquals(listOf("popup_close_x"), asAnchor.anchorNamesForTest())
+    }
+
+    @Test
+    fun defaultNameForDistinguishesAnchorFromMarker() {
+        assertEquals(
+            "popup_close",
+            CalibrationSignals.defaultNameFor(UiState.ACTIVITY_POPUP, SignalRole.MARKER),
+        )
+        assertEquals(
+            "popup_close_anchor",
+            CalibrationSignals.defaultNameFor(UiState.ACTIVITY_POPUP, SignalRole.ANCHOR),
+        )
+    }
+
+    @Test
+    fun markerAndAnchorOfSameStateAreWrittenAsSeparateRecords() {
+        // 同一元素两种角色 = 两条记录（§2.1）：靠角色默认名分流，互不覆盖
+        var data = upsert(
+            null,
+            CalibrationSignals.defaultNameFor(UiState.ACTIVITY_POPUP, SignalRole.MARKER),
+            UiState.ACTIVITY_POPUP,
+        )
+        data = upsert(
+            data,
+            CalibrationSignals.defaultNameFor(UiState.ACTIVITY_POPUP, SignalRole.ANCHOR),
+            UiState.ACTIVITY_POPUP,
+            role = SignalRole.ANCHOR,
+        )
+
+        assertEquals(listOf("popup_close"), data.stateRules.single().signalNames)
+        assertEquals(listOf("popup_close_anchor"), data.anchorNamesForTest())
+        assertEquals(SignalRole.ANCHOR, data.roleOf("popup_close_anchor"))
+    }
+
+    @Test
+    fun anchorDefaultNameStillAvoidsCollisionWithExistingRecords() {
+        // 锚点默认名也可能已被占用（例如先误标成标志）→ 仍走序号追加，保证产物内名称唯一
+        val data = upsert(null, "popup_close_anchor", UiState.ACTIVITY_POPUP)
+        assertEquals(
+            "popup_close_anchor2",
+            CalibrationSignals.nextName(
+                data,
+                CalibrationSignals.defaultNameFor(UiState.ACTIVITY_POPUP, SignalRole.ANCHOR),
+            ),
+        )
+    }
+
+    /** 便利断言：唯一规则的锚点列表（避免测试里反复写 `stateRules.single().anchorNames`）。 */
+    private fun CalibrationData.anchorNamesForTest(): List<String> = stateRules.single().anchorNames
+
+    // --- 一次框选写多个角色（T2-3g）：同一个元素既是标志又是锚点 → 一次写两条记录 ---
+
+    @Test
+    fun orderedRolesFollowsMarkerThenAnchor() {
+        // 顺序固定（标志 → 锚点）：界面排布、消息文本与命名分配都依赖它，不能随集合迭代顺序变
+        assertEquals(
+            listOf(SignalRole.MARKER, SignalRole.ANCHOR),
+            CalibrationSignals.orderedRoles(setOf(SignalRole.ANCHOR, SignalRole.MARKER)),
+        )
+        assertEquals(listOf(SignalRole.ANCHOR), CalibrationSignals.orderedRoles(setOf(SignalRole.ANCHOR)))
+        assertEquals(emptyList<SignalRole>(), CalibrationSignals.orderedRoles(emptySet()))
+    }
+
+    @Test
+    fun namesForBothRolesGivesOneNamePerRole() {
+        val planned = CalibrationSignals.namesFor(null, UiState.ACTIVITY_POPUP, SignalRole.entries.toSet())
+        assertEquals(
+            listOf(SignalRole.MARKER to "popup_close", SignalRole.ANCHOR to "popup_close_anchor"),
+            planned,
+        )
+    }
+
+    @Test
+    fun namesForAvoidsExistingNamesAndNamesWithinTheBatch() {
+        val occupiedMarker = upsert(null, "popup_close", UiState.ACTIVITY_POPUP)
+        assertEquals(
+            listOf(
+                SignalRole.MARKER to "popup_close2",
+                SignalRole.ANCHOR to "popup_close_anchor",
+            ),
+            CalibrationSignals.namesFor(occupiedMarker, UiState.ACTIVITY_POPUP, SignalRole.entries.toSet()),
+        )
+
+        // 连锚点默认名也被占用（例如先误标成标志）：两条各自让位，批内不重名
+        val both = upsert(occupiedMarker, "popup_close_anchor", UiState.ACTIVITY_POPUP)
+        val planned = CalibrationSignals.namesFor(both, UiState.ACTIVITY_POPUP, SignalRole.entries.toSet())
+        assertEquals(listOf("popup_close2", "popup_close_anchor2"), planned.map { it.second })
+        assertEquals(2, planned.map { it.second }.toSet().size)
+    }
+
+    @Test
+    fun namesForRejectsUnknownStateAndEmptyRoles() {
+        assertThrows(IllegalArgumentException::class.java) {
+            CalibrationSignals.namesFor(null, UiState.UNKNOWN, setOf(SignalRole.MARKER))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            CalibrationSignals.namesFor(null, UiState.ACTIVITY_POPUP, emptySet())
+        }
+    }
+
+    @Test
+    fun writingBothRolesOnceYieldsTwoRecordsSharingGeometry() {
+        // 一次框选写「标志 + 锚点」：两条记录共用本次提取的模板与搜索窗口（只解码 / 提取一次），角色各自成立
+        val sharedWindow = window(0.6, 0.55, 0.95, 0.6)
+        val sharedTemplate = template(w = 12, h = 9, seed = 7L)
+        var data: CalibrationData? = null
+        CalibrationSignals.namesFor(null, UiState.ACTIVITY_POPUP, SignalRole.entries.toSet())
+            .forEach { (role, name) ->
+                data = upsert(
+                    data,
+                    name,
+                    UiState.ACTIVITY_POPUP,
+                    window = sharedWindow,
+                    template = sharedTemplate,
+                    role = role,
+                )
+            }
+        val written = requireNotNull(data)
+
+        assertEquals(listOf("popup_close", "popup_close_anchor"), written.signals.map { it.name })
+        assertEquals(listOf(sharedWindow, sharedWindow), written.signals.map { it.window })
+        assertEquals(listOf(sharedTemplate, sharedTemplate), written.signals.map { it.templates.single() })
+        assertEquals(1, written.stateRules.size)
+        assertEquals(listOf("popup_close"), written.stateRules.single().signalNames)
+        assertEquals(listOf("popup_close_anchor"), written.stateRules.single().anchorNames)
+        // 锚点仍不进状态判定（锚点只用于点击）
+        assertEquals(listOf("popup_close"), written.markerSpecs().map { it.name })
+    }
+
+    @Test
+    fun countOfCountsPerRoleInsteadOfMixing() {
+        var data = upsert(null, "popup_close", UiState.ACTIVITY_POPUP)
+        data = upsert(data, "popup_close_x", UiState.ACTIVITY_POPUP, role = SignalRole.ANCHOR)
+
+        assertEquals(1, CalibrationSignals.countOf(data, UiState.ACTIVITY_POPUP, SignalRole.MARKER))
+        assertEquals(1, CalibrationSignals.countOf(data, UiState.ACTIVITY_POPUP, SignalRole.ANCHOR))
+        // 该状态还没有规则 = 0（写入提示不抛异常）
+        assertEquals(0, CalibrationSignals.countOf(data, UiState.FARM, SignalRole.MARKER))
+    }
 
     // --- 覆盖写入：首条 / 同名 / 状态重归属 ---
 
@@ -112,6 +281,66 @@ class CalibrationSignalsTest {
 
         assertEquals(listOf("hall", "farm"), second.signals.map { it.name })
         assertEquals(MatchParams(0.9, 0.2, 7), second.params)
+    }
+
+    // --- 同状态多条记录（T2-2 方案 A：默认名 + 自动序号，追加不覆盖） ---
+
+    @Test
+    fun nextNameUsesBaseWhenUnoccupied() {
+        assertEquals("popup_close", CalibrationSignals.nextName(null, "popup_close"))
+        val data = upsert(null, "hall", UiState.HALL)
+        assertEquals("popup_close", CalibrationSignals.nextName(data, "popup_close"))
+    }
+
+    @Test
+    fun nextNameAppendsSequenceSkippingOccupiedNames() {
+        var data = upsert(null, "popup_close", UiState.ACTIVITY_POPUP)
+        assertEquals("popup_close2", CalibrationSignals.nextName(data, "popup_close"))
+
+        data = upsert(data, "popup_close2", UiState.ACTIVITY_POPUP)
+        assertEquals("popup_close3", CalibrationSignals.nextName(data, "popup_close"))
+
+        // 序号从 2 起逐位取第一个空闲名（手工产物缺了 3 时会补 3，不复用被占的 4）
+        data = upsert(data, "popup_close4", UiState.ACTIVITY_POPUP)
+        assertEquals("popup_close3", CalibrationSignals.nextName(data, "popup_close"))
+    }
+
+    @Test
+    fun nextNameAvoidsNamesHeldByOtherStates() {
+        // 信号名在产物内全局唯一：默认名被别的状态占用时同样让位（防产物校验失败）
+        val data = upsert(null, "popup_close", UiState.HALL)
+        assertEquals("popup_close2", CalibrationSignals.nextName(data, "popup_close"))
+    }
+
+    @Test
+    fun nextNameRejectsInvalidBase() {
+        assertThrows(IllegalArgumentException::class.java) {
+            CalibrationSignals.nextName(null, "bad|name")
+        }
+    }
+
+    @Test
+    fun appendingStylesKeepsSingleRuleAndSeparateWindows() {
+        var data = upsert(
+            null,
+            CalibrationSignals.nextName(null, "popup_close"),
+            UiState.ACTIVITY_POPUP,
+            window = window(0.6, 0.55, 0.95, 0.6),
+        )
+        data = upsert(
+            data,
+            CalibrationSignals.nextName(data, "popup_close"),
+            UiState.ACTIVITY_POPUP,
+            window = window(0.85, 0.02, 0.97, 0.08),
+        )
+
+        // 同一状态的多条记录合成一条规则（任一命中即该状态命中），但各自保留自己的搜索窗口
+        assertEquals(1, data.stateRules.size)
+        assertEquals(UiState.ACTIVITY_POPUP, data.stateRules[0].state)
+        assertEquals(listOf("popup_close", "popup_close2"), data.stateRules[0].signalNames)
+        assertEquals(listOf("popup_close", "popup_close2"), data.signals.map { it.name })
+        assertEquals(window(0.6, 0.55, 0.95, 0.6), data.signals[0].window)
+        assertEquals(window(0.85, 0.02, 0.97, 0.08), data.signals[1].window)
     }
 
     // --- 几何校验与非法输入（T1-5l ⑥） ---

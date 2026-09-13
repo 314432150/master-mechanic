@@ -22,22 +22,34 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Process
 import android.os.SystemClock
-import android.util.Log
+import com.example.mastermechanic.log.MmLog
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import com.example.mastermechanic.MainActivity
 import com.example.mastermechanic.R
+import com.example.mastermechanic.action.ClickDispatch
+import com.example.mastermechanic.action.PopupCloseController
+import com.example.mastermechanic.action.PopupRoundInput
+import com.example.mastermechanic.action.PopupRoundOutcome
+import com.example.mastermechanic.action.PopupStep
+import com.example.mastermechanic.action.PopupVerification
 import com.example.mastermechanic.calibration.CalibrationFramePool
 import com.example.mastermechanic.calibration.CalibrationStore
+import com.example.mastermechanic.calibration.SignalRole
 import com.example.mastermechanic.capture.CaptureSessionSignal
 import com.example.mastermechanic.capture.CaptureSessionStatus
 import com.example.mastermechanic.capture.FrameThrottle
 import com.example.mastermechanic.capture.FrameTimingStats
 import com.example.mastermechanic.capture.RgbaToGray
+import com.example.mastermechanic.decision.AnchorLocator
 import com.example.mastermechanic.decision.RecognitionLoop
+import com.example.mastermechanic.decision.RoundResult
+import com.example.mastermechanic.decision.UiState
 import com.example.mastermechanic.decision.UiStateSignal
 import com.example.mastermechanic.foreground.ForegroundSignal
+import com.example.mastermechanic.recognition.GrayImage
+import com.example.mastermechanic.recognition.PixelBounds
 
 /**
  * 采集会话服务（T1-2，ADR-001）：以 mediaProjection 类型前台服务承载一次采集会话。
@@ -64,6 +76,18 @@ class CaptureService : Service() {
     /** 识别循环（T1-4 接入）：会话建立时加载标定产物（T1-5）；缺失 / 解析失败回退空配置。仅帧线程访问。 */
     private var recognitionLoop = RecognitionLoop.uncalibrated()
 
+    /** 锚点定位器（T2-4）：随标定产物构建；null = 未标定产物（FR-01 不产生点击）。仅帧线程访问。 */
+    private var anchorLocator: AnchorLocator? = null
+
+    /** FR-01 弹窗闭环（T2-4）：纯逻辑决策，会话重建即复位。仅帧线程访问。 */
+    private var popupClose = PopupCloseController()
+
+    /** FR-01 判定序号（NFR-05 审计链）：与 `MM-Click` 日志的「判定: fr01-N」对齐。仅帧线程访问。 */
+    private var actionRoundSeq = 0L
+
+    /** 上一次 FR-01 不动作的原因（同一原因只记一次日志：弹窗长期在屏时"未标定锚点"会每轮成立）。仅帧线程访问。 */
+    private var lastFr01SkipNote: String? = null
+
     /** 标定产物记录的帧尺寸（0 = 未标定）；与运行帧不同时按画面区归一（T1-11c）。仅帧线程访问。 */
     private var calibratedFrameWidth = 0
     private var calibratedFrameHeight = 0
@@ -82,10 +106,17 @@ class CaptureService : Service() {
     private var lastFrameWidth = 0
     private var lastFrameHeight = 0
 
-    // 子集搜索取证（T1-13 ⑥，仅帧线程访问）：统计窗口内「实际参与匹配的信号数」分布
+    // 搜索集合取证（T2-1，仅帧线程访问）：统计窗口内「实际参与匹配的信号数」分布
     private var searchedRounds = 0L
-    private var fullScanRounds = 0L
+    private var multiSignalRounds = 0L
+    private var idleRounds = 0L
     private var searchedSymbolTotal = 0L
+
+    /**
+     * 上轮实际搜索的信号名集合（null = 本会话尚未处理过）。集合变化即记一行日志——
+     * 供真机核对期望集合注入：守护待命只搜「启动页」，命中后扩为弹窗期集合（T2-1）。仅帧线程访问。
+     */
+    private var lastSearchedNames: Set<String>? = null
 
     /** 单帧处理耗时统计（T1-9，NFR-01）：连续 100 帧一窗；总段 / 灰度段 / 识别段同窗同步记录。仅帧线程访问。 */
     private val timingStats = FrameTimingStats()
@@ -125,7 +156,7 @@ class CaptureService : Service() {
         }
         if (resultCode != Activity.RESULT_OK || resultData == null) {
             // FR-08：不静默失败——凭证缺失时明确记录并退出，不留下无会话的空服务
-            Log.w(TAG, "采集会话启动失败：缺少授权凭证，服务退出（需在前台界面重新授权）")
+            MmLog.w(TAG, "采集会话启动失败：缺少授权凭证，服务退出（需在前台界面重新授权）")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -152,12 +183,12 @@ class CaptureService : Service() {
         val projection = try {
             manager.getMediaProjection(resultCode, resultData)
         } catch (t: Exception) {
-            Log.w(TAG, "创建采集会话失败：${t.javaClass.simpleName} ${t.message}")
+            MmLog.w(TAG, "创建采集会话失败：${t.javaClass.simpleName} ${t.message}")
             stopSelf()
             return
         }
         if (projection == null) {
-            Log.w(TAG, "创建采集会话失败：系统未返回会话实例")
+            MmLog.w(TAG, "创建采集会话失败：系统未返回会话实例")
             stopSelf()
             return
         }
@@ -195,30 +226,47 @@ class CaptureService : Service() {
         val calibration = try {
             CalibrationStore.load(this)
         } catch (t: IllegalArgumentException) {
-            Log.w(TAG, "标定产物加载失败，回退未标定运行：${t.message}")
+            MmLog.w(TAG, "标定产物加载失败，回退未标定运行：${t.message}")
             null
         }
         recognitionLoop = calibration?.toLoop() ?: RecognitionLoop.uncalibrated()
+        // 锚点定位器与 FR-01 决策随会话重建（T2-4）：重试计数不跨会话（与滞回状态不跨会话同一口径）
+        anchorLocator = calibration?.toAnchorLocator()
+        popupClose = PopupCloseController()
+        actionRoundSeq = 0
+        lastFr01SkipNote = null
         calibratedFrameWidth = calibration?.frameWidth ?: 0
         calibratedFrameHeight = calibration?.frameHeight ?: 0
         frameSizeWarned = false
         if (calibration != null) {
-            Log.i(
+            // 锚点数量单独报（T2-4）：FR-01 到底能不能点，第一眼就看这条——0 个锚点时弹窗即使在屏，
+            // 闭环也只会"跳过"（宁可不点，红线 3/7）
+            val anchorCount = calibration.signals.count { it.role == SignalRole.ANCHOR }
+            MmLog.i(
                 TAG,
-                "标定产物已加载：信号 ${calibration.signals.size} 个（标定帧 ${calibration.frameWidth}x${calibration.frameHeight}）",
+                "标定产物已加载：信号 ${calibration.signals.size} 个（其中锚点 $anchorCount 个），" +
+                    "标定帧 ${calibration.frameWidth}x${calibration.frameHeight}",
             )
         } else {
-            Log.i(TAG, "未加载标定产物（未标定），以空配置运行")
+            MmLog.i(TAG, "未加载标定产物（未标定），以空配置运行")
         }
         framesReceived = 0
         framesProcessed = 0
         cyclesRun = 0
+        searchedRounds = 0
+        multiSignalRounds = 0
+        idleRounds = 0
+        searchedSymbolTotal = 0
         lastLoopFrozen = null
+        lastSearchedNames = null
         timingStats.reset()
         grayTimingStats.reset()
         detectTimingStats.reset()
         lastAppliedIntervalMs = ACTIVE_INTERVAL_MS
         lastStatsAt = SystemClock.elapsedRealtime()
+        // B5 / T2-6：会话（重）建立即回到演练——实点必须由用户在**本次会话内**显式开启，
+        // 避免切走 / 重新授权之后仍在实点状态（落实计划口径「每次会话开始前由用户明确指示『这次实点』」）。
+        ClickDispatch.enableDrill()
         CaptureSessionSignal.update(CaptureSessionStatus.ACTIVE, SOURCE_USER_CREATED)
     }
 
@@ -240,6 +288,10 @@ class CaptureService : Service() {
         frameThread = null
         // 识别循环随会话终止停止更新：界面状态信号回到「未知」（不得残留旧状态误导展示）
         UiStateSignal.reset("采集会话终止")
+        // FR-01 状态不跨会话（T2-4）：锚点定位器与重试计数一并作废
+        anchorLocator = null
+        popupClose = PopupCloseController()
+        lastFr01SkipNote = null
     }
 
     /**
@@ -279,7 +331,7 @@ class CaptureService : Service() {
             (image.width != calibratedFrameWidth || image.height != calibratedFrameHeight)
         ) {
             frameSizeWarned = true
-            Log.i(
+            MmLog.i(
                 TAG,
                 "运行画布 ${image.width}x${image.height} 与标定帧 " +
                     "${calibratedFrameWidth}x$calibratedFrameHeight 方向不同（建会话时机不同），" +
@@ -300,11 +352,12 @@ class CaptureService : Service() {
                 image.width,
                 image.height,
                 plane.rowStride,
-                recognitionLoop.windowRegions(image.width, image.height),
+                recognitionLoop.windowRegions(image.width, image.height) +
+                    anchorRegions(image.width, image.height),
             )
         } catch (t: RuntimeException) {
             // 预期外的帧布局 / 数据不足：跳过本轮（不进入滞回），记录备查（不静默失败）
-            Log.w(TAG, "帧转换失败，跳过本轮识别：${t.javaClass.simpleName} ${t.message}")
+            MmLog.w(TAG, "帧转换失败，跳过本轮识别：${t.javaClass.simpleName} ${t.message}")
             return
         }
         val grayNs = SystemClock.elapsedRealtimeNanos() - startNs
@@ -314,20 +367,25 @@ class CaptureService : Service() {
         recordSignalCosts()
         cyclesRun++
         if (!result.frozen) {
-            // T1-13 ⑥：窗口内「实际参与匹配的信号数」分布，用于自证"稳态每轮只搜 1 个"
+            // T2-1：窗口内「实际参与匹配的信号数」分布，用于自证"每轮只搜期望集合"
             searchedRounds++
-            if (result.searched == null) {
-                // 全扫轮按「本轮参与匹配的信号总数」计入：否则"匹配次数"会小于"轮数"，被误读成"少搜了"
-                fullScanRounds++
-                searchedSymbolTotal += recognitionLoop.signalCount
-            } else {
-                searchedSymbolTotal += result.searched.size
+            searchedSymbolTotal += result.searched.size
+            if (result.searched.isEmpty()) {
+                idleRounds++
+            } else if (result.searched.size > 1) {
+                multiSignalRounds++
             }
+        }
+        // T2-1：搜索集合变化（阶段推进 / 流程换步）记一行——真机复演时可直接看出
+        // 「守护待命搜入口标志（启动页 / 活动弹窗）→ 命中后扩为弹窗期集合 → 命中大厅后收回」
+        if (result.searched != lastSearchedNames) {
+            lastSearchedNames = result.searched
+            MmLog.i(TAG, "本轮搜索集合变化: " + searchedText(result.searched))
         }
 
         if (result.frozen != lastLoopFrozen) {
             lastLoopFrozen = result.frozen
-            Log.i(
+            MmLog.i(
                 TAG,
                 if (result.frozen) {
                     "识别循环冻结：目标不在前台，本轮不消耗滞回计数（FR-09）"
@@ -342,7 +400,7 @@ class CaptureService : Service() {
         if (!result.frozen) {
             val target = if (result.settled) STABLE_INTERVAL_MS else ACTIVE_INTERVAL_MS
             if (target != lastAppliedIntervalMs) {
-                Log.i(
+                MmLog.i(
                     TAG,
                     "节流间隔切换: ${lastAppliedIntervalMs}ms -> ${target}ms" +
                         "（${if (result.settled) "确实稳定轮" else "变化 / 过渡 / 未达预期轮"}）",
@@ -354,17 +412,108 @@ class CaptureService : Service() {
 
         result.transition?.let {
             // T1-13 ⑥ 取证：转移轮记录本轮实际搜索的信号名（补 T1-12 判据①⑤的取证缺口）
-            Log.i(
+            MmLog.i(
                 TAG,
                 "状态转移: ${it.from.label} -> ${it.to.label}（${it.reason}）；本轮搜索 " +
-                    (result.searched?.sorted()?.joinToString("、")?.let { names -> "「$names」" }
-                        ?: "全部信号"),
+                    searchedText(result.searched),
             )
             UiStateSignal.update(it.to, it.reason)
         }
 
+        // FR-01 弹窗闭环（T2-4）：识别 → 点击 → 验证（非前台轮由决策器自行跳过）
+        stepPopupClose(result, gray)
+
         // 节流基准回填到「本轮结束」（T1-13）：使间隔成为两轮之间的休息时间，不与单轮耗时叠加、也不退化。
         frameThrottle.markProcessedEnd(SystemClock.elapsedRealtime())
+    }
+
+    /**
+     * 锚点窗口（T2-4，T2-3b 口径）：锚点按状态启用，采集层必须把它们的窗口**一并纳入灰度转换**——
+     * 否则锚点在"只转了标志窗口"的帧上读到全零像素，静默失败（不报错，只是永远不命中）。
+     *
+     * 纳入「上一轮状态 ∪ 活动弹窗」：只纳入上一轮状态的话，弹窗**刚被确认的那一轮**锚点读到的是
+     * 未转换的像素 → 白等一轮（真机 200ms~1s）。活动弹窗锚点通常只有 1~2 条小窗口，常驻纳入的成本可忽略。
+     */
+    private fun anchorRegions(width: Int, height: Int): List<PixelBounds> {
+        val locator = anchorLocator ?: return emptyList()
+        return locator.windowRegions(width, height, recognitionLoop.state) +
+            locator.windowRegions(width, height, UiState.ACTIVITY_POPUP)
+    }
+
+    /**
+     * FR-01 弹窗闭环（T2-4，B1）：每轮一次「验证上一枪 → 决定这一轮要不要下发」。
+     *
+     * 判定与下发结果都进日志——真机核对「为什么点 / 为什么没点」只看这两行（`MM-Capture` 的 FR-01 行 +
+     * `MM-Click` 的审计行，判定 ID 对齐）。点击本身不在这里实现：一律经 [ClickDispatch]（红线 6）。
+     */
+    private fun stepPopupClose(result: RoundResult, gray: GrayImage) {
+        val confirmed = result.state == UiState.ACTIVITY_POPUP
+        // 锚点只在状态**确认**后定位：未确认就定位，等于用未确认的画面去找点击点（红线 7）
+        val locator = anchorLocator
+        val anchors = if (confirmed && locator != null) locator.locate(gray, result.state) else emptyList()
+        val outcome = popupClose.onRound(
+            PopupRoundInput(
+                foreground = !result.frozen,
+                mode = ClickDispatch.mode,
+                popupConfirmed = confirmed,
+                popupHit = UiState.ACTIVITY_POPUP in result.hits,
+                anchors = anchors,
+                decisionId = "fr01-${actionRoundSeq + 1}",
+            ),
+        )
+        logPopupVerification(outcome)
+        when (val step = outcome.step) {
+            is PopupStep.Skip -> {
+                // 同一原因只记一次：弹窗长期在屏时"未标定锚点"这类原因会每轮成立，记全套等于刷屏
+                if (step.note != lastFr01SkipNote) {
+                    lastFr01SkipNote = step.note
+                    MmLog.i(TAG, "FR-01 不动作: ${step.note}")
+                }
+            }
+
+            is PopupStep.Click -> {
+                actionRoundSeq++
+                lastFr01SkipNote = null
+                val verdict = ClickDispatch.submit(
+                    request = step.request,
+                    gameForeground = !result.frozen,
+                    state = result.state,
+                )
+                MmLog.i(
+                    TAG,
+                    "FR-01 判定: 活动弹窗已确认，关闭控件「${step.request.anchorName}」" +
+                        "点击点 (${step.request.frameX.toInt()}, ${step.request.frameY.toInt()})" +
+                        "（运行帧坐标），第 ${step.attempt} 次尝试 → ${verdict.detail}" +
+                        "（判定 ${step.request.decisionId}）",
+                )
+            }
+
+            is PopupStep.GiveUp -> MmLog.w(
+                TAG,
+                "FR-01 放弃: 连续 ${step.attempts} 次点击后弹窗仍命中，判为误匹配，**停止点击**并记录" +
+                    "（FR-01 失败处理：宁可漏关，不可错点）；弹窗消失后自动复位",
+            )
+        }
+    }
+
+    /** FR-01 上一枪的验证结论（没有待验证的点击时不记）。 */
+    private fun logPopupVerification(outcome: PopupRoundOutcome) {
+        when (val verification = outcome.verification) {
+            is PopupVerification.None -> Unit
+
+            is PopupVerification.Closed -> MmLog.i(
+                TAG,
+                "FR-01 弹窗已消失（本段共点击 ${verification.attempts} 次）",
+            )
+
+            // 只作观测，**不是"失败"**：弹窗仍在既可能是没关掉，也可能是前一个关掉后冒出了新的那个
+            // （2026-09-13 真机实测二者在日志上无法区分，故不再由它决定是否停手）。
+            is PopupVerification.StillPresent -> MmLog.i(
+                TAG,
+                "FR-01 点击后仍命中弹窗（本段已点击 ${verification.attempts} 次）——" +
+                    "可能没关掉、也可能是新弹窗；按上限继续，不做单次成败判定",
+            )
+        }
     }
 
     /**
@@ -375,7 +524,7 @@ class CaptureService : Service() {
         val gray = grayTimingStats.record(grayNs / 1_000_000.0)
         val detect = detectTimingStats.record((totalNs - grayNs) / 1_000_000.0)
         val total = timingStats.record(totalNs / 1_000_000.0) ?: return
-        Log.i(
+        MmLog.i(
             TAG,
             "单帧处理耗时统计: 连续 ${total.sampleCount} 帧，总 P95 ${total.p95DisplayMs}ms" +
                 "（灰度 ${gray?.p95DisplayMs}ms / 识别 ${detect?.p95DisplayMs}ms），" +
@@ -387,14 +536,14 @@ class CaptureService : Service() {
      * 逐信号匹配耗时统计（T1-13b）：每个信号**各自**连续 100 次为一窗，满窗输出一行。
      *
      * 口径（与离线探针 `SpeedupProbeTest.profilePerSignalCost` 一致）：**纯匹配耗时**——
-     * 不含灰度转换与方向归一（轮级固定开销）、不含节流等待、不含全扫兜底
-     * （一轮搜几个信号就产生几个样本，故稳态「每轮只搜 1 个信号」时本行即该步的真实成本）。
+     * 不含灰度转换与方向归一（轮级固定开销）、不含节流等待
+     * （一轮搜几个信号就产生几个样本；本轮不搜则不产生样本，故"每轮只搜 1 个信号"时本行即该步的真实成本）。
      */
     private fun recordSignalCosts() {
         recognitionLoop.lastSignalCostMs.forEach { (name, costMs) ->
             val summary = signalCostStats.getOrPut(name) { FrameTimingStats() }.record(costMs)
                 ?: return@forEach
-            Log.i(
+            MmLog.i(
                 TAG,
                 "信号耗时统计: $name 连续 ${summary.sampleCount} 次，P95 ${summary.p95DisplayMs}ms，" +
                     "平均 ${summary.avgDisplayMs}ms，最大 ${summary.maxDisplayMs}ms",
@@ -405,11 +554,12 @@ class CaptureService : Service() {
     private fun maybeLogStats(now: Long) {
         if (now - lastStatsAt < STATS_WINDOW_MS) return
         val signalNote = if (recognitionLoop.signalCount == 0) "，未标定（无判定）" else ""
-        // T1-13 ⑥：搜索范围取证——"稳态每轮只搜 1 个 / 全扫只发生在状态未知"可由本行直接读出
+        // T2-1：搜索范围取证——"每轮只搜期望集合 / 待命期只搜启动页"可由本行直接读出
         val searchedNote =
             "实际参与匹配 $searchedSymbolTotal 次（$searchedRounds 轮：" +
-                "子集 ${searchedRounds - fullScanRounds} 轮 / 全扫 $fullScanRounds 轮）"
-        Log.i(
+                "单信号 ${searchedRounds - multiSignalRounds - idleRounds} 轮 / " +
+                "多信号 $multiSignalRounds 轮 / 不搜 $idleRounds 轮）"
+        MmLog.i(
             TAG,
             "帧管线统计: 窗口 ${now - lastStatsAt}ms 接收 $framesReceived 帧 / 处理 $framesProcessed 帧；" +
                 "识别 $cyclesRun 轮（信号 ${recognitionLoop.signalCount} 个$signalNote），" +
@@ -421,9 +571,14 @@ class CaptureService : Service() {
         framesProcessed = 0
         cyclesRun = 0
         searchedRounds = 0
-        fullScanRounds = 0
+        multiSignalRounds = 0
+        idleRounds = 0
         searchedSymbolTotal = 0
     }
+
+    /** 搜索集合的日志文本（T2-1）：空集明示"不搜"，避免与"搜了没命中"混淆。 */
+    private fun searchedText(names: Set<String>): String =
+        if (names.isEmpty()) "（本轮不搜）" else "「${names.sorted().joinToString("、")}」"
 
     private fun startForegroundCompat() {
         val notification = buildNotification()

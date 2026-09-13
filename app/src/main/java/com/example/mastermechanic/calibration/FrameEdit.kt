@@ -29,14 +29,27 @@ data class RatioRect(
 }
 
 /**
- * 手势起始位置的命中结果（T1-5l：锚点已移除，只剩两类）。
+ * 手势起始位置的命中结果（T1-5l 移除锚点手柄；T2-3f 恢复「拖外框白线拉伸」但**仍不画任何手柄**）。
  */
 sealed interface FrameHit {
     /** 命中选框内部：拖动 = 整体移动。 */
     object Inside : FrameHit
 
-    /** 选框外（含选框边框上）：拖动 = 新建选框。 */
+    /** 选框外较远处：拖动 = 新建选框。 */
     object Outside : FrameHit
+
+    /**
+     * 命中**外框拉伸带**（T2-3f）：拖动 = 按被命中的边调整选框。
+     * 两条边同真 = 角（双轴同时调整）；只一条为真 = 边（单轴）。
+     *
+     * 用户口径：锚点（手柄）隐藏，但拖动外围白线必须保留拉伸 / 缩放——白线本身就是抓手。
+     */
+    data class Resize(
+        val left: Boolean,
+        val top: Boolean,
+        val right: Boolean,
+        val bottom: Boolean,
+    ) : FrameHit
 }
 
 /**
@@ -52,8 +65,9 @@ data class ViewTransform(
 /**
  * 帧标注编辑的纯运算（T1-5d）：选框编辑（命中 / 移动）与视图变换（缩放 / 平移 / 坐标反算）。
  *
- * T1-5l 起**不再有拉伸手柄**：选框大小由「拖出即定」决定，不满意就点左上角关闭钮重画
- * （真机反馈：锚点压住选区边缘、影响画面判读）。因此本对象不再包含 [resize] 与手柄几何。
+ * T1-5l 起**不再有拉伸手柄**（真机反馈：锚点压住选区边缘、影响画面判读）；
+ * T2-3f 按用户口径恢复**拉伸能力但不画手柄**：白线本身是抓手，[hitTest] 给出 [FrameHit.Resize] 八向区域，
+ * [resize] 按命中的边调整选框。
  *
  * 全部以帧比例坐标表达，帧尺寸、视图像素尺寸与关闭钮热区由调用方换算传入；
  * 不含任何安卓依赖，可在 JVM 离线单测（与识别口径一致：无设备绑定常量）。
@@ -84,13 +98,70 @@ object FrameEditMath {
     )
 
     /**
-     * 命中测试（帧比例坐标）：**选框内 = 整体移动，选框外 = 新建**（T1-5l 口径）。
-     * 关闭钮由 [hitCloseButton] 单独判定并在手势层优先处理，这里不产生其命中。
+     * 命中测试（帧比例坐标，T2-3f 三区）：
+     *
+     * 1. **外框拉伸带** → [FrameHit.Resize]：内边界 = 选框本身，外边界 = 外框线（[outerFrame]）再向外
+     *    [marginX] / [marginY]。整条环宽 `2 × margin`，白线正好在环中间——所以「按在白线上或它两侧一指宽内」
+     *    都能抓到（线上 ±[margin] 都算）。环**完全落在选框之外**（内边界即选框边），
+     *    选框内部仍是整体移动，不会误拉伸。
+     * 2. **选框内 = 整体移动**（[FrameHit.Inside]）。
+     * 3. 其余 = 新建（[FrameHit.Outside]）。
+     *
+     * 贴内线（`x == rect.left` 等）也算带内：否则选框线上那一条像素会落到「新建」，贴边一按就毁掉整条选框。
+     * 关闭钮由 [hitCloseButton] 单独判定并在手势层优先处理（左上角那一格归关闭钮），这里不产生其命中。
      */
-    fun hitTest(rect: RatioRect?, x: Float, y: Float): FrameHit {
+    fun hitTest(
+        rect: RatioRect?,
+        x: Float,
+        y: Float,
+        marginX: Float,
+        marginY: Float,
+    ): FrameHit {
         if (rect == null) return FrameHit.Outside
+        val outer = outerFrame(rect, marginX, marginY)
+        val bandLeft = outer.left - marginX
+        val bandRight = outer.right + marginX
+        val bandTop = outer.top - marginY
+        val bandBottom = outer.bottom + marginY
+        val outsideRect = x <= rect.left || x >= rect.right || y <= rect.top || y >= rect.bottom
+        val inBand =
+            x >= bandLeft && x <= bandRight && y >= bandTop && y <= bandBottom
+        if (outsideRect && inBand) {
+            return FrameHit.Resize(
+                left = x <= rect.left,
+                top = y <= rect.top,
+                right = x >= rect.right,
+                bottom = y >= rect.bottom,
+            )
+        }
         val inside = x > rect.left && y > rect.top && x < rect.right && y < rect.bottom
         return if (inside) FrameHit.Inside else FrameHit.Outside
+    }
+
+    /**
+     * 拖外框拉伸（T2-3f）：按 [hit] 命中的边（两条 = 角）应用位移。
+     *
+     * [dx] / [dy] 用「手势起点 → 当前」的**累计位移**（不是逐帧增量）：这样把框缩小到手指跑到框外时
+     * 仍然继续跟随，不会中途卡住。结果同时 clamp 在帧界 [0,1] 与最小边长之内；
+     * [minWidth] / [minHeight] 由调用方按帧尺寸换算（模板最小边长口径，避免拉出提取不了的框）。
+     */
+    fun resize(
+        rect: RatioRect,
+        hit: FrameHit.Resize,
+        dx: Float,
+        dy: Float,
+        minWidth: Float,
+        minHeight: Float,
+    ): RatioRect {
+        var left = rect.left
+        var top = rect.top
+        var right = rect.right
+        var bottom = rect.bottom
+        if (hit.left) left = (left + dx).coerceIn(0f, (right - minWidth).coerceAtLeast(0f))
+        if (hit.right) right = (right + dx).coerceIn((left + minWidth).coerceAtMost(1f), 1f)
+        if (hit.top) top = (top + dy).coerceIn(0f, (bottom - minHeight).coerceAtLeast(0f))
+        if (hit.bottom) bottom = (bottom + dy).coerceIn((top + minHeight).coerceAtMost(1f), 1f)
+        return RatioRect(left, top, right, bottom)
     }
 
     /**

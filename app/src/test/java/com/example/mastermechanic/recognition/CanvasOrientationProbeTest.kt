@@ -1,6 +1,7 @@
 package com.example.mastermechanic.recognition
 
 import com.example.mastermechanic.calibration.CalibrationCodec
+import com.example.mastermechanic.decision.ExpectedSignals
 import com.example.mastermechanic.decision.UiState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -166,10 +167,12 @@ class CanvasOrientationProbeTest {
         val vertical = ReplayTool.decodeGrayPng(verticalFile)
         val horizontal = ReplayTool.decodeGrayPng(horizontalFile)
 
-        // 两会话各自独立建循环（滞回状态不跨会话），各跑两轮（进入需连续 2 次命中）
-        val nativeLoop = data.toLoop()
+        // 两会话各自独立建循环（滞回状态不跨会话），各跑两轮（进入需连续 2 次命中）。
+        // **显式声明全集**：本探针验证的是「画布几何归一」下判定一致，与"生产期搜哪些信号"无关——
+        // T2-5 之后生产默认口径只搜活动弹窗记录（启动页不再被搜索），若沿用默认口径本探针会假失败。
+        val nativeLoop = data.toLoop(ExpectedSignals.ALL)
         val native = (0 until 2).map { nativeLoop.process(vertical, isForeground = true) }.last()
-        val landscapeLoop = data.toLoop()
+        val landscapeLoop = data.toLoop(ExpectedSignals.ALL)
         val normalized = (0 until 2).map { landscapeLoop.process(horizontal, isForeground = true) }.last()
 
         val nativeRecord = native.records.first()

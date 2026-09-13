@@ -6,7 +6,7 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import com.example.mastermechanic.log.MmLog
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.TextView
@@ -48,9 +48,9 @@ class FloatingWindow(private val context: Context) {
             view = handle
             applyStateText(UiStateSignal.status) // 重建时以当前识别状态初始化
             UiStateSignal.addListener(onStateChanged)
-            Log.i(TAG, "悬浮窗已挂载（状态：${UiStateSignal.status.label}）")
+            MmLog.i(TAG, "悬浮窗已挂载（状态：${UiStateSignal.status.label}）")
         } catch (e: Exception) {
-            Log.w(TAG, "悬浮窗挂载失败", e)
+            MmLog.w(TAG, "悬浮窗挂载失败", e)
         }
     }
 
@@ -60,9 +60,9 @@ class FloatingWindow(private val context: Context) {
         UiStateSignal.removeListener(onStateChanged)
         try {
             windowManager.removeView(current)
-            Log.i(TAG, "悬浮窗已移除")
+            MmLog.i(TAG, "悬浮窗已移除")
         } catch (e: Exception) {
-            Log.w(TAG, "悬浮窗移除失败", e)
+            MmLog.w(TAG, "悬浮窗移除失败", e)
         } finally {
             view = null
         }

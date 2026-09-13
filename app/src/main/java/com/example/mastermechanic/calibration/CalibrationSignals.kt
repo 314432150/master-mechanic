@@ -72,8 +72,11 @@ object CalibrationSignals {
     }
 
     /**
-     * 新增或覆盖一条信号（同名信号**整体替换**）：模板与搜索窗口取本次标定值，不追加、不合并；
-     * 归属状态随之更新（同名信号换状态无需先删除）。
+     * 新增或覆盖一条记录（同名**整体替换**）：模板与搜索窗口取本次标定值，不追加、不合并；
+     * 归属状态与角色随之更新（同名换状态 / 换角色无需先删除）。
+     *
+     * 角色（T2-3）：默认 [SignalRole.MARKER]（界面标志）；标锚点时传 [SignalRole.ANCHOR]——
+     * 同一元素两种角色要**两次写入两条记录**，不合并（§2.1）。
      *
      * 非法输入抛 [IllegalArgumentException]（几何不一致 / 未知状态 / 帧尺寸非正），由界面转为提示文本。
      */
@@ -86,13 +89,14 @@ object CalibrationSignals {
         params: MatchParams,
         frameWidth: Int,
         frameHeight: Int,
+        role: SignalRole = SignalRole.MARKER,
     ): CalibrationData {
         require(state != UiState.UNKNOWN) { "「未知」不能作为归属状态" }
         require(frameWidth > 0 && frameHeight > 0) { "标定帧尺寸必须为正：${frameWidth}x$frameHeight" }
         geometryError(current, frameWidth, frameHeight)?.let { throw IllegalArgumentException(it) }
 
         val signals = current?.signals.orEmpty().filterNot { it.name == name } +
-            CalibrationData.SignalEntry(name, window, listOf(template))
+            CalibrationData.SignalEntry(name, window, listOf(template), role)
         return CalibrationData(
             frameWidth = frameWidth,
             frameHeight = frameHeight,
@@ -101,6 +105,91 @@ object CalibrationSignals {
             stateRules = rebuildRules(signals, current?.stateRules, name to state),
         )
     }
+
+    /**
+     * 同状态追加记录时的命名（T2-2 方案 A）：默认名未被占用即用默认名，否则依次追加序号
+     * （`popup_close` → `popup_close2` → `popup_close3`…），取产物中**尚未被任何信号占用**的名字。
+     *
+     * 采用追加而非覆盖的原因：同一状态的多种样式各有自己的搜索窗口与模板，合并进一条记录
+     * 只能把窗口扩到覆盖两处（T1-13b：耗时 ≈ 窗口网格数 × 模板采样数，窗口是最有效的成本杠杆），
+     * 且一条记录只对应一个点击位置（T2-3 动作锚点）。修正误标请先在产物清单中删除该条再重标。
+     *
+     * 序号在所有信号名中全局查重（信号名在产物内必须唯一，见 [CalibrationData]）。
+     * [base] 非法时抛 [IllegalArgumentException]（界面转为提示文本）。
+     */
+    fun nextName(current: CalibrationData?, base: String): String =
+        nextName(current?.signals.orEmpty().map { it.name }, base)
+
+    /** 同上，[used] 为已被占用的信号名（一次写多个角色时按同批累计集合查重）。 */
+    fun nextName(used: Collection<String>, base: String): String {
+        require(CalibrationData.isValidName(base)) { "默认信号名非法：$base" }
+        val taken = if (used is Set<String>) used else used.toHashSet()
+        if (base !in taken) return base
+        var index = 2
+        while (true) {
+            val candidate = base + index
+            require(CalibrationData.isValidName(candidate)) { "信号名过长，无法追加样式序号：$candidate" }
+            if (candidate !in taken) return candidate
+            index++
+        }
+    }
+
+    /**
+     * 角色的固定顺序（标志 → 锚点）：界面上的排布、产物文本与命名分配都按这个顺序（确定性）。
+     */
+    fun orderedRoles(roles: Collection<SignalRole>): List<SignalRole> =
+        SignalRole.entries.filter { it in roles }
+
+    /**
+     * 一次框选写**多个角色**时的名字分配（T2-3g）：同一个元素既要判状态又要点击时勾选两个角色，
+     * 一次写入**两条记录**（§2.1：一条记录只有一个角色），两条共用本次的模板与搜索窗口。
+     *
+     * 按 [orderedRoles] 的顺序各自取默认名（`popup_close` / `popup_close_anchor`），已被占用时追加序号；
+     * 同一批内的名字互相避让 → 这批记录之间不会重名。
+     *
+     * 角色集合为空或状态为「未知」抛 [IllegalArgumentException]（界面已在按钮上拦住这两条路径）。
+     */
+    fun namesFor(
+        current: CalibrationData?,
+        state: UiState,
+        roles: Collection<SignalRole>,
+    ): List<Pair<SignalRole, String>> {
+        require(state != UiState.UNKNOWN) { "「未知」不能作为归属状态" }
+        val ordered = orderedRoles(roles)
+        require(ordered.isNotEmpty()) { "至少要选一个角色（标志 / 锚点）" }
+        val used = current?.signals.orEmpty().mapTo(HashSet()) { it.name }
+        return ordered.map { role ->
+            val name = nextName(used, defaultNameFor(state, role))
+            used += name
+            role to name
+        }
+    }
+
+    /**
+     * 某状态下某角色的记录数（写入提示「该状态现有…」用；无规则返回 0）。
+     * 标志与锚点**分开计数**：混着数会让人误以为同一角色已经标了 N 条。
+     */
+    fun countOf(data: CalibrationData, state: UiState, role: SignalRole): Int {
+        val rule = data.stateRules.firstOrNull { it.state == state } ?: return 0
+        return if (role == SignalRole.ANCHOR) rule.anchorNames.size else rule.signalNames.size
+    }
+
+    /**
+     * 归属状态 + 角色 → 默认信号名（T2-3d）：标志用状态默认名（`popup_close`），锚点加后缀
+     * （`popup_close_anchor`）。
+     *
+     * 必须分开命名：同一元素两种角色写**两条记录**（§2.1），名字重了会在产物里互相覆盖，
+     * 清单里也分不清哪条是判状态的标志、哪条是点击锚点。
+     */
+    fun defaultNameFor(state: UiState, role: SignalRole): String =
+        if (role == SignalRole.ANCHOR) {
+            state.defaultSignalName + ANCHOR_SUFFIX
+        } else {
+            state.defaultSignalName
+        }
+
+    /** 锚点默认名后缀（见 [defaultNameFor]）：产物里一眼能看出这条记录是点击锚点。 */
+    const val ANCHOR_SUFFIX = "_anchor"
 
     /**
      * 删除一条信号：剩余为空返回 null（调用方据此删除产物文件——空产物无意义）。
@@ -131,9 +220,8 @@ object CalibrationSignals {
         )
     }
 
-    /** 信号名 → 归属状态（由状态规则反查；产物中必有，缺失返回 null）。 */
-    fun stateOf(data: CalibrationData, name: String): UiState? =
-        data.stateRules.firstOrNull { name in it.signalNames }?.state
+    /** 记录名 → 归属状态（由状态规则反查，标志与锚点通用；产物中必有，缺失返回 null）。 */
+    fun stateOf(data: CalibrationData, name: String): UiState? = data.stateOf(name)
 
     /** 参数文本 → 参数；任一非法返回 null（界面据此提示并拒绝写入）。 */
     fun parseParams(
@@ -152,8 +240,9 @@ object CalibrationSignals {
     }
 
     /**
-     * 由信号列表重建状态规则：以既有规则给出各信号的归属状态，[assigned] 覆盖刚写入的那条。
-     * 规则顺序按信号首次出现顺序（确定性，产物文本可稳定复现）。
+     * 由记录列表重建状态规则：以既有规则给出各记录的归属状态，[assigned] 覆盖刚写入的那条。
+     * 规则顺序按记录首次出现顺序（确定性，产物文本可稳定复现）；
+     * 同一状态下按**角色**分流：标志进 `signalNames`、锚点进 `anchorNames`（T2-3）。
      */
     private fun rebuildRules(
         signals: List<CalibrationData.SignalEntry>,
@@ -161,15 +250,23 @@ object CalibrationSignals {
         assigned: Pair<String, UiState>?,
     ): List<CalibrationData.StateRule> {
         val stateOf = HashMap<String, UiState>()
-        previous?.forEach { rule -> rule.signalNames.forEach { stateOf[it] = rule.state } }
+        previous?.forEach { rule ->
+            (rule.signalNames + rule.anchorNames).forEach { stateOf[it] = rule.state }
+        }
         assigned?.let { (name, state) -> stateOf[name] = state }
         return signals
             .groupBy(
                 keySelector = {
-                    requireNotNull(stateOf[it.name]) { "信号「${it.name}」缺少归属状态" }
+                    requireNotNull(stateOf[it.name]) { "记录「${it.name}」缺少归属状态" }
                 },
-                valueTransform = { it.name },
+                valueTransform = { it },
             )
-            .map { (state, names) -> CalibrationData.StateRule(state, names) }
+            .map { (state, entries) ->
+                CalibrationData.StateRule(
+                    state = state,
+                    signalNames = entries.filter { it.role == SignalRole.MARKER }.map { it.name },
+                    anchorNames = entries.filter { it.role == SignalRole.ANCHOR }.map { it.name },
+                )
+            }
     }
 }
