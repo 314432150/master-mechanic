@@ -451,8 +451,10 @@ class SpeedupProbeTest {
         lines += "全扫状态分布：" + fullStates.groupingBy { it }.eachCount().entries.joinToString(" / ") { "${it.key}=${it.value}" }
         lines += "子集状态分布：" + subsetStates.groupingBy { it }.eachCount().entries.joinToString(" / ") { "${it.key}=${it.value}" }
         lines += ""
-        lines += "说明：采集图是**逐帧换场景**的序列，未知状态（无信号命中）与状态切换轮都会触发全扫，"
-        lines += "因此整体提速偏低；真实运行时会在同一界面连续停留多轮，应以「稳态帧」为准："
+        lines += "说明：采集图是**逐帧换场景**的序列，未知状态（无信号命中）必然全扫，因此整体提速偏低；"
+        lines += "T1-13 取消补扫后，状态切换轮**不再**全扫（改为连续未命中 → 转未知 → 全扫），"
+        lines += "故本探针的「状态序列差异」在 T1-13 后会变大——这是预期行为，不是回归。"
+        lines += "真实运行时会在同一界面连续停留多轮，应以「稳态帧」为准："
         lines += ""
         lines += "子集模式「每帧实际搜索信号数」分布（7 = 全扫）：" +
             subsetSearched.groupingBy { it }.eachCount().entries.sortedBy { it.key }.joinToString(" / ") { "${it.key}个=${it.value}帧" }
@@ -476,6 +478,148 @@ class SpeedupProbeTest {
         File(outDir, "t1-10g-subset-savings.txt").writeText(lines.joinToString("\n") + "\n", Charsets.UTF_8)
         lines.forEach(::println)
         assertTrue("应完成测量", fullTimes.size == files.size && subsetTimes.size == files.size)
+    }
+
+    /**
+     * 逐信号搜索耗时（T1-13b）：回答「每一步（每个状态对应一条信号）真正要花多久」，并定位哪条信号最贵。
+     *
+     * 口径（按要求制定）：
+     * - **不含等待时间**：离线纯计算，无节流休息（节流是识别轮之间的安排，与单信号搜索无关）；
+     * - **不含全扫兜底**：每个信号**单独**计时，绝不与其他信号混在同一次计时里
+     *   （末尾另附一条全扫参照行，仅作对比，不计入逐信号表）；
+     * - 不含灰度转换（输入已是灰度帧）与方向归一（帧几何 = 标定几何，走零拷贝快路径），与真机竖画布会话一致。
+     *
+     * 输入 `build/replay-work/calibration-7sig.txt` + `set-20260912-03/`（104 帧，覆盖各界面）；
+     * 输出 `out/t1-13b-per-signal-cost.txt`。
+     */
+    @Test
+    fun profilePerSignalCost() {
+        assumeTrue(
+            "需要 build/replay-work/calibration-7sig.txt 与 set-20260912-03/manifest.txt",
+            multiSignalFile.isFile && File(batchDir, ReplayTool.MANIFEST_NAME).isFile,
+        )
+        val data = CalibrationCodec.decode(multiSignalFile.readText(Charsets.UTF_8))
+        val set = ReplaySetCodec.decode(File(batchDir, ReplayTool.MANIFEST_NAME).readText(Charsets.UTF_8))
+        val samples = set.samples.filter { it.category.token != "neg-plain" }
+        assumeTrue("有效样本不足（≥10）", samples.size >= 10)
+        val frames: List<GrayImage> = samples.map { ReplayTool.decodeGrayPng(File(batchDir, it.file)) }
+
+        /** 单信号的逐帧耗时与分段累计（分段为该信号自身，绝不含其他信号）。 */
+        data class PerSignal(
+            val name: String,
+            val windowW: Int,
+            val windowH: Int,
+            val templateW: Int,
+            val templateH: Int,
+            val templateCount: Int,
+            val times: List<Long>,
+            val prefixNs: Long,
+            val coarseNs: Long,
+            val refineNs: Long,
+        )
+
+        val matcher = Matcher(2, 2, 64, false)
+        // 逐信号单独计时：每帧 ROUNDS 轮取中位（去 JIT / 调度噪声）
+        val perSignal = data.signals.map { spec ->
+            val template = spec.templates.first()
+            val bounds = spec.window.pixelBounds(data.frameWidth, data.frameHeight)
+            val stats = Stats()
+            val times = ArrayList<Long>(frames.size)
+            frames.forEach { gray ->
+                val round = LongArray(ROUNDS)
+                for (r in 0 until ROUNDS) {
+                    val started = System.nanoTime()
+                    spec.templates.forEach { matcher.findPeaks(gray, it, spec.window, data.params, stats) }
+                    round[r] = System.nanoTime() - started
+                }
+                round.sort()
+                times += round[ROUNDS / 2] / 1_000 // 微秒：亚毫秒信号（farm / friend_list）需要可分辨精度
+            }
+            PerSignal(
+                name = spec.name,
+                windowW = bounds.x1 - bounds.x0,
+                windowH = bounds.y1 - bounds.y0,
+                templateW = template.width,
+                templateH = template.height,
+                templateCount = spec.templates.size,
+                times = times,
+                prefixNs = stats.prefixNs,
+                coarseNs = stats.coarseNs,
+                refineNs = stats.refineNs,
+            )
+        }
+
+        // 全扫参照（仅对比用，不计入逐信号表）
+        val fullStats = Stats()
+        val fullTimes = ArrayList<Long>(frames.size)
+        frames.forEach { gray ->
+            val round = LongArray(ROUNDS)
+            for (r in 0 until ROUNDS) {
+                val started = System.nanoTime()
+                data.signals.forEach { spec ->
+                    spec.templates.forEach { matcher.findPeaks(gray, it, spec.window, data.params, fullStats) }
+                }
+                round[r] = System.nanoTime() - started
+            }
+            round.sort()
+            fullTimes += round[ROUNDS / 2] / 1_000
+        }
+
+        fun LongArray.p50(): Double = sorted()[size / 2].toDouble()
+        fun LongArray.p95(): Double = sorted()[minOf(size - 1, ceil(size * 0.95).toInt() - 1)].toDouble()
+        fun LongArray.maxUs(): Double = sorted().last().toDouble()
+
+        /** 微秒 → 毫秒文本（3 位小数：farm / friend_list 等亚毫秒信号需要可分辨精度）。 */
+        fun us(v: Double): String = String.format(Locale.ROOT, "%.3f", v / 1000.0)
+
+        val framePixels = data.frameWidth.toDouble() * data.frameHeight
+        val lines = mutableListOf<String>()
+        lines += "逐信号搜索耗时（T1-13b）：帧 ${frames.size}（排除 neg-plain），信号 ${data.signals.size} 条，" +
+            "标定帧 ${data.frameWidth}x${data.frameHeight}"
+        lines += "口径：逐信号**单独**计时（一次只搜这一个信号 → 不含全扫兜底）；离线纯计算，" +
+            "**不含等待时间**、灰度转换与方向归一；每帧 $ROUNDS 轮取中位；输入为设备帧副本"
+        lines += "真机换算：×$DEVICE_DESKTOP_RATIO（T1-10d 设备 / 桌面倍差）；单位 ms"
+        lines += ""
+        lines += "信号 | 窗口px(WxH) | 窗口占帧% | 模板px | 模板数 | 网格点x采样点(万) | P50(ms) | P95(ms) | " +
+            "平均(ms) | 最大(ms) | 真机推算平均(ms) | 前缀和% / 粗搜% / 精搜%"
+
+        perSignal.sortedByDescending { it.times.average() }.forEach { s ->
+            val total = (s.prefixNs + s.coarseNs + s.refineNs).toDouble()
+            val prefixPct = if (total > 0.0) s.prefixNs * 100.0 / total else 0.0
+            val coarsePct = if (total > 0.0) s.coarseNs * 100.0 / total else 0.0
+            val refinePct = if (total > 0.0) s.refineNs * 100.0 / total else 0.0
+            val avg = s.times.average()
+            // 成本模型：粗搜网格点数 x 模板采样点数（验证耗时与「窗口 - 模板」双线性关系）
+            val grid = (((s.windowW - s.templateW) / 2 + 1)).coerceAtLeast(0) *
+                (((s.windowH - s.templateH) / 2 + 1)).coerceAtLeast(0)
+            val taps = (s.templateW / 2) * (s.templateH / 2)
+            lines += "${s.name} | ${s.windowW}x${s.windowH} | " +
+                String.format(Locale.ROOT, "%.2f", (s.windowW.toDouble() * s.windowH) * 100.0 / framePixels) + " | " +
+                "${s.templateW}x${s.templateH} | ${s.templateCount} | " +
+                String.format(Locale.ROOT, "%.1f", grid.toDouble() * taps / 10_000.0) + " | " +
+                "${us(s.times.toLongArray().p50())} | ${us(s.times.toLongArray().p95())} | ${us(avg)} | " +
+                "${us(s.times.toLongArray().maxUs())} | ${us(avg * DEVICE_DESKTOP_RATIO)} | " +
+                String.format(Locale.ROOT, "%.1f%% / %.1f%% / %.1f%%", prefixPct, coarsePct, refinePct)
+        }
+
+        val subAvg = perSignal.map { it.times.average() }.average()
+        val fullAvg = fullTimes.average()
+        lines += ""
+        lines += "【对比参照 · 不计入上表】"
+        lines += "7 信号全扫 | — | — | — | — | — | ${us(fullTimes.toLongArray().p50())} | " +
+            "${us(fullTimes.toLongArray().p95())} | ${us(fullAvg)} | ${us(fullTimes.toLongArray().maxUs())} | " +
+            "${us(fullAvg * DEVICE_DESKTOP_RATIO)} | —"
+        lines += "逐信号平均之和 = ${us(perSignal.sumOf { it.times.average() })}ms（真机推算 " +
+            "${us(perSignal.sumOf { it.times.average() } * DEVICE_DESKTOP_RATIO)}ms）；" +
+            "单信号均值 = ${us(subAvg)}ms（真机推算 ${us(subAvg * DEVICE_DESKTOP_RATIO)}ms）"
+        lines += "最贵 / 最便宜 = ${us(perSignal.maxOf { it.times.average() })}ms / " +
+            "${us(perSignal.minOf { it.times.average() })}ms，倍差 x" +
+            String.format(Locale.ROOT, "%.2f", perSignal.maxOf { it.times.average() } / perSignal.minOf { it.times.average() })
+
+        outDir.mkdirs()
+        File(outDir, "t1-13b-per-signal-cost.txt").writeText(lines.joinToString("\n") + "\n", Charsets.UTF_8)
+        lines.forEach(::println)
+        assertTrue("应完成全部信号测量", perSignal.size == data.signals.size && fullTimes.size == frames.size)
     }
 
     private fun samePeaks(a: List<MatchPeak>, b: List<MatchPeak>): Boolean {
