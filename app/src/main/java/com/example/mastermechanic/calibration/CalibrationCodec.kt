@@ -8,32 +8,43 @@ import java.util.Base64
 import java.util.Locale
 
 /**
- * 标定产物编解码（T1-5a，纯逻辑）：文本行式格式，确定性（同数据 → 同文本，§5-4）。
+ * 标定产物编解码（T1-5a / T2-3，纯逻辑）：文本行式格式，确定性（同数据 → 同文本，§5-4）。
  *
- * 格式（v1，每行一条记录；`#` 开头与空行忽略）：
+ * 格式（v2，每行一条记录；`#` 开头与空行忽略）：
  * ```
- * format=mm-calibration                     格式标记
- * version=1                                 格式版本
- * frame=<宽>x<高>                             标定帧尺寸（像素）
- * params=<命中线>,<差距线>,<峰值间距>           匹配参数
- * state=<UiState 枚举名>|<信号名>[,<信号名>…]     信号—状态映射
- * signal=<信号名>|<left>,<top>,<right>,<bottom>  搜索窗口（帧尺寸比例，0..1）
- * template=<信号名>|<宽>|<高>|<Base64 灰度像素>   标志模板
+ * format=mm-calibration                         格式标记
+ * version=2                                     格式版本
+ * frame=<宽>x<高>                                 标定帧尺寸（像素）
+ * params=<命中线>,<差距线>,<峰值间距>               匹配参数
+ * state=<UiState 枚举名>|<标志名>[,<标志名>…]        界面标志 → 状态（参与状态判定）
+ * anchor=<UiState 枚举名>|<锚点名>[,<锚点名>…]       动作锚点 → 归属状态（按当前状态启用，只回答点哪里）
+ * signal=<名>|<角色>|<left>,<top>,<right>,<bottom>  搜索窗口（帧尺寸比例，0..1）；角色 = marker / anchor
+ * template=<名>|<宽>|<高>|<Base64 灰度像素>         模板（同一记录可多个样式）
  * ```
  *
- * 解析严格：未知键 / 版本不符 / 字段非法 / 重复定义一律拒绝（IllegalArgumentException，
+ * 版本兼容（T2-3）：**写出恒为 v2**；读取接受 v1（T2-3 之前的产物，全部按「标志」解析、锚点为空），
+ * 使已标定内容不必重做。v1 文本若带角色字段或 anchor 行、v2 文本若有记录缺角色，一律拒绝——
+ * 兼容的是"旧格式"，不是"猜字段"。
+ *
+ * 其余解析严格：格式标记不符 / 版本不受支持 / 字段非法 / 重复定义一律拒绝（IllegalArgumentException，
  * 消息带行号），不做静默兼容——产物格式漂移必须显式暴露，禁止按猜测继续（红线 3 同源口径）。
  */
 object CalibrationCodec {
 
     private const val FORMAT_TAG = "mm-calibration"
-    private const val VERSION = 1
+
+    /** 当前写出格式版本。 */
+    private const val VERSION = 2
+
+    /** 可读取的版本：v1（无角色，全部按标志解析）与 v2。 */
+    private val ACCEPTED_VERSIONS = setOf(1, VERSION)
+
     private const val SEP = "|"
     private const val LIST_SEP = ","
 
-    /** 产物 → 文本（单例字段随后段信号记录，顺序固定，保证确定性）。 */
+    /** 产物 → 文本（单例字段随后段记录，顺序固定，保证确定性）。 */
     fun encode(data: CalibrationData): String = buildString {
-        appendLine("# MasterMechanic 标定产物：模板 / 搜索窗口 / 匹配参数全部来自目标设备标定（T1-5）")
+        appendLine("# MasterMechanic 标定产物：模板 / 搜索窗口 / 匹配参数全部来自目标设备标定（T1-5、T2-3）")
         appendLine("format=$FORMAT_TAG")
         appendLine("version=$VERSION")
         appendLine("frame=${data.frameWidth}x${data.frameHeight}")
@@ -42,12 +53,20 @@ object CalibrationCodec {
                 ",${data.params.peakMinDistance}",
         )
         data.stateRules.forEach { rule ->
-            appendLine("state=${rule.state.name}$SEP${rule.signalNames.joinToString(LIST_SEP)}")
+            // 只有标志进 state= 行；锚点单独一行（同一状态可无标志——例如只在弹窗上点一下才标了锚点）
+            if (rule.signalNames.isNotEmpty()) {
+                appendLine("state=${rule.state.name}$SEP${rule.signalNames.joinToString(LIST_SEP)}")
+            }
+        }
+        data.stateRules.forEach { rule ->
+            if (rule.anchorNames.isNotEmpty()) {
+                appendLine("anchor=${rule.state.name}$SEP${rule.anchorNames.joinToString(LIST_SEP)}")
+            }
         }
         data.signals.forEach { signal ->
             appendLine(
-                "signal=${signal.name}$SEP${num(signal.window.left)},${num(signal.window.top)}" +
-                    ",${num(signal.window.right)},${num(signal.window.bottom)}",
+                "signal=${signal.name}$SEP${signal.role.token}$SEP${num(signal.window.left)}" +
+                    ",${num(signal.window.top)},${num(signal.window.right)},${num(signal.window.bottom)}",
             )
             signal.templates.forEach { template ->
                 appendLine(
@@ -65,8 +84,10 @@ object CalibrationCodec {
         var frameWidth = 0
         var frameHeight = 0
         var params: MatchParams? = null
-        val stateRules = mutableListOf<CalibrationData.StateRule>()
+        val markersByState = LinkedHashMap<UiState, List<String>>()
+        val anchorsByState = LinkedHashMap<UiState, List<String>>()
         val windows = LinkedHashMap<String, SearchWindow>()
+        val roles = LinkedHashMap<String, SignalRole?>()
         val templates = LinkedHashMap<String, MutableList<Template>>()
 
         fun fail(line: Int, reason: String): Nothing =
@@ -116,17 +137,45 @@ object CalibrationCodec {
                     } catch (_: IllegalArgumentException) {
                         fail(index + 1, "未知状态名：$stateName")
                     }
+                    if (markersByState.containsKey(state)) fail(index + 1, "状态重复定义：$stateName")
                     val names = signalsText.split(LIST_SEP)
                     try {
-                        stateRules.add(CalibrationData.StateRule(state, names))
+                        CalibrationData.StateRule(state, names)
                     } catch (e: IllegalArgumentException) {
                         fail(index + 1, e.message ?: "规则非法")
                     }
+                    markersByState[state] = names
+                }
+                "anchor" -> {
+                    val (stateName, namesText) = splitPair(value) ?: fail(index + 1, "anchor 行缺少分隔：$value")
+                    val state = try {
+                        UiState.valueOf(stateName)
+                    } catch (_: IllegalArgumentException) {
+                        fail(index + 1, "未知状态名：$stateName")
+                    }
+                    if (anchorsByState.containsKey(state)) fail(index + 1, "状态的锚点重复定义：$stateName")
+                    val names = namesText.split(LIST_SEP)
+                    try {
+                        CalibrationData.StateRule(state, emptyList(), names)
+                    } catch (e: IllegalArgumentException) {
+                        fail(index + 1, e.message ?: "锚点声明非法")
+                    }
+                    anchorsByState[state] = names
                 }
                 "signal" -> {
-                    val (name, windowText) = splitPair(value) ?: fail(index + 1, "signal 行缺少分隔：$value")
+                    val segments = value.split(SEP)
+                    if (segments.size != 2 && segments.size != 3) {
+                        fail(index + 1, "signal 行应为「名称|窗口」或「名称|角色|窗口」：$value")
+                    }
+                    val name = segments[0]
+                    val windowText = segments.last()
                     if (!CalibrationData.isValidName(name)) fail(index + 1, "信号名非法：$name")
                     if (windows.containsKey(name)) fail(index + 1, "信号重复定义：$name")
+                    roles[name] = if (segments.size == 3) {
+                        SignalRole.fromToken(segments[1]) ?: fail(index + 1, "未知角色：${segments[1]}")
+                    } else {
+                        null
+                    }
                     val parts = windowText.split(LIST_SEP)
                     if (parts.size != 4) fail(index + 1, "搜索窗口应为四项：$windowText")
                     val nums = parts.map { it.toDoubleOrNull() ?: fail(index + 1, "窗口值非数字：$it") }
@@ -162,25 +211,49 @@ object CalibrationCodec {
         if (format != FORMAT_TAG) {
             throw IllegalArgumentException("标定产物格式标记不符：期待「$FORMAT_TAG」，实际「${format ?: "缺失"}」")
         }
-        if (version != VERSION) {
-            throw IllegalArgumentException("标定产物版本不符：期待 $VERSION，实际 ${version ?: "缺失"}")
+        val declaredVersion = version ?: throw IllegalArgumentException("标定产物缺少 version 行")
+        if (declaredVersion !in ACCEPTED_VERSIONS) {
+            throw IllegalArgumentException(
+                "标定产物版本不受支持：可读 ${ACCEPTED_VERSIONS.sorted().joinToString(" / ")}，实际 $declaredVersion",
+            )
+        }
+        if (declaredVersion == 1) {
+            // v1 没有角色概念：出现角色字段或 anchor 行说明文本被改过，按"猜字段"拒绝（不是兼容问题）
+            roles.entries.firstOrNull { it.value != null }?.let {
+                throw IllegalArgumentException("v1 产物的 signal 行不得带角色字段：${it.key}")
+            }
+            anchorsByState.keys.firstOrNull()?.let {
+                throw IllegalArgumentException("v1 产物不得出现 anchor 行：$it")
+            }
+        } else {
+            roles.entries.firstOrNull { it.value == null }?.let {
+                throw IllegalArgumentException("v2 产物的 signal 行缺少角色字段：${it.key}")
+            }
         }
         if (windows.isEmpty()) {
             throw IllegalArgumentException("标定产物没有任何 signal 行")
         }
         val entries = windows.map { (name, window) ->
             val own = templates[name] ?: throw IllegalArgumentException("信号「$name」没有任何模板")
-            CalibrationData.SignalEntry(name, window, own)
+            CalibrationData.SignalEntry(name, window, own, roles[name] ?: SignalRole.MARKER)
         }
         templates.keys.forEach { name ->
             if (name !in windows) throw IllegalArgumentException("template 引用了未定义的信号：$name")
+        }
+        // 标志与锚点分别声明，同一状态可只出现在其中一行：按状态合并成一条规则
+        val rulesByState = LinkedHashMap<UiState, CalibrationData.StateRule>()
+        markersByState.forEach { (state, names) ->
+            rulesByState[state] = CalibrationData.StateRule(state, names, anchorsByState[state].orEmpty())
+        }
+        anchorsByState.forEach { (state, names) ->
+            rulesByState.getOrPut(state) { CalibrationData.StateRule(state, emptyList(), names) }
         }
         return CalibrationData(
             frameWidth = frameWidth,
             frameHeight = frameHeight,
             params = params ?: throw IllegalArgumentException("标定产物缺少 params 行"),
             signals = entries,
-            stateRules = stateRules,
+            stateRules = rulesByState.values.toList(),
         )
     }
 

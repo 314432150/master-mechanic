@@ -72,8 +72,11 @@ object CalibrationSignals {
     }
 
     /**
-     * 新增或覆盖一条信号（同名信号**整体替换**）：模板与搜索窗口取本次标定值，不追加、不合并；
-     * 归属状态随之更新（同名信号换状态无需先删除）。
+     * 新增或覆盖一条记录（同名**整体替换**）：模板与搜索窗口取本次标定值，不追加、不合并；
+     * 归属状态与角色随之更新（同名换状态 / 换角色无需先删除）。
+     *
+     * 角色（T2-3）：默认 [SignalRole.MARKER]（界面标志）；标锚点时传 [SignalRole.ANCHOR]——
+     * 同一元素两种角色要**两次写入两条记录**，不合并（§2.1）。
      *
      * 非法输入抛 [IllegalArgumentException]（几何不一致 / 未知状态 / 帧尺寸非正），由界面转为提示文本。
      */
@@ -86,13 +89,14 @@ object CalibrationSignals {
         params: MatchParams,
         frameWidth: Int,
         frameHeight: Int,
+        role: SignalRole = SignalRole.MARKER,
     ): CalibrationData {
         require(state != UiState.UNKNOWN) { "「未知」不能作为归属状态" }
         require(frameWidth > 0 && frameHeight > 0) { "标定帧尺寸必须为正：${frameWidth}x$frameHeight" }
         geometryError(current, frameWidth, frameHeight)?.let { throw IllegalArgumentException(it) }
 
         val signals = current?.signals.orEmpty().filterNot { it.name == name } +
-            CalibrationData.SignalEntry(name, window, listOf(template))
+            CalibrationData.SignalEntry(name, window, listOf(template), role)
         return CalibrationData(
             frameWidth = frameWidth,
             frameHeight = frameHeight,
@@ -155,9 +159,8 @@ object CalibrationSignals {
         )
     }
 
-    /** 信号名 → 归属状态（由状态规则反查；产物中必有，缺失返回 null）。 */
-    fun stateOf(data: CalibrationData, name: String): UiState? =
-        data.stateRules.firstOrNull { name in it.signalNames }?.state
+    /** 记录名 → 归属状态（由状态规则反查，标志与锚点通用；产物中必有，缺失返回 null）。 */
+    fun stateOf(data: CalibrationData, name: String): UiState? = data.stateOf(name)
 
     /** 参数文本 → 参数；任一非法返回 null（界面据此提示并拒绝写入）。 */
     fun parseParams(
@@ -176,8 +179,9 @@ object CalibrationSignals {
     }
 
     /**
-     * 由信号列表重建状态规则：以既有规则给出各信号的归属状态，[assigned] 覆盖刚写入的那条。
-     * 规则顺序按信号首次出现顺序（确定性，产物文本可稳定复现）。
+     * 由记录列表重建状态规则：以既有规则给出各记录的归属状态，[assigned] 覆盖刚写入的那条。
+     * 规则顺序按记录首次出现顺序（确定性，产物文本可稳定复现）；
+     * 同一状态下按**角色**分流：标志进 `signalNames`、锚点进 `anchorNames`（T2-3）。
      */
     private fun rebuildRules(
         signals: List<CalibrationData.SignalEntry>,
@@ -185,15 +189,23 @@ object CalibrationSignals {
         assigned: Pair<String, UiState>?,
     ): List<CalibrationData.StateRule> {
         val stateOf = HashMap<String, UiState>()
-        previous?.forEach { rule -> rule.signalNames.forEach { stateOf[it] = rule.state } }
+        previous?.forEach { rule ->
+            (rule.signalNames + rule.anchorNames).forEach { stateOf[it] = rule.state }
+        }
         assigned?.let { (name, state) -> stateOf[name] = state }
         return signals
             .groupBy(
                 keySelector = {
-                    requireNotNull(stateOf[it.name]) { "信号「${it.name}」缺少归属状态" }
+                    requireNotNull(stateOf[it.name]) { "记录「${it.name}」缺少归属状态" }
                 },
-                valueTransform = { it.name },
+                valueTransform = { it },
             )
-            .map { (state, names) -> CalibrationData.StateRule(state, names) }
+            .map { (state, entries) ->
+                CalibrationData.StateRule(
+                    state = state,
+                    signalNames = entries.filter { it.role == SignalRole.MARKER }.map { it.name },
+                    anchorNames = entries.filter { it.role == SignalRole.ANCHOR }.map { it.name },
+                )
+            }
     }
 }

@@ -89,9 +89,87 @@ class CalibrationCodecTest {
         assertThrows(IllegalArgumentException::class.java) {
             CalibrationCodec.decode(good.replace("format=mm-calibration", "format=other"))
         }
+        // v1 与 v2 都可读（T2-3），故用 v3 验证"版本不受支持"
         assertThrows(IllegalArgumentException::class.java) {
-            CalibrationCodec.decode(good.replace("version=1", "version=2"))
+            CalibrationCodec.decode(good.replace("version=2", "version=3"))
         }
+    }
+
+    /** v1 文本（无角色字段、无 anchor 行）：T2-3 之前的产物，必须仍可读且全部按标志解析。 */
+    private fun textV1(): String = CalibrationCodec.encode(sampleData())
+        .replace("version=2", "version=1")
+        .replace(Regex("signal=([^|]+)\\|marker\\|"), "signal=$1|")
+
+    @Test
+    fun v1ProductIsStillReadable() {
+        val decoded = CalibrationCodec.decode(textV1())
+        assertEquals(2, decoded.signals.size)
+        decoded.signals.forEach { assertEquals(SignalRole.MARKER, it.role) }
+        assertEquals(emptyList<String>(), decoded.anchorsFor(UiState.FARM))
+        assertEquals(listOf("farm_qr", "hall_entry"), decoded.markerSpecs().map { it.name })
+    }
+
+    @Test
+    fun rejectsRoleAndVersionMismatch() {
+        val good = CalibrationCodec.encode(sampleData())
+        // v1 带角色字段（文本被改过，不能按"猜字段"兼容）
+        assertThrows(IllegalArgumentException::class.java) {
+            CalibrationCodec.decode(good.replace("version=2", "version=1"))
+        }
+        // v1 带 anchor 行
+        assertThrows(IllegalArgumentException::class.java) {
+            CalibrationCodec.decode(textV1() + "\nanchor=FARM|farm_qr")
+        }
+        // v2 缺角色字段
+        assertThrows(IllegalArgumentException::class.java) {
+            CalibrationCodec.decode(good.replace("signal=farm_qr|marker|", "signal=farm_qr|"))
+        }
+        // 未知角色 token
+        assertThrows(IllegalArgumentException::class.java) {
+            CalibrationCodec.decode(good.replace("signal=farm_qr|marker|", "signal=farm_qr|ghost|"))
+        }
+    }
+
+    @Test
+    fun roundTripPreservesRolesAndAnchorState() {
+        val original = CalibrationData(
+            frameWidth = 800,
+            frameHeight = 600,
+            params = params,
+            signals = listOf(
+                CalibrationData.SignalEntry(
+                    "popup_close",
+                    SearchWindow(0.6, 0.55, 0.95, 0.6),
+                    listOf(template(201)),
+                ),
+                CalibrationData.SignalEntry(
+                    "popup_close_x",
+                    SearchWindow(0.8, 0.4, 0.9, 0.45),
+                    listOf(template(202)),
+                    SignalRole.ANCHOR,
+                ),
+            ),
+            stateRules = listOf(
+                CalibrationData.StateRule(
+                    UiState.ACTIVITY_POPUP,
+                    listOf("popup_close"),
+                    listOf("popup_close_x"),
+                ),
+            ),
+        )
+
+        val decoded = CalibrationCodec.decode(CalibrationCodec.encode(original))
+
+        assertEquals(SignalRole.MARKER, decoded.roleOf("popup_close"))
+        assertEquals(SignalRole.ANCHOR, decoded.roleOf("popup_close_x"))
+        assertEquals(UiState.ACTIVITY_POPUP, decoded.stateOf("popup_close_x"))
+        // 按当前状态启用：只有该状态声明的锚点在册，别的状态一律空（不接受兜底）
+        assertEquals(listOf("popup_close_x"), decoded.anchorsFor(UiState.ACTIVITY_POPUP))
+        assertEquals(emptyList<String>(), decoded.anchorsFor(UiState.HALL))
+        assertEquals(listOf("popup_close_x"), decoded.anchorSpecs(UiState.ACTIVITY_POPUP).map { it.name })
+        // 锚点不进识别循环（不参与状态判定与期望集合）
+        assertEquals(listOf("popup_close"), decoded.markerSpecs().map { it.name })
+        assertEquals(1, decoded.toLoop(ExpectedSignals.ALL).signalCount)
     }
 
     @Test
@@ -147,12 +225,12 @@ class CalibrationCodecTest {
     @Test
     fun rejectsDuplicateDefinitionsAndBadWindow() {
         val good = CalibrationCodec.encode(sampleData())
-        val signalLine = "signal=farm_qr|0.600000,0.700000,0.850000,0.950000"
+        val signalLine = "signal=farm_qr|marker|0.600000,0.700000,0.850000,0.950000"
         assertThrows(IllegalArgumentException::class.java) {
             CalibrationCodec.decode(good.replace(signalLine, "$signalLine\n$signalLine"))
         }
         assertThrows(IllegalArgumentException::class.java) {
-            CalibrationCodec.decode(good.replace(signalLine, "signal=farm_qr|0.9,0.7,0.6,0.95"))
+            CalibrationCodec.decode(good.replace(signalLine, "signal=farm_qr|marker|0.9,0.7,0.6,0.95"))
         }
     }
 

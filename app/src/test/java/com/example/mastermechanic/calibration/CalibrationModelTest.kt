@@ -8,6 +8,7 @@ import com.example.mastermechanic.recognition.SyntheticImages
 import com.example.mastermechanic.recognition.Template
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -51,6 +52,66 @@ class CalibrationModelTest {
                 ),
             )
         }
+    }
+
+    @Test
+    fun rejectsRoleMismatchAndRecordWithoutHomeState() {
+        val anchor = CalibrationData.SignalEntry(
+            "popup_close_x",
+            fullWindow,
+            listOf(template(2)),
+            SignalRole.ANCHOR,
+        )
+        // 锚点被写进 state= 行（角色不符）
+        assertThrows(IllegalArgumentException::class.java) {
+            data(
+                signals = listOf(anchor),
+                rules = listOf(CalibrationData.StateRule(UiState.ACTIVITY_POPUP, listOf("popup_close_x"))),
+            )
+        }
+        // 标志被写进 anchor= 行（角色不符）
+        assertThrows(IllegalArgumentException::class.java) {
+            data(rules = listOf(CalibrationData.StateRule(UiState.ACTIVITY_POPUP, emptyList(), listOf("farm_qr"))))
+        }
+        // 锚点没有归属状态 → 永远不会被启用，构造即拒绝
+        assertThrows(IllegalArgumentException::class.java) { data(signals = listOf(anchor), rules = emptyList()) }
+    }
+
+    @Test
+    fun allowsMarkerWithoutRuleForOfflineReplay() {
+        // 离线回放工具构造"只有信号、没有规则"的产物（T1-13 起沿用）：标志允许暂不归属
+        val product = data(rules = emptyList())
+
+        assertEquals(1, product.toLoop(ExpectedSignals.ALL).signalCount)
+        assertNull(product.stateOf("farm_qr"))
+    }
+
+    @Test
+    fun anchorOnlyRuleIsAllowedAndDoesNotFeedLoop() {
+        val product = CalibrationData(
+            frameWidth = 100,
+            frameHeight = 80,
+            params = params,
+            signals = listOf(
+                signal(),
+                CalibrationData.SignalEntry(
+                    "popup_close_x",
+                    fullWindow,
+                    listOf(template(2)),
+                    SignalRole.ANCHOR,
+                ),
+            ),
+            stateRules = listOf(
+                CalibrationData.StateRule(UiState.FARM, listOf("farm_qr")),
+                CalibrationData.StateRule(UiState.ACTIVITY_POPUP, emptyList(), listOf("popup_close_x")),
+            ),
+        )
+
+        // 锚点不进识别循环；按当前状态启用只认自己状态声明的锚点
+        assertEquals(1, product.toLoop(ExpectedSignals.ALL).signalCount)
+        assertEquals(listOf("popup_close_x"), product.anchorsFor(UiState.ACTIVITY_POPUP))
+        assertEquals(emptyList<String>(), product.anchorsFor(UiState.HALL))
+        assertEquals(listOf("popup_close_x"), product.anchorSpecs(UiState.ACTIVITY_POPUP).map { it.name })
     }
 
     @Test

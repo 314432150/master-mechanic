@@ -1,5 +1,6 @@
 package com.example.mastermechanic.calibration
 
+import com.example.mastermechanic.decision.ExpectedSignals
 import com.example.mastermechanic.decision.UiState
 import com.example.mastermechanic.recognition.MatchParams
 import com.example.mastermechanic.recognition.SearchWindow
@@ -38,6 +39,7 @@ class CalibrationSignalsTest {
         params: MatchParams = defaultParams,
         frameWidth: Int = 1000,
         frameHeight: Int = 800,
+        role: SignalRole = SignalRole.MARKER,
     ): CalibrationData = CalibrationSignals.upsert(
         current = current,
         name = name,
@@ -47,7 +49,38 @@ class CalibrationSignalsTest {
         params = params,
         frameWidth = frameWidth,
         frameHeight = frameHeight,
+        role = role,
     )
+
+    // --- 角色（T2-3）：标志与锚点分流，同一状态可两者都有 ---
+
+    @Test
+    fun upsertKeepsMarkersAndAnchorsInSeparateRuleLists() {
+        var data = upsert(null, "popup_close", UiState.ACTIVITY_POPUP)
+        data = upsert(data, "popup_close_x", UiState.ACTIVITY_POPUP, role = SignalRole.ANCHOR)
+
+        val rule = data.stateRules.single()
+        assertEquals(UiState.ACTIVITY_POPUP, rule.state)
+        assertEquals(listOf("popup_close"), rule.signalNames)
+        assertEquals(listOf("popup_close_x"), rule.anchorNames)
+        assertEquals(listOf("popup_close_x"), data.anchorsFor(UiState.ACTIVITY_POPUP))
+        // 锚点不参与状态判定：识别循环只吃标志
+        assertEquals(listOf("popup_close"), data.markerSpecs().map { it.name })
+        assertEquals(1, data.toLoop(ExpectedSignals.ALL).signalCount)
+    }
+
+    @Test
+    fun upsertReassignsRoleOfSameName() {
+        val asMarker = upsert(null, "popup_close_x", UiState.ACTIVITY_POPUP)
+        val asAnchor = upsert(asMarker, "popup_close_x", UiState.ACTIVITY_POPUP, role = SignalRole.ANCHOR)
+
+        assertEquals(SignalRole.ANCHOR, asAnchor.roleOf("popup_close_x"))
+        assertEquals(emptyList<String>(), asAnchor.stateRules.single().signalNames)
+        assertEquals(listOf("popup_close_x"), asAnchor.anchorNamesForTest())
+    }
+
+    /** 便利断言：唯一规则的锚点列表（避免测试里反复写 `stateRules.single().anchorNames`）。 */
+    private fun CalibrationData.anchorNamesForTest(): List<String> = stateRules.single().anchorNames
 
     // --- 覆盖写入：首条 / 同名 / 状态重归属 ---
 
