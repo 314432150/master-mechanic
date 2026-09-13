@@ -73,33 +73,74 @@ data class LabelPosition(
     }
 }
 
-/** 两个部件的当前位置（持久化单元）。 */
-data class FloatingPositions(
-    val handle: FloatingPosition,
-    val label: LabelPosition,
-) {
+/**
+ * 悬浮窗位置（持久化单元，2026-09-14 修订）：**只存状态标签**。
+ *
+ * 为什么不再存手柄：手柄自"不可拖动"起就是**布局常量**，不是用户数据。存过它的代价很具体——
+ * 旧文件里的值会一直压住新默认值（真机现象：默认位置改成"上方三分之一"后，手柄仍出现在
+ * 旧文件记录的位置，只有点一次「重置到默认位置」才回来）。
+ * 手柄位置现在只由 [FloatingPosition.DEFAULT] 决定。
+ */
+data class FloatingPositions(val label: LabelPosition) {
+
+    /** 手柄位置 = **布局常量**（不持久化，见类注释）。 */
+    val handle: FloatingPosition get() = FloatingPosition.DEFAULT
 
     companion object {
-        val DEFAULT = FloatingPositions(FloatingPosition.DEFAULT, LabelPosition.DEFAULT)
+        val DEFAULT = FloatingPositions(LabelPosition.DEFAULT)
     }
 }
 
 /**
- * 悬浮窗几何换算（纯逻辑，T3-4 / T3-7）：把位置换算成**两个窗口**的偏移量。
+ * 悬浮窗几何换算（纯逻辑，T3-4 / T3-7 / T3-7 修订）：把位置换算成**三个窗口**的偏移量。
  *
- * 两个窗口（ADR-004 第 2 / 5 条；第 2 条于 2026-09-14 修订）：
- * - **手柄窗**（可触摸）：贴边、露出 [FloatingPosition.REVEAL_RATIO] 宽度（扁半圆）；
+ * 三个窗口（ADR-004 第 2 / 5 条；第 2 条于 2026-09-14 修订为"菜单独立成窗"）：
+ * - **手柄窗**（可触摸）：固定贴边、露出 [FloatingPosition.REVEAL_RATIO] 宽度（窄竖条），**不随展开变化**；
+ * - **菜单窗**（可触摸）：展开时才挂载，贴着屏内边缘、与手柄纵向对齐；
  * - **状态标签窗**（可触摸、可拖动）：自由位置，默认底部居中。
  */
 object FloatingLayout {
+
+    /** 贴边手柄**露在屏内**的宽度（px）：菜单要避开这一条，否则会被手柄压住。 */
+    fun revealWidth(handleWidth: Int): Int =
+        (handleWidth * FloatingPosition.REVEAL_RATIO).roundToInt()
 
     /** 手柄窗横向偏移：贴边 + 露出 [FloatingPosition.REVEAL_RATIO] 宽度（其余移出屏幕）。 */
     fun handleX(side: FloatingSide, handleWidth: Int, screenWidth: Int): Int = when (side) {
         FloatingSide.LEFT ->
             -((handleWidth * (1.0 - FloatingPosition.REVEAL_RATIO)).roundToInt())
         FloatingSide.RIGHT ->
-            screenWidth - (handleWidth * FloatingPosition.REVEAL_RATIO).roundToInt()
+            screenWidth - revealWidth(handleWidth)
     }
+
+    /**
+     * 菜单窗横向偏移：**完全在屏内**（菜单不能被屏幕边缘裁掉）且**避开手柄露在屏内那一条**
+     * （否则面板会压在手柄上），另留 [margin] 内边距。
+     */
+    fun menuX(
+        side: FloatingSide,
+        menuWidth: Int,
+        screenWidth: Int,
+        handleWidth: Int,
+        margin: Int,
+    ): Int {
+        val gap = revealWidth(handleWidth) + margin
+        val limit = (screenWidth - menuWidth - margin).coerceAtLeast(margin)
+        return when (side) {
+            FloatingSide.LEFT -> gap.coerceIn(margin, limit)
+            FloatingSide.RIGHT -> (screenWidth - gap - menuWidth).coerceIn(margin, limit)
+        }
+    }
+
+    /** 菜单窗纵向偏移：**与手柄中心对齐**，再 clamp 在屏内（手柄靠上 / 靠下时菜单不会出屏）。 */
+    fun menuY(
+        handleY: Int,
+        handleHeight: Int,
+        menuHeight: Int,
+        screenHeight: Int,
+        margin: Int,
+    ): Int = (handleY + handleHeight / 2.0 - menuHeight / 2.0).roundToInt()
+        .coerceIn(margin, (screenHeight - menuHeight - margin).coerceAtLeast(margin))
 
     /** 纵向偏移：按比例还原并 clamp 在当前屏内（换分辨率后仍可被找回）。 */
     fun y(yRatio: Double, height: Int, screenHeight: Int): Int =

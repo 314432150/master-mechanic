@@ -64,6 +64,9 @@ class FloatingWindow(private val context: Context) {
     private var positions: FloatingPositions = FloatingPositions.DEFAULT
     private var expanded = false
 
+    /** 菜单窗是否已挂到 WindowManager（展开 = 挂上，收起 = 摘掉）。 */
+    private var menuAttached = false
+
     private var dragging = false
     private var downRawX = 0f
     private var downRawY = 0f
@@ -112,9 +115,11 @@ class FloatingWindow(private val context: Context) {
 
         val labelView = buildLabel()
         val panelView = buildPanel()
+        val menuView = buildMenu()
         // 先登记字段（applyExpandedState / applyPositions 都依赖它们），再定形状与尺寸
         label = labelView
         panel = panelView
+        menu = menuView
         applyExpandedState()
 
         // 收起态尺寸是**常量**，不靠测量：空文字的 MATCH_PARENT 手柄测出来是 0 宽，
@@ -127,6 +132,8 @@ class FloatingWindow(private val context: Context) {
             panelHeight,
             labelView.measuredWidth,
             labelView.measuredHeight,
+            menuWidth = 0, // 挂载时一定是收起态：菜单窗还没挂
+            menuHeight = 0,
         )
         var panelAdded = false
         try {
@@ -180,6 +187,10 @@ class FloatingWindow(private val context: Context) {
         FloatingActionSignal.removeListener(onActionChanged)
         detachDisplayRefresh()
         lastPlacementTrace = null
+        if (menuAttached) {
+            menu?.let { view -> runCatching { windowManager.removeView(view) } }
+            menuAttached = false
+        }
         label?.let { view -> runCatching { windowManager.removeView(view) } }
         runCatching { windowManager.removeView(panelView) }
         MmLog.i(TAG, "悬浮窗已移除")
@@ -209,6 +220,12 @@ class FloatingWindow(private val context: Context) {
         setOnTouchListener(::onLabelTouch)
     }
 
+    /**
+     * 手柄窗 = 贴边窄条**本身**（浅琥珀黄 + 外侧圆角），**形态永不变化**。
+     *
+     * 2026-09-14 用户口径：位置固定贴在右侧边缘上方三分之一处；不支持拖动；
+     * **点击展开菜单后手柄不消失**——所以菜单不再"长"在手柄上（见 [buildMenu]）。
+     */
     private fun buildPanel(): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         handle = textView(13f, HANDLE_TEXT_COLOR).apply {
@@ -216,27 +233,36 @@ class FloatingWindow(private val context: Context) {
             contentDescription = context.getString(R.string.floating_handle_desc)
         }
         addView(handle)
-        reasonText = textView(11f, REASON_COLOR).also {
-            it.visibility = View.GONE
-            it.maxWidth = dp(REASON_MAX_WIDTH_DP)
-            it.setPadding(dp(6), dp(2), dp(6), dp(2))
-            addView(it)
-        }
-        menu = buildMenu().also { addView(it) }
-        // 手柄不再支持拖动（2026-09-14 用户口径）：位置固定贴在右侧边缘上方三分之一处，
-        // 单击只展开 / 收起菜单。
+        background = handleBackground(FloatingPosition.DEFAULT.side)
         setOnClickListener { toggleExpanded() }
     }
 
+    /**
+     * 菜单窗 = 独立窗口（深色圆角面板）：与手柄、状态标签同构。
+     *
+     * **为什么独立成窗**（2026-09-14 用户口径）：展开时手柄必须留在原位不动；
+     * 若把菜单做成手柄的"展开形态"，手柄要么被菜单顶走、要么随窗口尺寸变化而抖动。
+     * 独立成窗后手柄的尺寸 / 背景 / 触摸行为在整个展开过程中保持不变
+     * （也顺手消掉了"展开态改窗口尺寸"这一类时序坑）。
+     */
     private fun buildMenu(): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        visibility = View.GONE
+        setPadding(dp(PANEL_PADDING_DP), dp(PANEL_PADDING_DP), dp(PANEL_PADDING_DP), dp(PANEL_PADDING_DP))
+        background = panelBackground()
         addView(
             menuRow(
                 glyph = context.getString(R.string.floating_menu_glyph_patrol),
                 textRes = R.string.floating_menu_start_patrol,
             ) { onStartPatrol() },
         )
+        reasonText = textView(11f, REASON_COLOR).also {
+            it.visibility = View.GONE
+            it.maxWidth = dp(REASON_MAX_WIDTH_DP)
+            it.setPadding(dp(6), dp(2), dp(6), dp(2))
+            addView(it)
+        }
+        // 点菜单面板之外的任何地方 → 收起（FLAG_WATCH_OUTSIDE_TOUCH 送来 ACTION_OUTSIDE）
+        setOnTouchListener(::onMenuTouch)
     }
 
     /** 菜单功能行（参考 vivo 游戏魔盒）：左侧图标 + 文案，整行可点。 */
@@ -290,49 +316,94 @@ class FloatingWindow(private val context: Context) {
     }
 
     /**
-     * 收起 / 展开的形态切换：形状、尺寸、文案、箭头朝向、菜单可见性一次切齐。
+     * 展开 / 收起：**只增删菜单窗**。
      *
-     * 收起态（贴边窄条）：**文字只出现在"露在屏内"的那一半**——手柄一半在屏外，
-     * 箭头必须朝屏幕中心对齐，否则会被切掉半个字。
+     * 手柄的形态、尺寸、位置**都不随展开变化**（2026-09-14 用户口径：
+     * "点击手柄弹出菜单面板后手柄不要消失"）——它始终是贴边窄条，菜单是独立窗口（[buildMenu]）。
      */
     private fun applyExpandedState() {
-        val panelView = panel ?: return
-        val handleView = handle ?: return
-        val side = positions.handle.side
-        if (expanded) {
-            handleView.text = context.getString(R.string.floating_handle_text)
-            handleView.gravity = Gravity.CENTER
-            handleView.setPadding(dp(14), dp(6), dp(14), dp(6))
-            handleView.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            )
-            panelView.setPadding(dp(PANEL_PADDING_DP), dp(PANEL_PADDING_DP), dp(PANEL_PADDING_DP), dp(PANEL_PADDING_DP))
-            panelView.background = panelBackground()
-            setPanelSize(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT)
-        } else {
-            // 收起态只剩一条**窄到放不下字**的半透明竖条（可见约 7dp），因此不写字——
-            // 形状本身就是"这里有个把手"，点它展开菜单（2026-09-14 用户口径：再缩一半）。
-            handleView.text = ""
-            handleView.setPadding(0, 0, 0, 0)
-            handleView.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT,
-            )
-            panelView.setPadding(0, 0, 0, 0)
-            panelView.background = handleBackground(side)
-            setPanelSize(dp(HANDLE_WIDTH_DP), dp(HANDLE_HEIGHT_DP))
+        val menuView = menu ?: return
+        if (!expanded) {
+            reasonText?.visibility = View.GONE
+            if (menuAttached) {
+                runCatching { windowManager.removeView(menuView) }
+                menuAttached = false
+            }
+            return
         }
-        menu?.visibility = if (expanded) View.VISIBLE else View.GONE
+        if (menuAttached) return
+        // 先量出尺寸再挂：否则首帧会落在 (0,0) 再跳一次
+        measureSelf(menuView)
+        val (menuX, menuY) = initialMenuOffset(menuView)
+        val added = runCatching {
+            windowManager.addView(
+                menuView,
+                menuParams().apply {
+                    x = menuX
+                    y = menuY
+                },
+            )
+        }.isSuccess
+        if (!added) {
+            MmLog.w(TAG, "菜单面板挂载失败")
+            return
+        }
+        menuAttached = true
+        attachLayoutRefresh(menuView)
     }
 
-    private fun setPanelSize(width: Int, height: Int) {
-        val panelView = panel ?: return
-        val params = panelView.layoutParams as? WindowManager.LayoutParams ?: return
-        if (params.width == width && params.height == height) return
-        params.width = width
-        params.height = height
-        runCatching { windowManager.updateViewLayout(panelView, params) }
+    /** 菜单窗的初始偏移：以手柄**当前**落位为基准（展开时手柄一定已经落位）。 */
+    private fun initialMenuOffset(menuView: View): Pair<Int, Int> {
+        val panelView = panel ?: return 0 to 0
+        val params = panelView.layoutParams as WindowManager.LayoutParams
+        val screen = FloatingScreen.spec(context)
+        val (menuWidth, menuHeight) = viewSize(menuView)
+        val x = FloatingLayout.menuX(
+            positions.handle.side,
+            menuWidth,
+            screen.width,
+            params.width,
+            dp(MENU_MARGIN_DP),
+        )
+        val y = FloatingLayout.menuY(
+            params.y,
+            params.height,
+            menuHeight,
+            screen.height,
+            dp(MENU_MARGIN_DP),
+        )
+        return x to y
+    }
+
+    /** 视图尺寸：优先真实布局尺寸，未布局时退回测量值。 */
+    private fun viewSize(view: View): Pair<Int, Int> =
+        (if (view.width > 0) view.width else view.measuredWidth) to
+            (if (view.height > 0) view.height else view.measuredHeight)
+
+    /**
+     * 菜单窗触摸：只关心 [MotionEvent.ACTION_OUTSIDE]——**点菜单面板之外任何地方即收起**
+     * （2026-09-14 用户口径）。
+     *
+     * 点在**手柄**上时不算"点别处"：正常路由下那次触摸由手柄窗接走（不会产生 ACTION_OUTSIDE），
+     * 这里再做一次命中判断，防的是"手柄半露在屏外"时边界上的 1px 级误差——
+     * 否则会和手柄自己的单击切换打架（先收起、再被切换回来）。
+     */
+    private fun onMenuTouch(view: View, event: MotionEvent): Boolean {
+        if (event.actionMasked != MotionEvent.ACTION_OUTSIDE) return false
+        if (hitsHandle(event.rawX, event.rawY)) return false
+        MmLog.i(TAG, "点了菜单面板之外，已收起")
+        collapse()
+        return false
+    }
+
+    /** 触点是否落在手柄窗内（含 2dp 容差）。 */
+    private fun hitsHandle(rawX: Float, rawY: Float): Boolean {
+        val panelView = panel ?: return false
+        val location = IntArray(2)
+        panelView.getLocationOnScreen(location)
+        val slop = dp(2)
+        return rawX >= location[0] - slop && rawX <= location[0] + panelView.width + slop &&
+            rawY >= location[1] - slop && rawY <= location[1] + panelView.height + slop
     }
 
     // ---- 触摸：状态标签（自由拖动）----
@@ -479,28 +550,40 @@ class FloatingWindow(private val context: Context) {
 
     // ---- 定位 ----
 
-    /** 两个窗口各自的偏移（参数均已按当前屏与当前位置算好）。 */
-    private data class Offsets(val panelX: Int, val panelY: Int, val labelX: Int, val labelY: Int)
+    /** 各窗口的偏移（参数均已按当前屏与当前位置算好）；菜单收起时为 null（窗口根本不存在）。 */
+    private data class Offsets(
+        val panelX: Int,
+        val panelY: Int,
+        val labelX: Int,
+        val labelY: Int,
+        val menuX: Int?,
+        val menuY: Int?,
+    )
 
     private fun computeOffsets(
         panelWidth: Int,
         panelHeight: Int,
         labelWidth: Int,
         labelHeight: Int,
+        menuWidth: Int,
+        menuHeight: Int,
     ): Offsets {
         val screen = FloatingScreen.spec(context)
+        val side = positions.handle.side
         val panelY = FloatingLayout.y(positions.handle.yRatio, panelHeight, screen.height)
-        val panelX = if (expanded) {
-            // 展开态临时完全进屏：否则菜单会被屏幕边缘裁掉（收起后恢复贴边）
-            FloatingLayout.clampInside(
-                FloatingLayout.handleX(positions.handle.side, panelWidth, screen.width),
-                panelWidth,
-                screen.width,
-            )
-        } else {
-            FloatingLayout.handleX(positions.handle.side, panelWidth, screen.width)
-        }
+        // 手柄**永远贴边**（不再有"展开态临时进屏"：菜单已独立成窗，手柄不需要让位）
+        val panelX = FloatingLayout.handleX(side, panelWidth, screen.width)
         val margin = dp(LABEL_MARGIN_DP)
+        val menuX = if (menuWidth > 0) {
+            FloatingLayout.menuX(side, menuWidth, screen.width, panelWidth, dp(MENU_MARGIN_DP))
+        } else {
+            null
+        }
+        val menuY = if (menuHeight > 0) {
+            FloatingLayout.menuY(panelY, panelHeight, menuHeight, screen.height, dp(MENU_MARGIN_DP))
+        } else {
+            null
+        }
         return Offsets(
             panelX = panelX,
             panelY = panelY,
@@ -516,6 +599,8 @@ class FloatingWindow(private val context: Context) {
                 screen.height,
                 margin,
             ),
+            menuX = menuX,
+            menuY = menuY,
         )
     }
 
@@ -526,20 +611,32 @@ class FloatingWindow(private val context: Context) {
         val panelWidth = panelView.width.takeIf { it > 0 } ?: dp(HANDLE_WIDTH_DP)
         val panelHeight = panelView.height.takeIf { it > 0 } ?: dp(HANDLE_HEIGHT_DP)
         if (labelView.width == 0) return
-        val screen = FloatingScreen.spec(context)
-        val offsets = computeOffsets(
+        val menuView = menu?.takeIf { expanded && menuAttached }
+        val (menuWidth, menuHeight) = menuView?.let { viewSize(it) } ?: (0 to 0)
+        val offset = computeOffsets(
             panelWidth,
             panelHeight,
             labelView.width,
             labelView.height,
+            menuWidth,
+            menuHeight,
         )
-        place(panelView, offsets.panelX, offsets.panelY)
-        place(labelView, offsets.labelX, offsets.labelY)
-        // 取证/排障用途：把"用了多大的屏、把两个窗口放到了哪"记进日志——
-        // 悬浮窗看不见时，一行日志就能判断是不是屏幕尺寸用错了（真机排障踩过坑）。
-        val trace = "屏 ${screen.width}x${screen.height} ｜ 手柄 (${offsets.panelX},${offsets.panelY})" +
-            " ${panelWidth}x$panelHeight ｜ 标签 (${offsets.labelX},${offsets.labelY})" +
-            " ${labelView.width}x${labelView.height}"
+        place(panelView, offset.panelX, offset.panelY)
+        place(labelView, offset.labelX, offset.labelY)
+        if (menuView != null && offset.menuX != null && offset.menuY != null) {
+            place(menuView, offset.menuX, offset.menuY)
+        }
+        // 取证 / 排障用途：把"用了多大的屏、把各窗口放到了哪"记进日志——
+        // 悬浮窗看不见或位置不对时，一行日志就能判断是尺寸错了还是位置值错了（真机排障踩过坑）。
+        val screen = FloatingScreen.spec(context)
+        val menuTrace = if (menuView != null) {
+            " ｜ 菜单 (${offset.menuX},${offset.menuY}) ${menuWidth}x$menuHeight"
+        } else {
+            ""
+        }
+        val trace = "屏 ${screen.width}x${screen.height} ｜ 手柄 (${offset.panelX},${offset.panelY})" +
+            " ${panelWidth}x$panelHeight ｜ 标签 (${offset.labelX},${offset.labelY})" +
+            " ${labelView.width}x${labelView.height}$menuTrace"
         if (trace != lastPlacementTrace) {
             lastPlacementTrace = trace
             MmLog.i(TAG, "悬浮窗落位: $trace")
@@ -631,6 +728,23 @@ class FloatingWindow(private val context: Context) {
         gravity = Gravity.TOP or Gravity.START
     }
 
+    /**
+     * 菜单窗参数：`FLAG_WATCH_OUTSIDE_TOUCH` 让"点面板之外"能作为
+     * [MotionEvent.ACTION_OUTSIDE] 送到菜单窗（2026-09-14 用户口径：点非菜单区域收起）。
+     */
+    private fun menuParams() = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.WRAP_CONTENT,
+        WindowManager.LayoutParams.WRAP_CONTENT,
+        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+        PixelFormat.TRANSLUCENT,
+    ).apply {
+        gravity = Gravity.TOP or Gravity.START
+    }
+
     private fun dp(value: Int): Int =
         (value * context.resources.displayMetrics.density).toInt()
 
@@ -667,9 +781,10 @@ class FloatingWindow(private val context: Context) {
         const val HANDLE_HEIGHT_DP = 32
         const val HANDLE_CORNER_DP = 9
 
-        /** 展开态面板（圆角 + 内边距）。 */
+        /** 菜单面板（独立窗口：圆角 + 内边距 + 与屏幕 / 手柄的间距）。 */
         const val MENU_CORNER_DP = 14
         const val PANEL_PADDING_DP = 4
+        const val MENU_MARGIN_DP = 8
 
         /** 状态标签圆角与距屏幕边缘的边距（dp）。 */
         const val LABEL_CORNER_DP = 12

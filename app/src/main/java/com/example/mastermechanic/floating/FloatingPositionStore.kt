@@ -51,8 +51,9 @@ object FloatingPositionStore {
     }
 
     /**
-     * 加载位置：文件不存在 / 解析失败 → **回落默认并重写文件**（并把原因带回写日志）。
-     * 读取成功返回解析结果与 `recoveredReason = null`。
+     * 加载位置：文件不存在 / 解析失败 → **回落默认并重写文件**（并把原因带回写日志）；
+     * **旧格式（v1 / v2）→ 顺手重写成当前格式**（手柄位置改为布局常量、状态标签位置保留）。
+     * 读取成功（且已是当前格式）返回解析结果与 `recoveredReason = null`。
      */
     fun loadOrRecover(
         file: File,
@@ -64,7 +65,17 @@ object FloatingPositionStore {
             return FloatingPositionResult(FloatingPositions.DEFAULT, "位置文件不存在，已按默认位置重建")
         }
         return try {
-            FloatingPositionResult(FloatingPositionCodec.decode(file.readText(Charsets.UTF_8)))
+            val text = file.readText(Charsets.UTF_8)
+            val positions = FloatingPositionCodec.decode(text)
+            if (FloatingPositionCodec.needsRewrite(text)) {
+                save(file, positions, screenWidth, screenHeight)
+                FloatingPositionResult(
+                    positions,
+                    "位置文件为旧格式，已重写：手柄位置改用固定布局（右侧、纵向三分之一），状态标签位置保留",
+                )
+            } else {
+                FloatingPositionResult(positions)
+            }
         } catch (e: IllegalArgumentException) {
             save(file, FloatingPositions.DEFAULT, screenWidth, screenHeight)
             FloatingPositionResult(

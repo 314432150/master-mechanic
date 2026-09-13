@@ -46,8 +46,7 @@
     <!-- 悬浮窗壳（M0-T0-5）与状态展示（M1-T1-7）；交互与位置（M3-T3-4 / T3-5） -->
     <string name="floating_status_text">状态：%1$s</string>
     <string name="floating_action_text">动作：%1$s</string>
-    <string name="floating_handle_text">≡</string>
-    <string name="floating_handle_desc">悬浮窗手柄（单击展开菜单，按住沿边缘上下移动）</string>
+    <string name="floating_handle_desc">悬浮窗手柄（单击展开菜单，位置固定不可拖动）</string>
     <string name="floating_menu_start_patrol">开始巡查</string>
     <string name="floating_menu_glyph_patrol">▶</string>
     <string name="floating_reason_no_session">尚未建立采集会话：请先到「授权状态」页授予屏幕采集权限。</string>

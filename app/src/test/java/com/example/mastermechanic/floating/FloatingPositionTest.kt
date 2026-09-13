@@ -152,6 +152,49 @@ class FloatingPositionTest {
     }
 
     @Test
+    fun revealWidthIsHalfOfHandle() {
+        assertEquals(handleWidth / 2, FloatingLayout.revealWidth(handleWidth))
+        // 19dp 手柄 → 露出 10dp（一半在屏外）
+        assertEquals(10, FloatingLayout.revealWidth(19))
+    }
+
+    @Test
+    fun menuSitsBesideHandleAndStaysInsideScreen() {
+        val menuWidth = 300
+        val gap = FloatingLayout.revealWidth(handleWidth) + margin
+        // 右贴边：菜单右缘 = 屏宽 -（手柄露出宽度 + 间距）→ 不会被手柄压住
+        assertEquals(
+            screenWidth - gap - menuWidth,
+            FloatingLayout.menuX(FloatingSide.RIGHT, menuWidth, screenWidth, handleWidth, margin),
+        )
+        // 左贴边：对称
+        assertEquals(
+            gap,
+            FloatingLayout.menuX(FloatingSide.LEFT, menuWidth, screenWidth, handleWidth, margin),
+        )
+        // 菜单比屏幕还宽 → 退化到边距，不产生越屏（菜单绝不能被裁）
+        assertEquals(
+            margin,
+            FloatingLayout.menuX(FloatingSide.RIGHT, screenWidth + 100, screenWidth, handleWidth, margin),
+        )
+    }
+
+    @Test
+    fun menuFollowsHandleVerticallyAndStaysInsideScreen() {
+        val menuHeight = 200
+        // 与手柄**中心**对齐
+        assertEquals(1056 + 16 - 100, FloatingLayout.menuY(1056, 32, menuHeight, screenHeight, margin))
+        // 手柄贴顶 / 贴底 → 菜单被夹在屏内
+        assertEquals(margin, FloatingLayout.menuY(0, 32, menuHeight, screenHeight, margin))
+        assertEquals(
+            screenHeight - menuHeight - margin,
+            FloatingLayout.menuY(screenHeight - 32, 32, menuHeight, screenHeight, margin),
+        )
+        // 菜单比屏幕还高 → 退化到边距
+        assertEquals(margin, FloatingLayout.menuY(0, 32, screenHeight + 10, screenHeight, margin))
+    }
+
+    @Test
     fun sideTokenRoundTrip() {
         assertEquals(FloatingSide.LEFT, FloatingSide.fromToken("left"))
         assertEquals(FloatingSide.RIGHT, FloatingSide.fromToken("right"))
