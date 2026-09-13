@@ -54,11 +54,13 @@
     <string name="floating_reason_config_broken">巡查配置读取失败：%1$s</string>
     <string name="floating_side_left">左侧</string>
     <string name="floating_side_right">右侧</string>
+    <string name="floating_label_default">底部居中</string>
+    <string name="floating_label_custom">已自定义</string>
 
-    <!-- 悬浮窗位置（M3-T3-4） -->
+    <!-- 悬浮窗位置（M3-T3-4；T3-7 起两个部件各自可拖动） -->
     <string name="auth_floating_label">悬浮窗位置</string>
-    <string name="auth_floating_desc">游戏内的悬浮手柄贴屏幕边缘，按住可拖动，抬手吸附最近的边缘并记住位置（只露出约 40% 宽度，随时可拖回来）。状态标签始终不可触摸、不拦截游戏操作；可触摸的只有手柄这一小块。</string>
-    <string name="auth_floating_current">当前停靠：%1$s</string>
+    <string name="auth_floating_desc">游戏内悬浮窗分两个部件，都能按住拖动、位置都会被记住：① 手柄——贴屏幕边缘（贴边时收窄成扁半圆，只露一半），单击展开菜单；② 状态标签——显示当前状态与动作，默认停在屏幕底部居中。两者都只吞掉自己那一小块区域，其余触摸照常给游戏。若被拖到不好点的位置，可在下面重置。</string>
+    <string name="auth_floating_current">手柄：%1$s ｜ 状态标签：%2$s</string>
     <string name="auth_floating_reset">重置到默认位置</string>
     <string name="auth_floating_reset_done">已重置为默认位置（游戏切到前台时生效）。</string>
     <string name="accessibility_service_label">MasterMechanic</string>

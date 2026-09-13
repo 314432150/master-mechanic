@@ -5,7 +5,7 @@ import java.io.File
 
 /** 位置读取结果：[recoveredReason] 非空表示**发生了回落**（调用方须记日志，ADR-006：不静默）。 */
 data class FloatingPositionResult(
-    val position: FloatingPosition,
+    val positions: FloatingPositions,
     val recoveredReason: String? = null,
 )
 
@@ -27,20 +27,20 @@ object FloatingPositionStore {
 
     fun save(
         context: Context,
-        position: FloatingPosition,
+        positions: FloatingPositions,
         screenWidth: Int,
         screenHeight: Int,
-    ): File = save(positionFile(context), position, screenWidth, screenHeight)
+    ): File = save(positionFile(context), positions, screenWidth, screenHeight)
 
     /** 保存到指定文件（纯文件版，JVM 可测）；临时文件 + rename 防半写。 */
     fun save(
         file: File,
-        position: FloatingPosition,
+        positions: FloatingPositions,
         screenWidth: Int,
         screenHeight: Int,
     ): File {
         file.parentFile?.mkdirs()
-        val text = FloatingPositionCodec.encode(position, screenWidth, screenHeight)
+        val text = FloatingPositionCodec.encode(positions, screenWidth, screenHeight)
         val tmp = File(file.parentFile, "$FILE_NAME.tmp")
         tmp.writeText(text, Charsets.UTF_8)
         if (!tmp.renameTo(file)) {
@@ -60,15 +60,15 @@ object FloatingPositionStore {
         screenHeight: Int,
     ): FloatingPositionResult {
         if (!file.isFile) {
-            save(file, FloatingPosition.DEFAULT, screenWidth, screenHeight)
-            return FloatingPositionResult(FloatingPosition.DEFAULT, "位置文件不存在，已按默认位置重建")
+            save(file, FloatingPositions.DEFAULT, screenWidth, screenHeight)
+            return FloatingPositionResult(FloatingPositions.DEFAULT, "位置文件不存在，已按默认位置重建")
         }
         return try {
             FloatingPositionResult(FloatingPositionCodec.decode(file.readText(Charsets.UTF_8)))
         } catch (e: IllegalArgumentException) {
-            save(file, FloatingPosition.DEFAULT, screenWidth, screenHeight)
+            save(file, FloatingPositions.DEFAULT, screenWidth, screenHeight)
             FloatingPositionResult(
-                FloatingPosition.DEFAULT,
+                FloatingPositions.DEFAULT,
                 "位置文件不可用（${e.message ?: e.javaClass.simpleName}），已回落默认位置",
             )
         }
@@ -76,13 +76,13 @@ object FloatingPositionStore {
 
     /** 重置为默认位置（FR-07「始终可被找回」的兜底入口）；返回写入的文件。 */
     fun reset(context: Context, screenWidth: Int, screenHeight: Int): File =
-        save(context, FloatingPosition.DEFAULT, screenWidth, screenHeight)
+        save(context, FloatingPositions.DEFAULT, screenWidth, screenHeight)
 
     /**
-     * 只读取（供界面展示"当前停靠在哪一侧"）：文件不存在 / 损坏返回 null，**不写盘**——
+     * 只读取（供界面展示"当前停在哪"）：文件不存在 / 损坏返回 null，**不写盘**——
      * 界面只做展示，不做修复；修复是 [loadOrRecover]（挂载时）的职责。
      */
-    fun loadOrNull(file: File): FloatingPosition? {
+    fun loadOrNull(file: File): FloatingPositions? {
         if (!file.isFile) return null
         return try {
             FloatingPositionCodec.decode(file.readText(Charsets.UTF_8))
@@ -91,5 +91,5 @@ object FloatingPositionStore {
         }
     }
 
-    fun loadOrNull(context: Context): FloatingPosition? = loadOrNull(positionFile(context))
+    fun loadOrNull(context: Context): FloatingPositions? = loadOrNull(positionFile(context))
 }

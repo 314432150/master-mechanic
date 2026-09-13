@@ -56,10 +56,11 @@ import com.example.mastermechanic.auth.AuthorizationSummary
 import com.example.mastermechanic.auth.CaptureSessionState
 import com.example.mastermechanic.capture.CaptureSessionSignal
 import com.example.mastermechanic.capture.CaptureSessionStatus
-import com.example.mastermechanic.floating.FloatingPosition
 import com.example.mastermechanic.floating.FloatingPositionStore
+import com.example.mastermechanic.floating.FloatingPositions
 import com.example.mastermechanic.floating.FloatingScreen
 import com.example.mastermechanic.floating.FloatingSide
+import com.example.mastermechanic.floating.LabelPosition
 import com.example.mastermechanic.service.CaptureService
 import com.example.mastermechanic.service.ResidentService
 import com.example.mastermechanic.ui.theme.MasterMechanicTheme
@@ -454,17 +455,17 @@ private fun RunModeCard() {
 }
 
 /**
- * 悬浮窗位置卡（M3-T3-4 / FR-07）：展示当前停靠侧 + 「重置到默认位置」。
+ * 悬浮窗位置卡（M3-T3-4 / T3-7 / FR-07）：展示两个部件各自的位置 + 「重置到默认位置」。
  *
- * 为什么要有这个入口：FR-07 要求贴边后"始终可被找回"——正常情况拖回来即可，
- * 但极端情况（手柄被拖到难以触达处 / 换了分辨率）需要一个不依赖手柄本身的自救入口。
+ * 为什么要有这个入口：FR-07 要求位置"始终可被找回"——正常情况拖回来即可，
+ * 但极端情况（部件被拖到难以触达处 / 换了分辨率）需要一个不依赖悬浮窗本身的自救入口。
  * 只在 MM 前台可见（悬浮窗只在游戏前台显示，此时不可见），重置在下次挂载时生效。
  */
 @Composable
 private fun FloatingCard() {
     val context = LocalContext.current
-    var position by remember {
-        mutableStateOf(FloatingPositionStore.loadOrNull(context) ?: FloatingPosition.DEFAULT)
+    var positions by remember {
+        mutableStateOf(FloatingPositionStore.loadOrNull(context) ?: FloatingPositions.DEFAULT)
     }
     var message by remember { mutableStateOf<String?>(null) }
 
@@ -487,7 +488,8 @@ private fun FloatingCard() {
             Text(
                 text = stringResource(
                     R.string.auth_floating_current,
-                    stringResource(sideLabel(position.side)),
+                    stringResource(sideLabel(positions.handle.side)),
+                    stringResource(labelPositionLabel(positions.label)),
                 ),
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -502,7 +504,7 @@ private fun FloatingCard() {
                 onClick = {
                     val screen = FloatingScreen.spec(context)
                     FloatingPositionStore.reset(context, screen.width, screen.height)
-                    position = FloatingPosition.DEFAULT
+                    positions = FloatingPositions.DEFAULT
                     message = context.getString(R.string.auth_floating_reset_done)
                 },
             ) {
@@ -517,6 +519,14 @@ private fun sideLabel(side: FloatingSide): Int = when (side) {
     FloatingSide.LEFT -> R.string.floating_side_left
     FloatingSide.RIGHT -> R.string.floating_side_right
 }
+
+@StringRes
+private fun labelPositionLabel(position: LabelPosition): Int =
+    if (position == LabelPosition.DEFAULT) {
+        R.string.floating_label_default
+    } else {
+        R.string.floating_label_custom
+    }
 
 @Composable
 private fun SummaryText(statuses: List<AuthStatus>) {
