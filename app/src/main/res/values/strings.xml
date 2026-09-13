@@ -167,6 +167,40 @@
     <string name="patrol_rebuild">清空重建</string>
     <string name="patrol_hint">同一区服可以重复添加（同一区服拜访多个好友）。</string>
 
+    <!-- 服务器清单（M3-T3-9 / FR-10） -->
+    <string name="auth_open_server_list">服务器清单</string>
+    <string name="server_title">服务器清单</string>
+    <string name="server_subtitle">每条 = 一个区服名称 + 角色名（可留空）+ 等级（可留空）。换号时只按「区服名称」到界面上找它；角色名与等级只是帮你认出这是哪个号，不参与定位（找不到或不止一个就停下，不会猜着点）。这里的顺序也就是「按顺序切下一个」的顺序。</string>
+    <string name="server_back">返回授权页</string>
+    <string name="server_list_title">服务器清单（%1$d 条）</string>
+    <string name="server_empty">尚无服务器。点「新增服务器」添加第一条。</string>
+    <string name="server_index">%1$d.</string>
+    <string name="server_item_role">角色名：%1$s</string>
+    <string name="server_item_level">等级：%1$s</string>
+    <string name="server_field_unset">未填</string>
+    <string name="server_add">新增服务器</string>
+    <string name="server_edit">编辑</string>
+    <string name="server_move_up">上移</string>
+    <string name="server_move_down">下移</string>
+    <string name="server_delete">删除</string>
+    <string name="server_clear">整体清空</string>
+    <string name="server_clear_title">清空全部服务器？</string>
+    <string name="server_clear_body">将删除当前全部 %1$d 条服务器清单，此操作不可撤销。</string>
+    <string name="server_clear_confirm">清空</string>
+    <string name="server_cancel">取消</string>
+    <string name="server_dialog_add">新增服务器</string>
+    <string name="server_dialog_edit">编辑服务器</string>
+    <string name="server_field_server">区服名称</string>
+    <string name="server_field_role">角色名（可留空）</string>
+    <string name="server_field_level">等级（可留空）</string>
+    <string name="server_field_required">区服名称不得为空（也不能只剩空格）；角色名与等级可以留空。</string>
+    <string name="server_field_separator">字段里不能出现「|」或换行。</string>
+    <string name="server_confirm">保存</string>
+    <string name="server_save_failed">保存失败：%1$s</string>
+    <string name="server_load_failed">服务器清单解析失败：%1$s</string>
+    <string name="server_rebuild">清空重建</string>
+    <string name="server_hint">同一区服可以添加多条（一个区服里有多个小号）。</string>
+
     <!-- 运行方式（M1-T1-7 演练模式；T2-6 开放实点开关） -->
     <string name="run_mode_label">运行方式</string>
     <string name="run_mode_dry_run">演练（只识别、不点击）</string>

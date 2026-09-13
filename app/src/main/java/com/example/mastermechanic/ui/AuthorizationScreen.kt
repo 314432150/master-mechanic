@@ -72,12 +72,14 @@ import kotlinx.coroutines.delay
  * @param resumeTick 每次回到前台自增，用于从系统设置页返回后刷新状态。
  * @param onOpenCalibration 进入「识别标定」页（T1-5b）。
  * @param onOpenPatrolConfig 进入「巡查配置」页（M3-T3-3，FR-03）。
+ * @param onOpenServerList 进入「服务器清单」页（M3-T3-9，FR-10）。
  */
 @Composable
 fun AuthorizationRoute(
     resumeTick: Int,
     onOpenCalibration: () -> Unit,
     onOpenPatrolConfig: () -> Unit,
+    onOpenServerList: () -> Unit,
 ) {
     val context = LocalContext.current
     var captureActive by remember { mutableStateOf(CaptureSessionSignal.isActive) }
@@ -171,6 +173,7 @@ fun AuthorizationRoute(
         },
         onOpenCalibration = onOpenCalibration,
         onOpenPatrolConfig = onOpenPatrolConfig,
+        onOpenServerList = onOpenServerList,
     )
 }
 
@@ -187,6 +190,7 @@ fun AuthorizationScreen(
     onStopCapture: () -> Unit,
     onOpenCalibration: () -> Unit,
     onOpenPatrolConfig: () -> Unit,
+    onOpenServerList: () -> Unit,
 ) {
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -247,6 +251,12 @@ fun AuthorizationScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(text = stringResource(R.string.auth_open_patrol_config))
+            }
+            OutlinedButton(
+                onClick = onOpenServerList,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = stringResource(R.string.auth_open_server_list))
             }
         }
     }
@@ -608,6 +618,7 @@ private fun AuthorizationScreenPreview() {
             onStopCapture = {},
             onOpenCalibration = {},
             onOpenPatrolConfig = {},
+            onOpenServerList = {},
         )
     }
 }
