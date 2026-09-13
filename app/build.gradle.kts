@@ -35,6 +35,24 @@ android {
     }
 }
 
+/**
+ * 快跑开关（`-PfastTests`）：跳过依赖真机帧池 / 大批量样本的离线回放与探针类。
+ *
+ * 依据（2026-09-13 实测 261 例）：全量 3m37s 里 `SpeedupProbeTest` 151.7s + `ReplayBatchRunTest` 57.1s
+ * 占 209s，其余 32 个类合计约 7s。这两类是**取证 / 研究口径**，只在需要复演时才跑。
+ *
+ * 默认**不排除任何测试**：既有复现命令（如 `--tests "*CalibrationReviewProbeTest*"`）依赖默认可跑，
+ * 离线回放也是验收证据的一部分。
+ */
+if (project.hasProperty("fastTests")) {
+    tasks.withType<Test>().configureEach {
+        filter {
+            excludeTestsMatching("*ProbeTest")
+            excludeTestsMatching("*BatchRunTest")
+        }
+    }
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)

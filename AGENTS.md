@@ -32,7 +32,12 @@
 
 ## 构建与验证命令（Windows PowerShell）
 
-- `.\gradlew.bat :app:test` — 运行单元测试
+- `.\gradlew.bat :app:testDebugUnitTest --tests "*XxxTest*"` — **日常：只跑改动相关的类**（秒级；等价于
+  `-PfastTests` 规则下再缩小范围）
+- `.\gradlew.bat :app:test -PfastTests` — **切片收尾：业务全量**（实测约 8s / 250 例；跳过 `*ProbeTest`
+  与 `*BatchRunTest` —— 这两类是跑真机帧池的离线回放 / 探针，按需单独跑）
+- `.\gradlew.bat :app:test` — **推送前 / 里程碑：真全量**（实测约 3.5 分钟 / 261 例，含离线回放与探针；
+  这是验收取证口径，不可省）
 - `.\gradlew.bat :app:assembleDebug` — 构建调试包
 - `.\gradlew.bat :app:assembleRelease` — 构建发布包（包体验收用）
 - `powershell -ExecutionPolicy Bypass -File tools\t1-13b-device-signal-cost.ps1 -UpdateDoc` — 采真机逐信号耗时并回填证据表（需真机；应用已跑过对应界面）
