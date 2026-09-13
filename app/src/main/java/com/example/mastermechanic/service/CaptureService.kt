@@ -82,10 +82,17 @@ class CaptureService : Service() {
     private var lastFrameWidth = 0
     private var lastFrameHeight = 0
 
-    // 子集搜索取证（T1-13 ⑥，仅帧线程访问）：统计窗口内「实际参与匹配的信号数」分布
+    // 搜索集合取证（T2-1，仅帧线程访问）：统计窗口内「实际参与匹配的信号数」分布
     private var searchedRounds = 0L
-    private var fullScanRounds = 0L
+    private var multiSignalRounds = 0L
+    private var idleRounds = 0L
     private var searchedSymbolTotal = 0L
+
+    /**
+     * 上轮实际搜索的信号名集合（null = 本会话尚未处理过）。集合变化即记一行日志——
+     * 供真机核对期望集合注入：守护待命只搜「启动页」，命中后扩为弹窗期集合（T2-1）。仅帧线程访问。
+     */
+    private var lastSearchedNames: Set<String>? = null
 
     /** 单帧处理耗时统计（T1-9，NFR-01）：连续 100 帧一窗；总段 / 灰度段 / 识别段同窗同步记录。仅帧线程访问。 */
     private val timingStats = FrameTimingStats()
@@ -213,7 +220,12 @@ class CaptureService : Service() {
         framesReceived = 0
         framesProcessed = 0
         cyclesRun = 0
+        searchedRounds = 0
+        multiSignalRounds = 0
+        idleRounds = 0
+        searchedSymbolTotal = 0
         lastLoopFrozen = null
+        lastSearchedNames = null
         timingStats.reset()
         grayTimingStats.reset()
         detectTimingStats.reset()
@@ -314,15 +326,20 @@ class CaptureService : Service() {
         recordSignalCosts()
         cyclesRun++
         if (!result.frozen) {
-            // T1-13 ⑥：窗口内「实际参与匹配的信号数」分布，用于自证"稳态每轮只搜 1 个"
+            // T2-1：窗口内「实际参与匹配的信号数」分布，用于自证"每轮只搜期望集合"
             searchedRounds++
-            if (result.searched == null) {
-                // 全扫轮按「本轮参与匹配的信号总数」计入：否则"匹配次数"会小于"轮数"，被误读成"少搜了"
-                fullScanRounds++
-                searchedSymbolTotal += recognitionLoop.signalCount
-            } else {
-                searchedSymbolTotal += result.searched.size
+            searchedSymbolTotal += result.searched.size
+            if (result.searched.isEmpty()) {
+                idleRounds++
+            } else if (result.searched.size > 1) {
+                multiSignalRounds++
             }
+        }
+        // T2-1：搜索集合变化（阶段推进 / 流程换步）记一行——真机复演时可直接看出
+        // 「守护待命只搜启动页 → 命中启动页后扩为弹窗期集合 → 命中大厅后收回」
+        if (result.searched != lastSearchedNames) {
+            lastSearchedNames = result.searched
+            Log.i(TAG, "本轮搜索集合变化: " + searchedText(result.searched))
         }
 
         if (result.frozen != lastLoopFrozen) {
@@ -357,8 +374,7 @@ class CaptureService : Service() {
             Log.i(
                 TAG,
                 "状态转移: ${it.from.label} -> ${it.to.label}（${it.reason}）；本轮搜索 " +
-                    (result.searched?.sorted()?.joinToString("、")?.let { names -> "「$names」" }
-                        ?: "全部信号"),
+                    searchedText(result.searched),
             )
             UiStateSignal.update(it.to, it.reason)
         }
@@ -387,8 +403,8 @@ class CaptureService : Service() {
      * 逐信号匹配耗时统计（T1-13b）：每个信号**各自**连续 100 次为一窗，满窗输出一行。
      *
      * 口径（与离线探针 `SpeedupProbeTest.profilePerSignalCost` 一致）：**纯匹配耗时**——
-     * 不含灰度转换与方向归一（轮级固定开销）、不含节流等待、不含全扫兜底
-     * （一轮搜几个信号就产生几个样本，故稳态「每轮只搜 1 个信号」时本行即该步的真实成本）。
+     * 不含灰度转换与方向归一（轮级固定开销）、不含节流等待
+     * （一轮搜几个信号就产生几个样本；本轮不搜则不产生样本，故"每轮只搜 1 个信号"时本行即该步的真实成本）。
      */
     private fun recordSignalCosts() {
         recognitionLoop.lastSignalCostMs.forEach { (name, costMs) ->
@@ -405,10 +421,11 @@ class CaptureService : Service() {
     private fun maybeLogStats(now: Long) {
         if (now - lastStatsAt < STATS_WINDOW_MS) return
         val signalNote = if (recognitionLoop.signalCount == 0) "，未标定（无判定）" else ""
-        // T1-13 ⑥：搜索范围取证——"稳态每轮只搜 1 个 / 全扫只发生在状态未知"可由本行直接读出
+        // T2-1：搜索范围取证——"每轮只搜期望集合 / 待命期只搜启动页"可由本行直接读出
         val searchedNote =
             "实际参与匹配 $searchedSymbolTotal 次（$searchedRounds 轮：" +
-                "子集 ${searchedRounds - fullScanRounds} 轮 / 全扫 $fullScanRounds 轮）"
+                "单信号 ${searchedRounds - multiSignalRounds - idleRounds} 轮 / " +
+                "多信号 $multiSignalRounds 轮 / 不搜 $idleRounds 轮）"
         Log.i(
             TAG,
             "帧管线统计: 窗口 ${now - lastStatsAt}ms 接收 $framesReceived 帧 / 处理 $framesProcessed 帧；" +
@@ -421,9 +438,14 @@ class CaptureService : Service() {
         framesProcessed = 0
         cyclesRun = 0
         searchedRounds = 0
-        fullScanRounds = 0
+        multiSignalRounds = 0
+        idleRounds = 0
         searchedSymbolTotal = 0
     }
+
+    /** 搜索集合的日志文本（T2-1）：空集明示"不搜"，避免与"搜了没命中"混淆。 */
+    private fun searchedText(names: Set<String>): String =
+        if (names.isEmpty()) "（本轮不搜）" else "「${names.sorted().joinToString("、")}」"
 
     private fun startForegroundCompat() {
         val notification = buildNotification()

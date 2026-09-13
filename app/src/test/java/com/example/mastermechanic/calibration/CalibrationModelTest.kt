@@ -1,5 +1,6 @@
 package com.example.mastermechanic.calibration
 
+import com.example.mastermechanic.decision.ExpectedSignals
 import com.example.mastermechanic.decision.UiState
 import com.example.mastermechanic.recognition.MatchParams
 import com.example.mastermechanic.recognition.SearchWindow
@@ -84,7 +85,8 @@ class CalibrationModelTest {
             stateRules = listOf(CalibrationData.StateRule(UiState.FARM, listOf("farm_qr"))),
         )
 
-        val loop = data.toLoop()
+        // T2-1：默认按 FR-01 弹窗阶段注入期望集合；本用例验模板闭环 → 显式声明全集（演练口径）
+        val loop = data.toLoop(ExpectedSignals.ALL)
         assertEquals(UiState.UNKNOWN, loop.process(image, isForeground = true).state)
         assertEquals(UiState.FARM, loop.process(image, isForeground = true).transition!!.to)
     }

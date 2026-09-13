@@ -7,89 +7,62 @@ import com.example.mastermechanic.recognition.SignalSpec
 import com.example.mastermechanic.recognition.SyntheticImages
 import com.example.mastermechanic.recognition.Template
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 按状态启用信号子集（T1-10g 建立，T1-13 收敛口径）：
- * ① 选择规则（状态未知 → 全扫；其余 → 当前状态信号 ∪ 附加集；**周期兜底默认关闭**）；
- * ② 子集模式下「未搜到的信号不产生判定记录」；
- * ③ **取消补扫**：预期未命中时不再于同轮发现新状态，需经滞回转「未知」后全扫
- *   ——这是 T1-13 的**预期行为**（识别层只回答"预期在不在"，不做发现式搜索）。
+ * 期望集合驱动（T2-1，用户口径 2026-09-13）：识别层每轮**只搜外部注入的期望集合**，
+ * 不外扩、不兜底。本测试覆盖：
+ * ① [ActiveSignalSelector]：期望集合 ∩ 已标定信号（剔除未标定的期望名）；空集原样返回 = 不搜；
+ * ② 已取消的历史口径：「状态未知 → 全扫」「按状态自动选子集」「周期兜底」都不复存在
+ *   （旧用例 `unknownStateScansAll` / `defaultDisablesPeriodicFallback` / `fromRulesBuildsByStateMapping`
+ *   随口径一并删除）；
+ * ③ 集成：全集口径行为不变（M1 演练口径 = 显式声明全集）；期望外的信号**根本不搜**——
+ *   不产生判定记录与耗时样本；不搜的一轮对状态机如同不存在。
  */
 class ActiveSignalSelectorTest {
 
     private val params = MatchParams(0.85, 0.10, 5)
 
-    private fun selector(
-        rules: Map<UiState, Set<String>> = mapOf(
-            UiState.LAUNCH_PAGE to setOf("a"),
-            UiState.HALL to setOf("b"),
-        ),
-        attached: Map<UiState, Set<String>> = emptyMap(),
-        period: Int = ActiveSignalSelector.NO_FALLBACK,
-    ): ActiveSignalSelector = ActiveSignalSelector(
-        signalsOf = { rules[it].orEmpty() },
-        attached = attached,
-        fallbackPeriod = period,
-    )
-
-    // --- ① 选择规则 ---
+    // --- ① 期望集合 → 本轮搜索集合 ---
 
     @Test
-    fun unknownStateScansAll() {
-        assertNull("未知状态必须全扫", selector().select(UiState.UNKNOWN, round = 3))
-    }
-
-    @Test
-    fun defaultDisablesPeriodicFallback() {
-        // T1-13：默认不启用周期兜底——全扫只保留「状态未知」这一种时刻
-        val s = selector()
-        assertEquals("第 0 轮不再是全扫", setOf("a"), s.select(UiState.LAUNCH_PAGE, round = 0))
-        assertEquals("任意轮次都不再有兜底全扫", setOf("a"), s.select(UiState.LAUNCH_PAGE, round = 100))
-    }
-
-    @Test
-    fun periodicFallbackScansAllWhenEnabled() {
-        // 能力保留（默认关闭）：显式给出周期时仍按周期全扫
-        val s = selector(period = 5)
-        assertNull("周期兜底轮全扫", s.select(UiState.LAUNCH_PAGE, round = 0))
-        assertNull(s.select(UiState.LAUNCH_PAGE, round = 5))
-        assertEquals(setOf("a"), s.select(UiState.LAUNCH_PAGE, round = 3))
-    }
-
-    @Test
-    fun stableStateUsesOwnSignalsPlusAttached() {
-        val s = selector(attached = mapOf(UiState.HALL to setOf("popup", "guide")))
-        assertEquals(setOf("b", "popup", "guide"), s.select(UiState.HALL, round = 7))
-    }
-
-    @Test
-    fun stateWithoutSignalsFallsBackToFullScan() {
-        val s = selector(rules = mapOf(UiState.LAUNCH_PAGE to setOf("a")))
-        assertNull("没有可用信号的状态不能给出空子集", s.select(UiState.FARM, round = 1))
-    }
-
-    @Test
-    fun periodMustBePositive() {
-        assertThrows(IllegalArgumentException::class.java) { selector(period = 0) }
-    }
-
-    @Test
-    fun fromRulesBuildsByStateMapping() {
-        val s = ActiveSignalSelector.fromRules(
-            listOf(
-                SignalStateMapping.Rule(UiState.LAUNCH_PAGE, setOf("launch_start")),
-                SignalStateMapping.Rule(UiState.HALL, setOf("hall")),
-            ),
+    fun selectKeepsOnlyCalibratedNames() {
+        val selector = ActiveSignalSelector(known = setOf("a", "b"))
+        assertEquals(
+            "未标定的期望名要剔除，否则「没有的能力」会被记成本轮搜索量",
+            setOf("a"),
+            selector.select(setOf("a", "ghost")),
         )
-        assertEquals(setOf("hall"), s.select(UiState.HALL, round = 1))
-        assertNull(s.select(UiState.FARM, round = 1))
     }
 
-    // --- ②③ 集成：子集模式 vs 全扫 ---
+    @Test
+    fun emptyExpectationMeansNoSearch() {
+        assertTrue(
+            "空集合 = 不搜",
+            ActiveSignalSelector(known = setOf("a")).select(emptySet()).isEmpty(),
+        )
+    }
+
+    @Test
+    fun expectationWithNoCalibratedNameIsAlsoNoSearch() {
+        assertTrue(
+            "期望名全部未标定 → 本轮无可搜",
+            ActiveSignalSelector(known = setOf("a")).select(setOf("ghost")).isEmpty(),
+        )
+    }
+
+    @Test
+    fun searchOrderFollowsExpectation() {
+        val selector = ActiveSignalSelector(known = setOf("a", "b"))
+        assertEquals(
+            "搜索顺序按期望集合的迭代顺序（结果确定、便于比对日志）",
+            listOf("b", "a"),
+            selector.select(linkedSetOf("b", "a")).toList(),
+        )
+    }
+
+    // --- ③ 集成：识别循环 ---
 
     private fun template(seed: Long): Template = Template(16, 16, SyntheticImages.pattern(16, 16, seed))
 
@@ -106,99 +79,122 @@ class ActiveSignalSelectorTest {
     }
 
     private val fullWindow = SearchWindow(0.0, 0.0, 1.0, 1.0)
+    private val a = template(1L)
+    private val b = template(2L)
 
-    /** [selector] 为 null 即全扫模式（每轮匹配全部信号）。 */
-    private fun loop(selector: ActiveSignalSelector? = null): RecognitionLoop {
-        val a = template(1L)
-        val b = template(2L)
-        val signals = listOf(
+    private fun loop(expected: ExpectedSignals): RecognitionLoop = RecognitionLoop(
+        signals = listOf(
             SignalSpec("a", fullWindow, listOf(a)),
             SignalSpec("b", fullWindow, listOf(b)),
-        )
-        val mapping = SignalStateMapping(
+        ),
+        params = params,
+        mapping = SignalStateMapping(
             listOf(
                 SignalStateMapping.Rule(UiState.LAUNCH_PAGE, setOf("a")),
                 SignalStateMapping.Rule(UiState.HALL, setOf("b")),
             ),
-        )
-        return RecognitionLoop(
-            signals = signals,
-            params = params,
-            mapping = mapping,
-            selector = selector,
-        )
-    }
-
-    /** 启动页搜索 a、大厅搜索 b（周期兜底默认关闭）。 */
-    private fun subsetSelector(): ActiveSignalSelector = ActiveSignalSelector.fromRules(
-        listOf(
-            SignalStateMapping.Rule(UiState.LAUNCH_PAGE, setOf("a")),
-            SignalStateMapping.Rule(UiState.HALL, setOf("b")),
         ),
+        expectedSignals = expected,
     )
 
-    /** 前 [first] 帧贴 A，其后贴 B；返回每轮结束时的状态序列。 */
-    private fun run(loop: RecognitionLoop, a: Template, b: Template, rounds: Int, first: Int): List<UiState> {
-        val states = ArrayList<UiState>()
-        for (i in 0 until rounds) {
-            val frame = if (i < first) frameWith(a, 20, 20) else frameWith(b, 90, 90)
-            states += loop.process(frame, isForeground = true).state
-        }
-        return states
+    /** 贴 A 进入启动页（连 4 轮，走完滞回确认）。 */
+    private fun enterLaunchPage(loop: RecognitionLoop) {
+        repeat(4) { loop.process(frameWith(a, 20, 20), isForeground = true) }
+        assertEquals(UiState.LAUNCH_PAGE, loop.state)
     }
 
     @Test
-    fun subsetModeRecordsOnlySearchedSignals() {
-        val a = template(1L)
-        val loop = loop(subsetSelector())
-        // 先稳定进入 LAUNCH_PAGE（前 4 帧全贴 A）
+    fun fullSetSearchesEveryCalibratedSignal() {
+        // M1 演练口径：显式声明全集 → 每轮搜索集合 = 全部已标定信号（= 改动前的「全扫轮」）
+        val loop = loop(ExpectedSignals.ALL)
+        val round = loop.process(frameWith(a, 20, 20), isForeground = true)
+        assertEquals(setOf("a", "b"), round.searched)
+        assertEquals("每个被搜的信号各产生一个耗时样本", 2, loop.lastSignalCostMs.size)
+    }
+
+    @Test
+    fun fullSetExpectationKeepsOldBehaviour() {
+        // M1 演练口径：显式声明全集（每轮搜产物里的全部信号）——画面变化后连 2 命中即进入大厅
+        val loop = loop(ExpectedSignals.ALL)
         repeat(4) { loop.process(frameWith(a, 20, 20), isForeground = true) }
         assertEquals(UiState.LAUNCH_PAGE, loop.state)
+        loop.process(frameWith(b, 90, 90), isForeground = true)
+        val second = loop.process(frameWith(b, 90, 90), isForeground = true)
+        assertEquals("全集口径下判定行为与改动前一致（连 2 命中转移）", UiState.HALL, second.state)
+    }
 
-        val result = loop.process(frameWith(a, 20, 20), isForeground = true)
-        assertEquals("稳定在启动页时只搜自己的信号", setOf("a"), result.searched)
-        assertEquals(
-            "子集外的信号不产生判定记录（不是记为未命中）",
-            listOf("a"),
-            result.records.map { it.signalName },
+    @Test
+    fun signalOutsideExpectationIsNotSearched() {
+        val loop = loop(FixedExpectedSignals.of("a"))
+        enterLaunchPage(loop)
+
+        // 画面换成 b，但 b 不在期望里 → 只搜 a，不产生 b 的判定记录（不是记为未命中）
+        val round = loop.process(frameWith(b, 90, 90), isForeground = true)
+        assertEquals(setOf("a"), round.searched)
+        assertEquals(listOf("a"), round.records.map { it.signalName })
+        assertTrue("b 没被搜 → 不会产生落地页的命中", round.hits.isEmpty())
+        assertTrue("期望内未命中 → 不得降档", !round.settled)
+    }
+
+    @Test
+    fun narrowedExpectationEventuallyLeavesOldState() {
+        val expected = MutableExpected(setOf("a"))
+        val loop = loop(expected)
+        enterLaunchPage(loop)
+
+        // 阶段切换：期望收窄到不含「启动页」的信号 → 连续未命中 → 转未知（识别层不再认识它）
+        expected.set(setOf("b"))
+        repeat(3) { loop.process(frameWith(a, 20, 20), isForeground = true) }
+        assertEquals("期望里不再有当前状态 → 按「连续未命中」离开", UiState.UNKNOWN, loop.state)
+    }
+
+    @Test
+    fun emptyExpectationSearchesNothing() {
+        val loop = loop(FixedExpectedSignals.of())
+        val round = loop.process(frameWith(a, 20, 20), isForeground = true)
+        assertTrue("空期望 → 本轮不搜", round.searched.isEmpty())
+        assertTrue("不搜就不产生判定记录", round.records.isEmpty())
+        assertTrue("不搜也不产生耗时样本", loop.lastSignalCostMs.isEmpty())
+        assertEquals(UiState.UNKNOWN, round.state)
+        assertTrue("不搜的一轮不得被当成稳定轮", !round.settled)
+    }
+
+    @Test
+    fun frozenRoundSearchesNothingAndDoesNotAdvanceExpected() {
+        val spy = SpyExpected(setOf("a"))
+        val loop = RecognitionLoop(
+            signals = listOf(SignalSpec("a", fullWindow, listOf(a))),
+            params = params,
+            mapping = SignalStateMapping(listOf(SignalStateMapping.Rule(UiState.LAUNCH_PAGE, setOf("a")))),
+            expectedSignals = spy,
         )
-        assertTrue(result.records.first().matched)
-        assertTrue("命中当前状态且无候选累积 → 确实稳定（可降档）", result.settled)
+        val frozen = loop.process(frameWith(a, 20, 20), isForeground = false)
+        assertTrue(frozen.searched.isEmpty())
+        assertTrue(frozen.records.isEmpty())
+        assertEquals("冻结轮不推进期望 / 阶段（冻结轮如同不存在）", 0, spy.rounds)
+
+        loop.process(frameWith(a, 20, 20), isForeground = true)
+        assertEquals("前台轮才推进", 1, spy.rounds)
     }
 
-    @Test
-    fun expectationChangeGoesThroughUnknownInsteadOfProbing() {
-        // T1-13：取消补扫后，画面变化时**不再当轮发现新状态**，而是连续未命中 → 转「未知」→ 全扫后识别
-        val a = template(1L)
-        val b = template(2L)
-        val full = run(loop(null), a, b, rounds = 12, first = 6)
-        val subset = run(loop(subsetSelector()), a, b, rounds = 12, first = 6)
+    /** 固定集合 + 记录 [onRound] 调用次数（验证「冻结轮不推进」）。 */
+    private class SpyExpected(private val names: Set<String>) : ExpectedSignals {
+        var rounds = 0
+            private set
 
-        assertEquals("全扫模式：画面变化后连 2 命中即进入大厅", UiState.HALL, full[7])
-        assertEquals("子集模式：变化当轮不发现新状态（仍判为启动页）", UiState.LAUNCH_PAGE, subset[6])
-        assertTrue("子集模式：连续未命中后应出现「未知」", subset.contains(UiState.UNKNOWN))
-        assertEquals("子集模式：最终仍到达同一状态（语义不变，只是慢几轮）", UiState.HALL, subset.last())
+        override fun expected(known: Set<String>): Set<String> = names
+
+        override fun onRound(hits: Set<UiState>) {
+            rounds++
+        }
     }
 
-    @Test
-    fun missedOwnSignalDoesNotTriggerFullScan() {
-        val a = template(1L)
-        val b = template(2L)
-        val loop = loop(subsetSelector())
-        repeat(4) { loop.process(frameWith(a, 20, 20), isForeground = true) }
-        assertEquals(UiState.LAUNCH_PAGE, loop.state)
+    /** 可改集合（模拟阶段切换 / 流程换步）。 */
+    private class MutableExpected(private var names: Set<String>) : ExpectedSignals {
+        fun set(next: Set<String>) {
+            names = next
+        }
 
-        val missed = loop.process(frameWith(b, 90, 90), isForeground = true)
-        assertEquals("未命中不补扫：仍只搜子集", setOf("a"), missed.searched)
-        assertEquals(1, missed.records.size)
-        assertTrue("未达预期 → 不得降档", !missed.settled)
-
-        // 连续 3 次未命中 → 转「未知」→ 下一轮全扫（全扫的唯一时刻）
-        loop.process(frameWith(b, 90, 90), isForeground = true)
-        loop.process(frameWith(b, 90, 90), isForeground = true)
-        assertEquals(UiState.UNKNOWN, loop.state)
-        val afterUnknown = loop.process(frameWith(b, 90, 90), isForeground = true)
-        assertNull("状态未知 → 全扫", afterUnknown.searched)
-        assertEquals(2, afterUnknown.records.size)
+        override fun expected(known: Set<String>): Set<String> = names
     }
 }

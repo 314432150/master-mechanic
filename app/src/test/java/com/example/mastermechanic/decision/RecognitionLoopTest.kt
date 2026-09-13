@@ -99,8 +99,8 @@ class RecognitionLoopTest {
 
     @Test
     fun signalCostSamplesCoverExactlyTheSearchedSignals() {
-        // T1-13b：逐信号耗时只为「本轮真正搜索的信号」产生样本——
-        // 全扫 → 每个信号一个样本；子集生效 → 只有子集内的信号；冻结轮 → 空（不残留上一轮）。
+        // T1-13b / T2-1：逐信号耗时只为「本轮真正搜索的信号」产生样本——
+        // 期望集合内每个信号一个样本；期望收窄 → 只有集合内的信号；空期望与冻结轮 → 空（不残留上一轮）。
         val image = SyntheticImages.background(400, 300, seed = 101)
         val pattern = SyntheticImages.pattern(20, 16, seed = 102)
         SyntheticImages.drawPattern(image, 30, 40, 20, 16, pattern)
@@ -109,14 +109,15 @@ class RecognitionLoopTest {
             SignalSpec("信号乙", fullWindow, listOf(Template(20, 16, pattern))),
         )
         val rules = listOf(SignalStateMapping.Rule(UiState.LAUNCH_PAGE, setOf("信号甲")))
+        val expected = MutableExpectedSignals(setOf("信号甲", "信号乙"))
         val loop = RecognitionLoop(
             signals,
             params,
             SignalStateMapping(rules),
-            selector = ActiveSignalSelector.fromRules(rules),
+            expectedSignals = expected,
         )
 
-        loop.process(image, isForeground = true) // 状态未知 → 全扫：两个信号各一个样本
+        loop.process(image, isForeground = true) // 期望集合内两个信号 → 各一个样本
         assertEquals(setOf("信号甲", "信号乙"), loop.lastSignalCostMs.keys)
         assertTrue(
             "耗时样本应为有限非负值",
@@ -125,8 +126,13 @@ class RecognitionLoopTest {
 
         loop.process(image, isForeground = true) // 连 2 次命中 → 转入启动页
         assertEquals(UiState.LAUNCH_PAGE, loop.state)
-        loop.process(image, isForeground = true) // 子集生效：只搜当前状态的信号
-        assertEquals(setOf("信号甲"), loop.lastSignalCostMs.keys)
+        expected.set(setOf("信号甲")) // 期望收窄（模拟阶段 / 流程换步）
+        loop.process(image, isForeground = true)
+        assertEquals("只为本轮搜索集合内的信号产生样本", setOf("信号甲"), loop.lastSignalCostMs.keys)
+
+        expected.set(emptySet()) // 空期望 = 不搜
+        loop.process(image, isForeground = true)
+        assertTrue("不搜的一轮不产生耗时样本", loop.lastSignalCostMs.isEmpty())
 
         loop.process(image, isForeground = false) // 冻结轮不搜索
         assertTrue("冻结轮不残留耗时样本", loop.lastSignalCostMs.isEmpty())
@@ -214,5 +220,14 @@ class RecognitionLoopTest {
         assertEquals(fullRound.records, windowedRound.records)
         assertEquals(fullRound.state, windowedRound.state)
         assertTrue("场景应命中：${windowedRound.records}", windowedRound.records.first().matched)
+    }
+
+    /** 可改期望集合（模拟阶段推进 / 流程换步）。 */
+    private class MutableExpectedSignals(private var names: Set<String>) : ExpectedSignals {
+        fun set(next: Set<String>) {
+            names = next
+        }
+
+        override fun expected(known: Set<String>): Set<String> = names
     }
 }
