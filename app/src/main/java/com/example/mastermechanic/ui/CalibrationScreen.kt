@@ -135,12 +135,26 @@ private val MARKER_ACCENT = Color(0xFFFF5252)
 private val ANCHOR_ACCENT = Color(0xFF4DD0E1)
 
 /**
- * 选框主色 —— 「写入为」一个都不勾（T2-3g）：琥珀黄（用户 2026-09-13 定稿）。
+ * 选框主色 —— 「角色」一个都不勾（T2-3g）：琥珀黄（用户 2026-09-13 定稿）。
  * 含义是"还没决定写什么"，与标志红（色相 0°，差 45°）、锚点青（187°，差 142°）都拉得开。
  * **不要用白色**：外层命中带细线是 `#CCFFFFFF`、左上关闭钮是白底圆 —— 白框会跟它们糊在一起，
  * 真机上分不清框在哪（2026-09-13 真机反馈）。
  */
 private val PENDING_ACCENT = Color(0xFFFFC107)
+
+/**
+ * 写入必备条件（用户 2026-09-13）：返回**缺项的资源 ID**，空 = 可以写入。
+ * 点 ✓ 的弹窗与 `onWriteSignal` 的兜底校验共用这一份判据，避免两处判据漂移。
+ */
+private fun missingWriteConditions(
+    hasBox: Boolean,
+    state: UiState?,
+    roles: Set<SignalRole>,
+): List<Int> = buildList {
+    if (!hasBox) add(R.string.calibration_missing_box)
+    if (state == null) add(R.string.calibration_missing_state)
+    if (roles.isEmpty()) add(R.string.calibration_missing_roles)
+}
 
 /**
  * 标定页（T1-5b 起；T1-5l 按真机反馈重构；T2-2 起支持同状态多条记录）：**产物即唯一数据源**——
@@ -333,19 +347,19 @@ fun CalibrationRoute(resumeTick: Int, onBack: () -> Unit) {
                 val sel = selection
                 val state = selectedState
                 val roles = selectedRoles
-                // 写入条件不常驻显示（用户 2026-09-13）：点 ✓ 时**一次性报全缺什么**。
-                // 提交前这一下是唯一必然经过的关口，比在下边常挂一行文案省地方，也不会漏报。
-                val missing = buildList {
-                    if (frame == null || sel == null) {
-                        add(context.getString(R.string.calibration_missing_box))
-                    }
-                    if (state == null) add(context.getString(R.string.calibration_missing_state))
-                    if (roles.isEmpty()) add(context.getString(R.string.calibration_missing_roles))
-                }
+                // 写入条件不常驻显示：缺什么由点 ✓ 时的弹窗报全（见工作台的 missingWrite）。
+                // 这里只做兜底 —— 工作台已按同一判据拦下，重复校验成本为零，但能防住绕过 UI 的调用。
+                val missing = missingWriteConditions(
+                    hasBox = frame != null && sel != null,
+                    state = state,
+                    roles = roles,
+                )
                 if (missing.isNotEmpty()) {
                     message = context.getString(
                         R.string.calibration_write_missing,
-                        missing.joinToString(context.getString(R.string.calibration_missing_sep)),
+                        missing.joinToString(context.getString(R.string.calibration_missing_sep)) {
+                            context.getString(it)
+                        },
                     )
                 } else if (frame != null && sel != null && state != null) {
                     scope.launch {
@@ -790,8 +804,8 @@ private fun ParamField(
  * - 浏览：左右滑动大图切换帧（缩略图「过半即同步」，T1-5j 口径）；工具栏「框选」进入框选模式；
  * - 框选：禁用滑页、隐藏缩略图条；工具栏左 ✕（放弃本次框选：清选框并回浏览）/
  *   右 ✓（确认写入：需已框选 + 已选归属状态 + 至少一个写入角色）；工具栏上方是两行各自的选项
- *   （T2-3f：「归属状态」chip 行 +「写入为」角色行），再上一行为选区信息
- *   （单行全宽居中：原先夹在 ✕ / ✓ 之间会被挤得折行）。
+ *   （T2-3f：「归属状态」chip 行 +「角色」行），再上一行为选区坐标（单行全宽居中）。
+ *   缺条件时点 ✓ 不写入，改为弹窗列出缺项（用户 2026-09-13）。
  *
  * 写入时机（T1-5m 修订 T1-5l 口径）：点 ✓ 按选中状态写入产物，成功后回浏览模式。
  * 角色可多选（T2-3g）：勾两个 = 同一个元素同时写「标志 + 锚点」两条记录（§2.1）。
@@ -815,6 +829,8 @@ private fun CalibrationWorkbench(
     onClose: () -> Unit,
 ) {
     var hintOpen by remember { mutableStateOf(false) }
+    // 写入条件不足 → 弹窗列缺项（用户 2026-09-13：从顶部条文案改为弹窗提示）
+    var missingWrite by remember { mutableStateOf<List<Int>?>(null) }
     var loaded by remember(selectedFrame) { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val frameIndex = frames.indexOf(selectedFrame)
@@ -1038,7 +1054,8 @@ private fun CalibrationWorkbench(
                             // 多选（T2-3g）：同一个元素既要判状态又要点击时勾两个 —— ✓ 按钮上的角色名同步显示两个
                             // 注意：这行**不能**再往右侧塞第二个元素（2026-09-13 真机 BUG）——分段按钮内部按
                             // weight 抢占整行剩余宽度，同行的其他控件会被挤成 0 宽（文字逐字换行 → 整条底栏变高）。
-                            // 一个都不勾时**不加文字提示**（用户口径）：✓ 置灰 + 上方标签「写入为（可多选）」已经说明一切。
+                            // 一个都不勾时**不加文字提示**（用户口径）：按钮上的角色名 + 本行标签「角色（可多选）」
+                            // 已经说明一切；缺条件由点 ✓ 后的弹窗兜住。
                             RoleToggleRow(
                                 selectedRoles = selectedRoles,
                                 onRoleToggle = onRoleToggle,
@@ -1078,9 +1095,17 @@ private fun CalibrationWorkbench(
                                 )
                             }
                             Button(
-                                onClick = onWriteSignal,
-                                // **始终可点**（用户 2026-09-13）：缺条件也不置灰，点下去在顶部条报「还差：…」。
-                                // 置灰按钮收不到点击事件（Compose 语义），"为什么不能点"只能靠猜。
+                                // **始终可点**（用户 2026-09-13）：缺条件也不置灰 —— 置灰按钮收不到点击事件
+                                // （Compose 语义），"为什么不能点"就只能靠猜。点下去缺条件 → 弹窗列缺项，
+                                // 齐了才真正写入。
+                                onClick = {
+                                    val missing = missingWriteConditions(
+                                        hasBox = selection != null,
+                                        state = selectedState,
+                                        roles = selectedRoles,
+                                    )
+                                    if (missing.isEmpty()) onWriteSignal() else missingWrite = missing
+                                },
                             ) {
                                 // 按钮上直接写角色（✓ 写入标志 / ✓ 写入标志 + 锚点）：最后一刻也能看清会写成什么
                                 Text(
@@ -1127,6 +1152,35 @@ private fun CalibrationWorkbench(
             },
             title = { Text(text = stringResource(R.string.calibration_workbench_title)) },
             text = { Text(text = stringResource(R.string.calibration_annotate_hint)) },
+        )
+    }
+    val blocked = missingWrite
+    if (blocked != null) {
+        AlertDialog(
+            onDismissRequest = { missingWrite = null },
+            confirmButton = {
+                TextButton(onClick = { missingWrite = null }) {
+                    Text(
+                        text = stringResource(R.string.calibration_hint_close),
+                        color = Color.White,
+                    )
+                }
+            },
+            // 深色容器：工作台整体是近黑衬底（见 ON_DARK_* 注释），亮色弹窗上琥珀黄几乎看不见
+            containerColor = Color(0xFF1C1C1C),
+            titleContentColor = Color.White,
+            title = { Text(text = stringResource(R.string.calibration_write_blocked_title)) },
+            text = {
+                Text(
+                    text = stringResource(
+                        R.string.calibration_write_missing,
+                        blocked.map { stringResource(it) }
+                            .joinToString(stringResource(R.string.calibration_missing_sep)),
+                    ),
+                    // 警告色（用户 2026-09-13）：沿用原常驻「还差：…」那行的琥珀黄
+                    color = PENDING_ACCENT,
+                )
+            },
         )
     }
 }
@@ -1451,7 +1505,7 @@ private fun roleSummaryText(context: Context, roles: Collection<SignalRole>): St
 }
 
 /**
- * 「写入为」的多选行（T2-3g）：标志 / 锚点各是一枚**可独立勾选**的分段按钮。
+ * 「角色」的多选行（T2-3g）：标志 / 锚点各是一枚**可独立勾选**的分段按钮。
  *
  * 用的是 material3 的**多选**版分段控件 —— 它的行容器 `MultiChoiceSegmentedButtonRow` 从 1.4.0 起被标为
  * `@Deprecated(HIDDEN)`（只留二进制兼容），但配套的多选 `SegmentedButton` 重载仍是公开 API，
@@ -1493,7 +1547,7 @@ private class MultiChoiceRowScopeBridge(private val row: RowScope) :
     RowScope by row,
     MultiChoiceSegmentedButtonRowScope
 
-/** 带前缀标签的一行（T2-3f）：标签固定不滚动，内容占满剩余宽度（用于「归属状态 / 写入为」两行）。 */
+/** 带前缀标签的一行（T2-3f）：标签固定不滚动，内容占满剩余宽度（用于「归属状态 / 角色」两行）。 */
 @Composable
 private fun LabeledRow(label: String, content: @Composable RowScope.() -> Unit) {
     Row(

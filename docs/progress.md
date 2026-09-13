@@ -252,6 +252,11 @@
     ② 行距收紧：选中行 4→2dp、坐标行 4→2dp、工具行（含浏览模式）8→4dp；
     ③ 随之失效的字符串 `calibration_need_state` / `calibration_role_required` / `calibration_need_selection`
     / `calibration_write_ready` 已删。
+    ⑦ **「写入为」改名「角色」+ 缺条件改弹窗**（用户 2026-09-13 同日追加）：① 标签与帮助文案里的「写入为」
+    统一改为「角色」（`calibration_role_label` = 角色（可多选）、`calibration_missing_roles` = 选角色）；
+    ② 点 ✓ 缺条件时弹**深色 AlertDialog**（标题「还不能写入」，正文「还差：…」用琥珀黄 `PENDING_ACCENT`，
+    亮色弹窗上黄字几乎看不见 → 容器改 `0xFF1C1C1C` + 白标题）；③ 判据抽成 `missingWriteConditions()`
+    （返回缺项资源 ID），UI 弹窗与 `onWriteSignal` 兜底共用同一份，避免漂移。
     验证：`:app:test -PfastTests` 268 例 0 失败 + `assembleDebug` 通过；界面真机核对并入 T2-3e。
   - **验证**：`CalibrationCodecTest` / `CalibrationModelTest` / `CalibrationSignalsTest` 37 例（v1 兼容、角色往返、
     角色守卫；T2-3d 新增 3 例、T2-3g 新增 6 例 = 角色顺序 / 双角色命名 / 已占名让位 / 非法入参 / 一次写两条共用几何 /
