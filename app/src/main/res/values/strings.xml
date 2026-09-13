@@ -48,8 +48,6 @@
     <string name="floating_action_text">动作：%1$s</string>
     <string name="floating_handle_text">≡</string>
     <string name="floating_handle_desc">悬浮窗手柄（单击展开菜单，按住沿边缘上下移动）</string>
-    <string name="floating_handle_chevron_right">‹</string>
-    <string name="floating_handle_chevron_left">›</string>
     <string name="floating_menu_start_patrol">开始巡查</string>
     <string name="floating_menu_glyph_patrol">▶</string>
     <string name="floating_reason_no_session">尚未建立采集会话：请先到「授权状态」页授予屏幕采集权限。</string>
@@ -178,6 +176,8 @@
     <string name="run_mode_drill_desc">只识别画面状态、不产生任何点击；识别到的界面状态实时显示在悬浮窗上。用于验证识别能力，长期保留。</string>
     <string name="run_mode_live_desc">命中活动弹窗后会对游戏界面产生真实点击（当前仅关闭弹窗一类）。每次点击都留有审计记录；识别不可信或画面不明时一律不点。每次建立采集会话会自动回到演练。</string>
     <string name="run_mode_live_switch">允许真实点击</string>
+    <string name="run_mode_keep_on_session">建立采集会话后保留运行方式</string>
+    <string name="run_mode_keep_on_session_desc">默认关闭：每次（重新）授权采集都回到演练，更安全。开启后，重新授权或重建会话不会把「允许真实点击」重置——用于「授权跳去游戏后不方便再切回来重开」的情况；此时实点会沿用你上次的选择，请自行留意。</string>
     <string name="run_mode_live_confirm_title">开启实点？</string>
     <string name="run_mode_live_confirm_body">开启后，程序会真的点击游戏界面。当前仅对已标定的活动弹窗执行关闭动作；点击后必须由下一次识别确认，未确认不会重复盲点。每次建立采集会话会自动回到演练。确定开启？</string>
     <string name="run_mode_confirm_ok">开启实点</string>

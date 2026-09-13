@@ -63,6 +63,7 @@ import com.example.mastermechanic.floating.FloatingSide
 import com.example.mastermechanic.floating.LabelPosition
 import com.example.mastermechanic.service.CaptureService
 import com.example.mastermechanic.service.ResidentService
+import com.example.mastermechanic.settings.AppPreferencesStore
 import com.example.mastermechanic.ui.theme.MasterMechanicTheme
 import kotlinx.coroutines.delay
 
@@ -367,12 +368,22 @@ private fun ResidentCard(
  * **三条安全边界**（默认一律回到演练，实点只能由用户在本次会话内显式开启）：
  * 进程启动 = 演练；无障碍服务断开 / 被中断（[ClickDispatch.uninstall]）= 回演练；
  * 采集会话（重）建立（[com.example.mastermechanic.service.CaptureService]）= 回演练。
+ *
+ * **2026-09-14 补充**：授予采集权限会把用户带到游戏，用户**没法在授权后再切回来开实点**
+ * → 增设显式偏好「建立采集会话后保留运行方式」（默认关）。关着 = 上面的第三条边界照旧；
+ * 打开 = 保留用户上次的选择（用户自己承担"每次会话都要重新确认"的取舍）。
  */
 @Composable
 private fun RunModeCard() {
+    val context = LocalContext.current
     val mode by ClickDispatch.modeFlow.collectAsState()
     var confirming by remember { mutableStateOf(false) }
     val live = mode == ClickMode.LIVE
+    var keepOnSession by remember {
+        mutableStateOf(
+            AppPreferencesStore.loadOrRecover(context).preferences.keepClickModeOnSessionStart,
+        )
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -424,6 +435,35 @@ private fun RunModeCard() {
                         } else {
                             ClickDispatch.enableDrill()
                         }
+                    },
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.run_mode_keep_on_session),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = stringResource(R.string.run_mode_keep_on_session_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = keepOnSession,
+                    onCheckedChange = { checked ->
+                        keepOnSession = checked
+                        AppPreferencesStore.save(
+                            context,
+                            AppPreferencesStore.loadOrRecover(context).preferences.copy(
+                                keepClickModeOnSessionStart = checked,
+                            ),
+                        )
                     },
                 )
             }

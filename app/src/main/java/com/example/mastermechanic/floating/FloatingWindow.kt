@@ -288,18 +288,10 @@ class FloatingWindow(private val context: Context) {
             panelView.background = panelBackground()
             setPanelSize(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT)
         } else {
-            handleView.text = context.getString(
-                if (side == FloatingSide.RIGHT) {
-                    R.string.floating_handle_chevron_right
-                } else {
-                    R.string.floating_handle_chevron_left
-                },
-            )
-            handleView.gravity = when (side) {
-                FloatingSide.RIGHT -> Gravity.START or Gravity.CENTER_VERTICAL
-                FloatingSide.LEFT -> Gravity.END or Gravity.CENTER_VERTICAL
-            }
-            handleView.setPadding(dp(HANDLE_GLYPH_PADDING_DP), 0, dp(HANDLE_GLYPH_PADDING_DP), 0)
+            // 收起态只剩一条**窄到放不下字**的半透明竖条（可见约 7dp），因此不写字——
+            // 形状本身就是"这里有个把手"，点它展开菜单（2026-09-14 用户口径：再缩一半）。
+            handleView.text = ""
+            handleView.setPadding(0, 0, 0, 0)
             handleView.layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -661,8 +653,8 @@ class FloatingWindow(private val context: Context) {
         const val LABEL_TEXT_COLOR = 0xFFFFFFFF.toInt()
         const val LABEL_ACTION_COLOR = 0xCCFFFFFF.toInt()
 
-        /** 手柄：半透明琥珀黄 + 深色箭头（2026-09-14 用户口径）。 */
-        const val HANDLE_FILL_COLOR = 0xE6FFC107.toInt()
+        /** 手柄：半透明琥珀黄（2026-09-14 用户口径：再透一些）；收起态不写字，只用形状。 */
+        const val HANDLE_FILL_COLOR = 0xB3FFC107.toInt()
         const val HANDLE_STROKE_COLOR = 0xFFFFA000.toInt()
         const val HANDLE_TEXT_COLOR = 0xFF3E2723.toInt()
 
@@ -675,13 +667,15 @@ class FloatingWindow(private val context: Context) {
         /** 失败原因（深底浅底通用：亮红）。 */
         const val REASON_COLOR = 0xFFFF8A80.toInt()
 
-        /** 收起态手柄尺寸（dp）：**窄竖条**，一半在屏外 → 可见约 14dp。 */
-        const val HANDLE_WIDTH_DP = 28
-        const val HANDLE_HEIGHT_DP = 64
-        const val HANDLE_CORNER_DP = 14
-
-        /** 收起态箭头与可见侧边缘的留白（dp）。 */
-        const val HANDLE_GLYPH_PADDING_DP = 2
+        /**
+         * 收起态手柄尺寸（dp）：**极窄竖条**，一半在屏外 → 可见约 7dp。
+         * 2026-09-14 用户口径："高度 / 宽度都缩减为目前的一半"（原 28×64 → 14×32）。
+         * **手感提示**：可见 7dp 已经很考验瞄准，若点不中，先调大 `FloatingPosition.REVEAL_RATIO`
+         * （让整条都露在屏内 = 可见 14dp），再考虑加大本值。
+         */
+        const val HANDLE_WIDTH_DP = 14
+        const val HANDLE_HEIGHT_DP = 32
+        const val HANDLE_CORNER_DP = 7
 
         /** 展开态面板（圆角 + 内边距）。 */
         const val MENU_CORNER_DP = 14
