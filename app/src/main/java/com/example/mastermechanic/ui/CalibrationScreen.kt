@@ -135,6 +135,14 @@ private val MARKER_ACCENT = Color(0xFFFF5252)
 private val ANCHOR_ACCENT = Color(0xFF4DD0E1)
 
 /**
+ * 选框主色 —— 「写入为」一个都不勾（T2-3g）：琥珀黄（用户 2026-09-13 定稿）。
+ * 含义是"还没决定写什么"，与标志红（色相 0°，差 45°）、锚点青（187°，差 142°）都拉得开。
+ * **不要用白色**：外层命中带细线是 `#CCFFFFFF`、左上关闭钮是白底圆 —— 白框会跟它们糊在一起，
+ * 真机上分不清框在哪（2026-09-13 真机反馈）。
+ */
+private val PENDING_ACCENT = Color(0xFFFFC107)
+
+/**
  * 标定页（T1-5b 起；T1-5l 按真机反馈重构；T2-2 起支持同状态多条记录）：**产物即唯一数据源**——
  * 全屏工作台里挑帧 / 框选 / 选归属状态，选中状态即写入产物（名称取默认名、重名自动追加序号，
  * 无草稿、无「保存产物」两步）；页面本体只保留采集控制、产物清单（可查看 / 可删除）与产物级参数
@@ -1694,9 +1702,13 @@ private fun DrawScope.drawSelectionOverlay(
     if (rect == null || size.width <= 0f || size.height <= 0f) return
     val marker = SignalRole.MARKER in roles
     val anchor = SignalRole.ANCHOR in roles
-    // 主色：只勾锚点才用青色；勾了标志（含两个都勾）以标志红为主，锚点青退到内圈；
-    // 一个都没勾维持标志红（2026-09-13 用户口径：选框颜色只认"标志 / 锚点"两种，不引入第三种颜色）
-    val accent = if (anchor && !marker) ANCHOR_ACCENT else MARKER_ACCENT
+    // 主色（T2-3g 定稿）：一个都没勾 = 琥珀黄（还没决定写什么）；只勾锚点 = 青；
+    // 勾了标志（含两个都勾）以标志红为主，锚点青退到内圈
+    val accent = when {
+        roles.isEmpty() -> PENDING_ACCENT
+        anchor && !marker -> ANCHOR_ACCENT
+        else -> MARKER_ACCENT
+    }
     val topLeft = Offset(rect.left * size.width, rect.top * size.height)
     val boxSize = Size(
         (rect.right - rect.left) * size.width,
