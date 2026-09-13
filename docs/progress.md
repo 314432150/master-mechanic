@@ -156,6 +156,19 @@
 
 > **交接提醒（2026-09-12）**：`app/build/replay-work/` 是回放工作区（固定批次 `set-20260912-03`：104 帧 + 清单，另含标定产物副本、原始帧池与诊断出参）——**`gradlew clean` 会将其整体清空**，回放回归（`ReplayBatchRunTest`）依赖之，勿随意 clean；若已被清，需从设备重新导出（帧池位于应用私有目录 `files/calibration/frames`）。
 
+20. **T2-6 实点开关（B5 用户入口）完成（2026-09-13）**：补上 B5 的**前置缺口**——`ClickDispatch.enableLive()` 此前
+   **没有任何 UI 入口**（授权页「运行方式」卡片是 M1 的静态只读展示，源码注释自述"点击能力在 M2 首次开放后本卡改为
+   展示用户选择的运行方式"），因此实点段无法在真机上执行。改动：① `ClickDispatch.mode` 升级为 `StateFlow<ClickMode>`
+   （新增 `modeFlow` 供 UI 观察——模式会被**非 UI 路径**改变，不能靠"用户点开关"这一次事件刷新；`mode` 保留只读 getter）；
+   ② `CaptureService` 会话转 ACTIVE 时调 `ClickDispatch.enableDrill()`（**边界 c**：每次会话建立自动回演练）；
+   ③ 授权页 `RunModeCard` 由静态改为可切换 + **开启实点二次确认弹窗**（取消 = 保持演练，默认拒绝）；
+   ④ `strings.xml` 补 8 条文案并删除 M1 时期"自动点击能力将在后续版本开放"的过期表述；
+   ⑤ 新增 `ClickDispatchTest` 5 例（切换 + 流同步 / 回演练 / uninstall 回演练并卸载通道 / 会话建立重置 / 无通道拒绝 NO_INJECTOR）。
+   `:app:test -PfastTests` 通过（6s）+ 0 lint + `assembleDebug` 通过。
+   **真机 UI 核对通过（用户操作确认）**：开关可见 / 确认弹窗 / 取消保持演练 / 确认变实点 / 重授权自动回演练；
+   日志侧旁证：核对期间**零点击记录**（无 `MM-Click`），会话 21:16:44 与 21:17:21 两次正常建立。
+   **下一步 = B5 实点段（T2-3e）**：实点一次核对 `MM-Click` 门禁顺序、相邻间隔 ≥ 300ms 与"动作后验证"闭环。
+
 ## 阻塞与待确认
 
 | 事项 | 出处 | 状态 |

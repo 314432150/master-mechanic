@@ -118,8 +118,16 @@
     <string name="calibration_error_frame_decode">帧文件解码失败</string>
     <string name="calibration_error_selection_too_small">选区太小：原图至少需要 %1$d×%2$d 像素</string>
 
-    <!-- 运行方式（M1-T1-7 演练模式） -->
+    <!-- 运行方式（M1-T1-7 演练模式；T2-6 开放实点开关） -->
     <string name="run_mode_label">运行方式</string>
     <string name="run_mode_dry_run">演练（只识别、不点击）</string>
     <string name="run_mode_desc">当前版本只识别画面状态、不产生任何点击，用于在目标设备上验证识别能力；识别到的界面状态会实时显示在游戏内的悬浮窗上。自动点击能力将在后续版本开放，演练模式将长期保留用于回归验证。</string>
+    <string name="run_mode_live">实点（会真的点击游戏界面）</string>
+    <string name="run_mode_drill_desc">只识别画面状态、不产生任何点击；识别到的界面状态实时显示在悬浮窗上。用于验证识别能力，长期保留。</string>
+    <string name="run_mode_live_desc">命中活动弹窗后会对游戏界面产生真实点击（当前仅关闭弹窗一类）。每次点击都留有审计记录；识别不可信或画面不明时一律不点。每次建立采集会话会自动回到演练。</string>
+    <string name="run_mode_live_switch">允许真实点击</string>
+    <string name="run_mode_live_confirm_title">开启实点？</string>
+    <string name="run_mode_live_confirm_body">开启后，程序会真的点击游戏界面。当前仅对已标定的活动弹窗执行关闭动作；点击后必须由下一次识别确认，未确认不会重复盲点。每次建立采集会话会自动回到演练。确定开启？</string>
+    <string name="run_mode_confirm_ok">开启实点</string>
+    <string name="run_mode_confirm_cancel">取消</string>
 </resources>

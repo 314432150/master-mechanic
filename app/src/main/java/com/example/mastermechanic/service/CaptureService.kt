@@ -264,6 +264,9 @@ class CaptureService : Service() {
         detectTimingStats.reset()
         lastAppliedIntervalMs = ACTIVE_INTERVAL_MS
         lastStatsAt = SystemClock.elapsedRealtime()
+        // B5 / T2-6：会话（重）建立即回到演练——实点必须由用户在**本次会话内**显式开启，
+        // 避免切走 / 重新授权之后仍在实点状态（落实计划口径「每次会话开始前由用户明确指示『这次实点』」）。
+        ClickDispatch.enableDrill()
         CaptureSessionSignal.update(CaptureSessionStatus.ACTIVE, SOURCE_USER_CREATED)
     }
 

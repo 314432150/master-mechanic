@@ -1,6 +1,9 @@
 package com.example.mastermechanic.action
 
 import com.example.mastermechanic.decision.UiState
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * 点击转发层的进程内入口（T2-3c）：无障碍服务在连接时 [install]、断开时 [uninstall]，
@@ -17,9 +20,17 @@ object ClickDispatch {
     @Volatile
     private var forwarder: ClickForwarder? = null
 
-    @Volatile
-    var mode: ClickMode = ClickMode.DRILL
-        private set
+    private val modeState = MutableStateFlow(ClickMode.DRILL)
+
+    /**
+     * 模式流（T2-6 / B5）：授权页开关据此实时反映当前模式。
+     * 用 [StateFlow] 而不是普通状态，是因为模式还会被**非 UI 路径**改变（服务断开自动回演练），
+     * UI 必须跟着变，不能靠"用户点了开关"这一次事件。
+     */
+    val modeFlow: StateFlow<ClickMode> = modeState.asStateFlow()
+
+    /** 当前模式（门禁与既有调用方同步读取）。 */
+    val mode: ClickMode get() = modeState.value
 
     val isInstalled: Boolean get() = forwarder != null
 
@@ -28,20 +39,20 @@ object ClickDispatch {
         forwarder = ClickForwarder(ClickGate(), injector, clock, audit)
     }
 
-    /** 服务断开 / 被中断 / 销毁时卸载：之后所有点击请求都会被拒（绝不试探）。 */
+    /** 服务断开 / 被中断 / 销毁时卸载：之后所有点击请求都会被拒（绝不试探），并回到演练（安全默认态）。 */
     fun uninstall() {
         forwarder = null
-        mode = ClickMode.DRILL // 服务重启后回到安全默认态，实点需要用户再次显式开启
+        modeState.value = ClickMode.DRILL // 服务重启后回到安全默认态，实点需要用户再次显式开启
     }
 
-    /** 用户显式开启实点（B5）。 */
+    /** 用户显式开启实点（B5）。只有授权页的二次确认路径会调用它。 */
     fun enableLive() {
-        mode = ClickMode.LIVE
+        modeState.value = ClickMode.LIVE
     }
 
-    /** 回到演练（只识别）。 */
+    /** 回到演练（只识别）。用户手动关闭，或采集会话（重）建立时由 CaptureService 调用。 */
     fun enableDrill() {
-        mode = ClickMode.DRILL
+        modeState.value = ClickMode.DRILL
     }
 
     /**
