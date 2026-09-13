@@ -374,7 +374,7 @@ class CaptureService : Service() {
             }
         }
         // T2-1：搜索集合变化（阶段推进 / 流程换步）记一行——真机复演时可直接看出
-        // 「守护待命只搜启动页 → 命中启动页后扩为弹窗期集合 → 命中大厅后收回」
+        // 「守护待命搜入口标志（启动页 / 活动弹窗）→ 命中后扩为弹窗期集合 → 命中大厅后收回」
         if (result.searched != lastSearchedNames) {
             lastSearchedNames = result.searched
             Log.i(TAG, "本轮搜索集合变化: " + searchedText(result.searched))

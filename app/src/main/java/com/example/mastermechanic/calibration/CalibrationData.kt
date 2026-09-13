@@ -2,7 +2,7 @@ package com.example.mastermechanic.calibration
 
 import com.example.mastermechanic.decision.AnchorLocator
 import com.example.mastermechanic.decision.ExpectedSignals
-import com.example.mastermechanic.decision.PopupPhaseExpectedSignals
+import com.example.mastermechanic.decision.PopupWatchExpectedSignals
 import com.example.mastermechanic.decision.RecognitionLoop
 import com.example.mastermechanic.decision.SignalStateMapping
 import com.example.mastermechanic.decision.UiState
@@ -116,11 +116,12 @@ class CalibrationData(
      * 产物 → 识别循环（T1-4 编排）：标定产物是识别能力的唯一参数来源。
      * 画布几何（T1-11c）同源建立：以产物记录的标定帧尺寸为准，运行帧与之不同几何时按「画面区」归一。
      *
-     * 期望集合（T2-1）：生产路径注入 [PopupPhaseExpectedSignals]——守护待命只搜「启动页」，
-     * 命中启动页才进入弹窗期（{启动页, 选择服务器, 活动弹窗, 大厅}），命中大厅即退出。
+     * 期望集合（T2-5）：生产路径注入 [PopupWatchExpectedSignals]——**每轮只搜活动弹窗自己的标志记录**。
+     * 不再用「命中启动页/大厅」推断弹窗是否存在：弹窗一定在大厅之后出现，而程序可能未及时识别到大厅
+     * （大厅一闪即被弹窗盖住），依赖该推断会永久错过弹窗（详见 [PopupWatchExpectedSignals] 类文档）。
      * 演练 / 回归（离线重跑）传 [ExpectedSignals.ALL] 显式声明全集，即"每轮搜产物里的全部信号"。
      *
-     * @param expectedSignals 期望集合来源；默认按 FR-01 弹窗阶段口径构造
+     * @param expectedSignals 期望集合来源；默认按 FR-01 弹窗守护口径构造
      */
     fun toLoop(expectedSignals: ExpectedSignals? = null): RecognitionLoop {
         // 只有标志参与状态判定：锚点不进映射、不进期望集合（T2-3）——它们由 AnchorLocator 按当前状态另外定位。
@@ -131,7 +132,7 @@ class CalibrationData(
             params = params,
             mapping = SignalStateMapping(rules),
             geometry = CanvasGeometry.of(frameWidth, frameHeight),
-            expectedSignals = expectedSignals ?: PopupPhaseExpectedSignals.fromRules(rules),
+            expectedSignals = expectedSignals ?: PopupWatchExpectedSignals.fromRules(rules),
         )
     }
 

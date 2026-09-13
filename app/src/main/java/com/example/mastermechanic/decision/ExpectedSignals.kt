@@ -9,7 +9,7 @@ package com.example.mastermechanic.decision
  *
  * 两个实现口径：
  * - [ALL]：显式声明全集（M1 演练 / 回归口径，等价改动前的「全扫」，但**不含**"未标定即全扫"这条路径）；
- * - [PopupPhaseExpectedSignals]：FR-01 弹窗阶段（命中「启动页」才注入弹窗期集合）。
+ * - [PopupWatchExpectedSignals]：FR-01 生产路径（每轮只搜活动弹窗自己的标志记录，**无阶段**，T2-5）。
  */
 interface ExpectedSignals {
 
@@ -55,70 +55,40 @@ class FixedExpectedSignals(private val names: Set<String>) : ExpectedSignals {
 }
 
 /**
- * 弹窗阶段期望集合（FR-01 / T2-1，用户拍板口径：**命中「启动页」才开始注入弹窗期期望集合**）。
+ * 弹窗守护期望集合（T2-5 / FR-01）：运行期每轮**只搜活动弹窗自己的标志记录**，**没有阶段**。
  *
- * - **守护待命**（[Phase.STANDBY]）：只搜「启动页」——它是本阶段的**入口标志**，
- *   不搜它就没有任何办法知道游戏进入了「启动页 → 进入大厅」这一段；成本 = 一个小窗口信号
- *   （T1-13b 真机 7~22ms），守护期间可长期承担；
- * - **弹窗期**（[Phase.POPUP]）：扩为 {启动页, 选择服务器, 活动弹窗, 大厅}——活动弹窗与选择服务器
- *   都出现在这一段，**大厅是离开该段的标志**（FR-01 触发行：弹窗只在这之间出现）；
- *   带上「启动页」是因为它可能再次出现（返回启动页 / 换区），且滞回确认要走完 2 次命中。
+ * **为什么删掉"阶段"**：旧实现用「命中启动页 → 进弹窗期；命中大厅 → 收回」推断弹窗是否存在，
+ * 但 2026-09-13 现场日志（`_tmp_check/mm-dump-all.txt`）证明这条推断不可靠——
+ * 弹窗**物理上一定在大厅之后**出现，而程序**可能未及时识别到大厅**（大厅一闪即被弹窗盖住，
+ * 甚至未达滞回确认门槛），于是窗口在弹窗出现**之前**就已关掉：当天 17:54:59 命中大厅收回窗口，
+ * 17:56~18:02 弹窗停在屏幕上 2.5 分钟，程序每轮只搜 1 条 `launch_start`，**一眼都没搜过它**。
  *
- * 阶段推进只看**本轮命中**（[onRound] 收到的原始命中集合，不是滞回结论）：
- * 命中即注入，若等滞回确认（连续 2 次）才注入，刚弹出来的弹窗在本轮与下一轮都不会被搜索；
- * 提前注入的代价只是多搜几个已标定信号。
+ * 结论：判定"弹窗该不该管"的依据只能是"**弹窗自己出现了没有**"，不能依赖"是否已识别到大厅"。
  *
- * 阶段状态在进程内保持、不落盘：采集会话重建即从「守护待命」重来（与滞回状态不跨会话一致）。
+ * 因此本实现**每轮恒定**搜活动弹窗的全部标志记录（多条样式记录 → 全部纳入，任一命中即命中，§2.1），
+ * [onRound] 不再参与任何决策——结构上消除了"一次误判永久关闭搜索"这个脆弱点。
+ *
+ * 代价（如实记录）：守护期待命**不再认识启动页 / 大厅** → 状态恒显「未知」（日志与悬浮窗可读性下降）；
+ * 守护模式下除 FR-01 外不产生任何点击（需求 §4-5），功能无损失。
+ * 收益：待命期 4 条（≈490ms，其中大窗口 `launch_start` 单轮 ≈283ms）→ **3 条（≈207ms）**。
+ *
+ * 产物里没有活动弹窗记录（未标定）→ 空集 = **不搜**（不会退化成全扫）。
  */
-class PopupPhaseExpectedSignals private constructor(
-    /** 守护待命期望：启动页信号名。 */
-    private val standbyNames: Set<String>,
-    /** 弹窗期期望：启动页 + 选择服务器 + 活动弹窗 + 大厅。 */
+class PopupWatchExpectedSignals private constructor(
+    /** 活动弹窗的全部标志记录（产物声明顺序无关，作为集合使用）。 */
     private val popupNames: Set<String>,
 ) : ExpectedSignals {
 
-    /** 当前阶段。 */
-    enum class Phase {
-
-        /** 守护待命：只在等「启动页」。 */
-        STANDBY,
-
-        /** 弹窗期：已见「启动页」、尚未见「大厅」。 */
-        POPUP,
-        ;
-    }
-
-    var phase: Phase = Phase.STANDBY
-        private set
-
-    override fun expected(known: Set<String>): Set<String> =
-        if (phase == Phase.STANDBY) standbyNames else popupNames
-
-    override fun onRound(hits: Set<UiState>) {
-        when {
-            phase == Phase.STANDBY && UiState.LAUNCH_PAGE in hits -> phase = Phase.POPUP
-            phase == Phase.POPUP && UiState.HALL in hits -> phase = Phase.STANDBY
-        }
-    }
+    override fun expected(known: Set<String>): Set<String> = popupNames
 
     companion object {
 
-        /**
-         * 由标定产物的状态—信号规则构造：各状态取自己在产物里的**全部**信号名
-         * （同一状态多条样式记录 → 全部纳入期望，任一命中即该状态命中，§2.1）。
-         * 产物里没有的状态（未标定）取空集，即"该状态在本产品上不可识别"。
-         */
-        fun fromRules(rules: List<SignalStateMapping.Rule>): PopupPhaseExpectedSignals {
-            fun namesOf(state: UiState): Set<String> =
-                rules.firstOrNull { it.state == state }?.signalNames.orEmpty()
-            val launch = namesOf(UiState.LAUNCH_PAGE)
-            return PopupPhaseExpectedSignals(
-                standbyNames = launch,
-                popupNames = launch +
-                    namesOf(UiState.SERVER_SELECT) +
-                    namesOf(UiState.ACTIVITY_POPUP) +
-                    namesOf(UiState.HALL),
+        /** 由标定产物的状态—信号规则构造：取「活动弹窗」状态在产物里的**全部**标志名。 */
+        fun fromRules(rules: List<SignalStateMapping.Rule>): PopupWatchExpectedSignals =
+            PopupWatchExpectedSignals(
+                popupNames = rules.firstOrNull { it.state == UiState.ACTIVITY_POPUP }
+                    ?.signalNames
+                    .orEmpty(),
             )
-        }
     }
 }

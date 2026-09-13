@@ -22,7 +22,7 @@ import org.junit.Test
  *   灰度按 [ReplayTool.decodeGrayPng] → [com.example.mastermechanic.capture.RgbaToGray]，
  *   与采集端**同一条亮度路径**（红线 4：不引入任何设备常量）；
  * - 走 `CalibrationData.toLoop()` 的**默认期望集合**（生产口径 = FR-01 弹窗阶段源），
- *   与真机会话同一套「待命只搜启动页 → 命中启动页扩为弹窗期集合」；
+ *   与真机会话同一套「待命搜入口标志（启动页 / 活动弹窗）→ 命中后扩为弹窗期集合 → 命中大厅收回」；
  * - 帧与标定帧同几何时走零拷贝快路径；不同几何时自动按画面区归一（T1-11c）。
  *
  * 工作目录 `app/build/replay-work/`（不入版本库）：
@@ -61,7 +61,7 @@ class CalibrationReviewProbeTest {
         lines += ""
 
         // ① 生产口径（默认期望集合 = FR-01 弹窗阶段源）：真机会话看到的就是这一列的「搜索 N 条」——
-        //    待命期只搜启动页，故非启动页帧在这一列里「看不出内容」，这是不兜底的必然结果。
+        //    待命期搜入口标志（启动页 + 活动弹窗，4 条）→ 命中任一扩为弹窗期集合（6 条）→ 命中大厅收回。
         lines += "## ① 生产口径（默认 = 弹窗阶段期望集合）"
         val production = data.toLoop()
         grays.forEach { (name, gray) ->

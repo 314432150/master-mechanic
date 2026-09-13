@@ -22,8 +22,8 @@ enum class UiState(val label: String, val defaultSignalName: String) {
     /** 启动页（§2.1）：「开始游戏」「换区」标志。 */
     LAUNCH_PAGE("启动页", "launch_start"),
 
-    /** 选择服务器（§2.1）：「选择服务器」标志。 */
-    SERVER_SELECT("选择服务器", "server_select"),
+    /** 服务器列表（§2.1）：「选择服务器」标志。 */
+    SERVER_SELECT("服务器列表", "server_select"),
 
     /** 大厅（§2.1）：对战 / 排位 / 农场入口，任一命中即为大厅。 */
     HALL("大厅", "hall"),

@@ -37,7 +37,7 @@ class RecognitionLoop(
      * **不产生判定记录**，状态机不会因"没搜"而累计离开计数。
      *
      * 默认 [ExpectedSignals.ALL] = **显式声明全集**（M1 演练 / 回归口径）；生产路径由
-     * `CalibrationData.toLoop` 注入弹窗阶段来源（[PopupPhaseExpectedSignals]）。
+     * `CalibrationData.toLoop` 注入弹窗守护来源（[PopupWatchExpectedSignals]）。
      */
     private val expectedSignals: ExpectedSignals = ExpectedSignals.ALL,
 ) {
