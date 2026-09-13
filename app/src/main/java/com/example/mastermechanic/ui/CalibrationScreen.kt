@@ -72,6 +72,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -807,6 +808,12 @@ private fun CalibrationWorkbench(
     onClose: () -> Unit,
 ) {
     var hintOpen by remember { mutableStateOf(false) }
+    // 画布可绘制区域 = 顶部说明下方到工具条上方（用户 2026-09-13）：顶/底两条悬浮黑条压在画布上，
+    // 被压住的地方既看不见也点不准 → 量出两条的实际高度，把画布整体让开这一段。
+    // 高度会随内容变（顶部提示折行、底栏多一行「还差」），所以实时测量而不是写常量。
+    var topBarHeight by remember { mutableIntStateOf(0) }
+    var bottomBarHeight by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
     var loaded by remember(selectedFrame) { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val frameIndex = frames.indexOf(selectedFrame)
@@ -856,7 +863,14 @@ private fun CalibrationWorkbench(
                                 selection = selection,
                                 roles = selectedRoles,
                                 onSelectionChange = onSelectionChange,
-                                modifier = Modifier.fillMaxSize(),
+                                // 让开顶/底悬浮条（用户 2026-09-13：框只能画在两条之间）：
+                                // 内边距加在画布外侧 —— 画布内部的宽高仍是一份完整帧的映射，手势坐标换算不变。
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(
+                                        top = with(density) { topBarHeight.toDp() },
+                                        bottom = with(density) { bottomBarHeight.toDp() },
+                                    ),
                             )
                         }
                     }
@@ -893,7 +907,8 @@ private fun CalibrationWorkbench(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .fillMaxWidth()
-                        .background(Color.Black.copy(alpha = 0.55f)),
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .onSizeChanged { topBarHeight = it.height },
                 ) {
                     Row(
                         modifier = Modifier
@@ -961,9 +976,38 @@ private fun CalibrationWorkbench(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .background(Color.Black.copy(alpha = 0.65f)),
+                        .background(Color.Black.copy(alpha = 0.65f))
+                        .onSizeChanged { bottomBarHeight = it.height },
                 ) {
                     if (selectMode) {
+                        // 选区坐标（原夹在角色行与 ✓ 按钮之间，用户 2026-09-13 要求上移到「归属状态」上方并居中）：
+                        // 画框时最常核对的就是这四个数，紧贴画布下沿更好读。
+                        // 无选区时**不写文案但仍占位**（不换行空格）：整行消失会让下方状态/角色行整体上跳，
+                        // 画出第一个框时又跳回来 —— 底栏高度恒定（T2-3g 那条 BUG 的教训）。
+                        val selectionInfo = preview
+                        val selectionPx = if (selectionInfo != null) {
+                            selection?.toPixels(selectionInfo.frameWidth, selectionInfo.frameHeight)
+                        } else {
+                            null
+                        }
+                        Text(
+                            text = if (selectionPx != null) {
+                                stringResource(
+                                    R.string.calibration_selection_info,
+                                    selectionPx[0], selectionPx[1], selectionPx[2], selectionPx[3],
+                                )
+                            } else {
+                                "\u00A0"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ON_DARK_SECONDARY,
+                            maxLines = 1,
+                            softWrap = false,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
                         // 两个维度分两行、各自带标签（T2-3f）：原先「角色 chip」与「状态 chip」混排成一行，
                         // 看起来像同一组同级选项，容易被误读（2026-09-13 用户反馈）。
                         // 顺序：归属状态在上（高频、每条记录都要选），角色在下（低频、紧邻 ✓ 按钮）
@@ -1023,39 +1067,12 @@ private fun CalibrationWorkbench(
                         }
                     }
                     if (selectMode) {
-                        // 选区信息单独一行（T2-2 真机反馈）：原先夹在 ✕ 与 ✓ 之间只剩窄条，坐标一长就折行
-                        val info = preview
-                        val px = if (info != null) {
-                            selection?.toPixels(info.frameWidth, info.frameHeight)
-                        } else {
-                            null
-                        }
-                        Text(
-                            // 尚无选区时不写文案（原「尚未框选」，用户 2026-09-13 指出是废话：能不能入框选状态
-                            // 自己看得见），但**必须占位** —— 用不换行空格撑住这一行的高度，
-                            // 否则第一次画出选框时下方「还差：…」与按钮行会整体下跳。
-                            text = if (px != null) {
-                                stringResource(
-                                    R.string.calibration_selection_info,
-                                    px[0], px[1], px[2], px[3],
-                                )
-                            } else {
-                                "\u00A0"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ON_DARK_SECONDARY,
-                            maxLines = 1,
-                            softWrap = false,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp),
-                        )
                         // 写入前置条件（T2-3h）：**缺什么就写在那儿**，不必点一次才知道。
                         // 为什么不做"点一下再提示"：置灰的 Button 收不到点击事件（Compose 语义），
                         // 要让点击有反馈只能让它可点 —— 那等于纵容一次注定失败的写入，用户还会以为已经能写。
                         // 位置：**独立一行 + 全宽 + 居中**（原先挤在 ✕ 与 ✓ 之间只剩窄条，文案一长就顶出屏幕，
-                        // 2026-09-13 真机反馈）——与上面"选区信息"行同一处理；允许换行（maxLines=2）兜底。
+                        // 2026-09-13 真机反馈）——与（已上移到「归属状态」上方的）选区坐标行同一处理；
+                        // 允许换行（maxLines=2）兜底。
                         val missing = buildList {
                             if (selection == null) add(stringResource(R.string.calibration_missing_box))
                             if (selectedState == null) add(stringResource(R.string.calibration_missing_state))
