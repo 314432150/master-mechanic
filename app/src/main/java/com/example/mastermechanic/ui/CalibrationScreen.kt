@@ -33,7 +33,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -72,7 +71,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -331,16 +329,25 @@ fun CalibrationRoute(resumeTick: Int, onBack: () -> Unit) {
                 selectMode = false
             },
             onWriteSignal = {
-                if (selectedState == null) {
-                    message = context.getString(R.string.calibration_need_state)
-                } else if (selectedRoles.isEmpty()) {
-                    message = context.getString(R.string.calibration_role_required)
-                }
                 val frame = selectedFrame
                 val sel = selection
                 val state = selectedState
                 val roles = selectedRoles
-                if (frame != null && sel != null && state != null && roles.isNotEmpty()) {
+                // 写入条件不常驻显示（用户 2026-09-13）：点 ✓ 时**一次性报全缺什么**。
+                // 提交前这一下是唯一必然经过的关口，比在下边常挂一行文案省地方，也不会漏报。
+                val missing = buildList {
+                    if (frame == null || sel == null) {
+                        add(context.getString(R.string.calibration_missing_box))
+                    }
+                    if (state == null) add(context.getString(R.string.calibration_missing_state))
+                    if (roles.isEmpty()) add(context.getString(R.string.calibration_missing_roles))
+                }
+                if (missing.isNotEmpty()) {
+                    message = context.getString(
+                        R.string.calibration_write_missing,
+                        missing.joinToString(context.getString(R.string.calibration_missing_sep)),
+                    )
+                } else if (frame != null && sel != null && state != null) {
                     scope.launch {
                         val result = writeSignalFromSelection(
                             context = context,
@@ -808,12 +815,6 @@ private fun CalibrationWorkbench(
     onClose: () -> Unit,
 ) {
     var hintOpen by remember { mutableStateOf(false) }
-    // 画布可绘制区域 = 顶部说明下方到工具条上方（用户 2026-09-13）：顶/底两条悬浮黑条压在画布上，
-    // 被压住的地方既看不见也点不准 → 量出两条的实际高度，把画布整体让开这一段。
-    // 高度会随内容变（顶部提示折行、底栏多一行「还差」），所以实时测量而不是写常量。
-    var topBarHeight by remember { mutableIntStateOf(0) }
-    var bottomBarHeight by remember { mutableIntStateOf(0) }
-    val density = LocalDensity.current
     var loaded by remember(selectedFrame) { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val frameIndex = frames.indexOf(selectedFrame)
@@ -863,14 +864,9 @@ private fun CalibrationWorkbench(
                                 selection = selection,
                                 roles = selectedRoles,
                                 onSelectionChange = onSelectionChange,
-                                // 让开顶/底悬浮条（用户 2026-09-13：框只能画在两条之间）：
-                                // 内边距加在画布外侧 —— 画布内部的宽高仍是一份完整帧的映射，手势坐标换算不变。
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(
-                                        top = with(density) { topBarHeight.toDp() },
-                                        bottom = with(density) { bottomBarHeight.toDp() },
-                                    ),
+                                // 画布占满全屏（用户 2026-09-13 撤销上一条"只准画在两条之间"的限制）：
+                                // 顶/底条只是半透明浮层，压住的部分仍能看见框线，限制可画区域反而少了一截可用画面。
+                                modifier = Modifier.fillMaxSize(),
                             )
                         }
                     }
@@ -907,8 +903,7 @@ private fun CalibrationWorkbench(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .fillMaxWidth()
-                        .background(Color.Black.copy(alpha = 0.55f))
-                        .onSizeChanged { topBarHeight = it.height },
+                        .background(Color.Black.copy(alpha = 0.55f)),
                 ) {
                     Row(
                         modifier = Modifier
@@ -976,8 +971,7 @@ private fun CalibrationWorkbench(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .background(Color.Black.copy(alpha = 0.65f))
-                        .onSizeChanged { bottomBarHeight = it.height },
+                        .background(Color.Black.copy(alpha = 0.65f)),
                 ) {
                     if (selectMode) {
                         // 选区坐标（原夹在角色行与 ✓ 按钮之间，用户 2026-09-13 要求上移到「归属状态」上方并居中）：
@@ -1006,7 +1000,7 @@ private fun CalibrationWorkbench(
                             textAlign = TextAlign.Center,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                                .padding(horizontal = 16.dp, vertical = 2.dp),
                         )
                         // 两个维度分两行、各自带标签（T2-3f）：原先「角色 chip」与「状态 chip」混排成一行，
                         // 看起来像同一组同级选项，容易被误读（2026-09-13 用户反馈）。
@@ -1067,40 +1061,12 @@ private fun CalibrationWorkbench(
                         }
                     }
                     if (selectMode) {
-                        // 写入前置条件（T2-3h）：**缺什么就写在那儿**，不必点一次才知道。
-                        // 为什么不做"点一下再提示"：置灰的 Button 收不到点击事件（Compose 语义），
-                        // 要让点击有反馈只能让它可点 —— 那等于纵容一次注定失败的写入，用户还会以为已经能写。
-                        // 位置：**独立一行 + 全宽 + 居中**（原先挤在 ✕ 与 ✓ 之间只剩窄条，文案一长就顶出屏幕，
-                        // 2026-09-13 真机反馈）——与（已上移到「归属状态」上方的）选区坐标行同一处理；
-                        // 允许换行（maxLines=2）兜底。
-                        val missing = buildList {
-                            if (selection == null) add(stringResource(R.string.calibration_missing_box))
-                            if (selectedState == null) add(stringResource(R.string.calibration_missing_state))
-                            if (selectedRoles.isEmpty()) add(stringResource(R.string.calibration_missing_roles))
-                        }
-                        Text(
-                            text = if (missing.isEmpty()) {
-                                stringResource(R.string.calibration_write_ready)
-                            } else {
-                                stringResource(
-                                    R.string.calibration_write_missing,
-                                    missing.joinToString(stringResource(R.string.calibration_missing_sep)),
-                                )
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            // 缺条件 = 琥珀黄（与画布"还没决定写什么"同一语义：未完成态）；齐了转白
-                            color = if (missing.isEmpty()) Color.White else PENDING_ACCENT,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp),
-                        )
+                        // 写入条件不再常驻显示（用户 2026-09-13）：改成点 ✓ 之后在顶部条报「还差：…」，
+                        // 见 onWriteSignal —— 少一行文案，工具条正好矮一截。
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -1113,15 +1079,8 @@ private fun CalibrationWorkbench(
                             }
                             Button(
                                 onClick = onWriteSignal,
-                                // 与上面这行提示同一判据（T2-3h 补上「归属状态」：原先状态没选时按钮是可点的，
-                                // 点下去只在顶部报错 —— 置灰语义与真实条件不一致）
-                                enabled = missing.isEmpty(),
-                                // 禁用态默认是 onSurface 12%（亮色主题=深色）→ 黑底上几乎看不见
-                                // （T2-2 真机反馈），显式给白系
-                                colors = ButtonDefaults.buttonColors(
-                                    disabledContainerColor = Color.White.copy(alpha = 0.12f),
-                                    disabledContentColor = Color.White.copy(alpha = 0.38f),
-                                ),
+                                // **始终可点**（用户 2026-09-13）：缺条件也不置灰，点下去在顶部条报「还差：…」。
+                                // 置灰按钮收不到点击事件（Compose 语义），"为什么不能点"只能靠猜。
                             ) {
                                 // 按钮上直接写角色（✓ 写入标志 / ✓ 写入标志 + 锚点）：最后一刻也能看清会写成什么
                                 Text(
@@ -1140,7 +1099,7 @@ private fun CalibrationWorkbench(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -1540,7 +1499,7 @@ private fun LabeledRow(label: String, content: @Composable RowScope.() -> Unit) 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(

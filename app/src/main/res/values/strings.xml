@@ -70,13 +70,10 @@
     <string name="calibration_workbench_cancel">✕</string>
     <string name="calibration_workbench_confirm">✓ 写入%1$s</string>
     <string name="calibration_workbench_confirm_none">✓ 写入</string>
-    <string name="calibration_need_state">请先选择归属状态，再点写入。</string>
     <string name="calibration_role_label">写入为（可多选）</string>
     <string name="calibration_role_pair">%1$s + %2$s</string>
-    <string name="calibration_role_required">请先选标志或锚点。</string>
     <string name="calibration_select_hint_short">拖动＝建框，拖框内＝移动，拖白线＝缩放，✕＝清除</string>
     <string name="calibration_write_missing">还差：%1$s</string>
-    <string name="calibration_write_ready">条件已齐，可以写入</string>
     <string name="calibration_missing_box">新建选框</string>
     <string name="calibration_missing_state">选归属状态</string>
     <string name="calibration_missing_roles">选写入为</string>
@@ -90,7 +87,6 @@
     <string name="calibration_preview_failed">画面加载失败（样本帧不可读）</string>
     <string name="calibration_selection_info">选区：%1$d,%2$d → %3$d,%4$d</string>
     <string name="calibration_signal_state_label">归属状态</string>
-    <string name="calibration_need_selection">请先在画面上框选，再确认写入。</string>
     <string name="calibration_signal_added">已新增%1$s：%2$s（%3$s，模板 %4$d×%5$d；该状态现有 %6$s）</string>
     <string name="calibration_count_marker">标志 %1$d 条</string>
     <string name="calibration_count_anchor">锚点 %1$d 条</string>
