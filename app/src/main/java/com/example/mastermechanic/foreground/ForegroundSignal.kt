@@ -1,6 +1,6 @@
 package com.example.mastermechanic.foreground
 
-import android.util.Log
+import com.example.mastermechanic.log.MmLog
 import java.util.concurrent.CopyOnWriteArraySet
 
 /**
@@ -39,7 +39,7 @@ object ForegroundSignal {
         if (next == current) return
         val previous = current
         current = next
-        Log.i(TAG, "前台状态变化: $previous -> $next（来源: $source）")
+        MmLog.i(TAG, "前台状态变化: $previous -> $next（来源: $source）")
         listeners.forEach { it(next) }
     }
 

@@ -8,8 +8,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * FR-01 弹窗闭环决策单测（T2-4）：确认后才点、点完必验证、连续 3 次未生效即放弃、放弃后能复位，
- * 以及演练模式只出判定不计数（B1 / B2 / B4 / B5）。
+ * FR-01 弹窗闭环决策单测（T2-4；口径经 T2-8 修订）。
+ *
+ * **现行口径**（2026-09-13 真机实测后由用户拍板）：
+ * - 弹窗已确认 + 锚点命中 → 每轮下发一次点击，**不做"单次点击是否奏效"的判定**——
+ *   实测「点击后仍命中」无法区分"弹窗没关掉"与"前一个关掉、紧接着冒出新的一个"，二者在日志上完全同形；
+ * - 唯一的停止条件是**本段弹窗内点击次数达到上限**，它只兜底"锚点匹配到了非关闭控件"（宁可漏关，不可错点）；
+ * - 弹窗真的消失 → 复位，下一段弹窗重新计数（多弹窗场景因此能逐个关掉）；
+ * - 演练模式只出判定、不计数（B5）。
  */
 class PopupCloseControllerTest {
 
@@ -60,7 +66,7 @@ class PopupCloseControllerTest {
         assertEquals(1000.0, request.frameX, 1e-9)
         assertEquals(120.0, request.frameY, 1e-9)
         assertEquals(1, outcome.attempt)
-        assertTrue("点击已下发，必须进入等验证", controller.awaitingVerification)
+        assertTrue("点击已下发，等待下一轮观测", controller.awaitingVerification)
         assertEquals(PopupVerification.None, outcome.verification)
     }
 
@@ -110,7 +116,7 @@ class PopupCloseControllerTest {
     }
 
     @Test
-    fun verificationClosedResetsRetryCounter() {
+    fun popupGoneReportsClosedAndResets() {
         val controller = PopupCloseController()
         controller.onRound(input())
 
@@ -118,78 +124,92 @@ class PopupCloseControllerTest {
 
         assertEquals(PopupVerification.Closed(1), outcome.verification)
         assertEquals("未见活动弹窗", skipNote(outcome))
-        assertEquals("弹窗消失即复位，不残留上一次的计数", 0, controller.attempt)
+        assertEquals("弹窗消失即复位，不残留上一段的计数", 0, controller.attempt)
         assertFalse(controller.awaitingVerification)
     }
 
+    /** T2-8 的核心：弹窗还在就继续点——"点击后仍命中"可能是新弹窗，不能据此停手。 */
     @Test
-    fun stillPresentCountsUpAndRetriesUpToTheLimit() {
+    fun keepsClickingWhilePopupStaysPresent() {
         val controller = PopupCloseController()
 
         assertEquals(1, click(controller.onRound(input())).attempt)
-        // 第 2 轮：第 1 枪没打成 → 计数 1，再打第 2 枪
+
         val second = controller.onRound(input())
-        assertEquals(PopupVerification.StillPresent(1), second.verification)
-        assertEquals(2, click(second).attempt)
-        // 第 3 轮：再打第 3 枪（上限是 3 次，第 3 次仍允许发出）
-        val third = controller.onRound(input())
-        assertEquals(PopupVerification.StillPresent(2), third.verification)
-        assertEquals(3, click(third).attempt)
+        assertEquals("仍命中不是失败，继续点", 2, click(second).attempt)
+        assertEquals("但观测结论要照记（供事后审计）", PopupVerification.StillPresent(1), second.verification)
+
+        assertEquals(3, click(controller.onRound(input())).attempt)
+        assertFalse("未达上限不得停手", controller.gaveUp)
     }
 
     @Test
-    fun givesUpAfterThreeFailedAttemptsAndStopsClicking() {
-        val controller = PopupCloseController()
-        repeat(3) { controller.onRound(input()) }
+    fun stillPresentIsObservationNotFailure() {
+        // 旧口径下这里会 3 次即放弃；新口径下只要没到上限就一直点——
+        // 因为"仍在命中"既可能是没关掉，也可能是前一个关掉后冒出的新弹窗（真机实测同形）
+        val controller = PopupCloseController(maxClicksPerPopupRun = 8)
+        repeat(8) { round ->
+            assertEquals(round + 1, click(controller.onRound(input())).attempt)
+            assertFalse(controller.gaveUp)
+        }
+    }
 
-        // 第 4 轮：第 3 枪仍没打成 → 次数用尽，放弃（FR-01 失败处理：宁可漏关，不可错点）
+    @Test
+    fun givesUpAtClickLimitAndStopsClicking() {
+        // 上限只兜底"锚点匹配到非关闭控件"：到点即停，避免一直往错位置点（不可逆操作）
+        val controller = PopupCloseController(maxClicksPerPopupRun = 4)
+        repeat(4) { assertEquals(it + 1, click(controller.onRound(input())).attempt) }
+
         val giveUp = controller.onRound(input())
-        assertEquals(PopupVerification.StillPresent(3), giveUp.verification)
-        assertEquals(PopupStep.GiveUp(3), giveUp.step)
+        assertEquals(PopupStep.GiveUp(4), giveUp.step)
         assertTrue(controller.gaveUp)
 
-        // 放弃后不再点击（也不重复报"放弃"之外的结论）
         val after = controller.onRound(input())
-        assertTrue(skipNote(after).contains("已放弃"))
-        assertEquals(3, after.attempt)
+        assertTrue(skipNote(after).contains("已达本段点击上限"))
+        assertEquals("达上限后不得再点", 4, controller.attempt)
+    }
+
+    @Test
+    fun defaultClickLimitIsTwelve() {
+        // 2026-09-13 用户拍板：一次登录实测 3~5 个弹窗，取 12 覆盖常见数量 + 少量误判
+        assertEquals(12, PopupCloseController.DEFAULT_MAX_CLICKS_PER_POPUP_RUN)
     }
 
     @Test
     fun gaveUpResetsWhenPopupIsGone() {
-        val controller = PopupCloseController()
-        repeat(4) { controller.onRound(input()) }
+        // 多弹窗场景的关键：上一段触顶停手后，弹窗真的消失 → 复位，新的弹窗可以重新点
+        val controller = PopupCloseController(maxClicksPerPopupRun = 2)
+        repeat(3) { controller.onRound(input()) }
         assertTrue(controller.gaveUp)
 
         val reset = controller.onRound(input(hit = false, confirmed = false, anchors = emptyList()))
-        assertTrue(skipNote(reset).contains("复位"))
+        assertEquals("未见活动弹窗", skipNote(reset))
         assertFalse(controller.gaveUp)
         assertEquals(0, controller.attempt)
 
-        // 复位后下一次命中可以重新尝试
         assertEquals(1, click(controller.onRound(input())).attempt)
     }
 
     @Test
-    fun frozenRoundNeitherClicksNorConsumesVerification() {
-        // 非前台（FR-09）：这一轮不做判断，更不能用它来"验证"上一枪
+    fun frozenRoundNeitherClicksNorCounts() {
+        // 非前台（FR-09）：这一轮不做判断，也不能用它来"观测"上一枪
         val controller = PopupCloseController()
         controller.onRound(input())
 
         val frozen = controller.onRound(input(foreground = false))
         assertEquals("目标不在前台", skipNote(frozen))
-        assertTrue("等验证的状态必须保留，冻结轮不算验证", controller.awaitingVerification)
+        assertTrue("等观测的状态必须保留，冻结轮不算", controller.awaitingVerification)
         assertEquals(1, controller.attempt)
 
-        // 回到前台且弹窗已消失 → 这时才算验证通过
         val closed = controller.onRound(input(hit = false, confirmed = false, anchors = emptyList()))
         assertEquals(PopupVerification.Closed(1), closed.verification)
     }
 
     @Test
-    fun drillModeReportsClickWithoutCountingOrVerifying() {
-        // 演练（B5）：日志要能看出"本应点哪里"，但那 3 次重试属于真实下发——
-        // 演练下不计数、不等验证，否则长跑会在 3 轮后"放弃"从未发出的点击
-        val controller = PopupCloseController()
+    fun drillModeReportsClickWithoutCounting() {
+        // 演练（B5）：日志要能看出"本应点哪里"，但不计数——否则长跑会占满上限而"停手"，
+        // 停的却是从未真正发出的点击。上限取 2 以便证明"确实没计数"。
+        val controller = PopupCloseController(maxClicksPerPopupRun = 2)
 
         repeat(5) {
             val outcome = controller.onRound(input(mode = ClickMode.DRILL))
@@ -202,8 +222,9 @@ class PopupCloseControllerTest {
     }
 
     @Test
-    fun retryLimitMustBePositive() {
-        assertThrows(IllegalArgumentException::class.java) { PopupCloseController(maxAttempts = 0) }
-        assertTrue(PopupCloseController(maxAttempts = 1).let { it.onRound(input()).step is PopupStep.Click })
+    fun rejectsNonPositiveClickLimit() {
+        assertThrows(IllegalArgumentException::class.java) {
+            PopupCloseController(maxClicksPerPopupRun = 0)
+        }
     }
 }

@@ -22,7 +22,7 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Process
 import android.os.SystemClock
-import android.util.Log
+import com.example.mastermechanic.log.MmLog
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
@@ -156,7 +156,7 @@ class CaptureService : Service() {
         }
         if (resultCode != Activity.RESULT_OK || resultData == null) {
             // FR-08：不静默失败——凭证缺失时明确记录并退出，不留下无会话的空服务
-            Log.w(TAG, "采集会话启动失败：缺少授权凭证，服务退出（需在前台界面重新授权）")
+            MmLog.w(TAG, "采集会话启动失败：缺少授权凭证，服务退出（需在前台界面重新授权）")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -183,12 +183,12 @@ class CaptureService : Service() {
         val projection = try {
             manager.getMediaProjection(resultCode, resultData)
         } catch (t: Exception) {
-            Log.w(TAG, "创建采集会话失败：${t.javaClass.simpleName} ${t.message}")
+            MmLog.w(TAG, "创建采集会话失败：${t.javaClass.simpleName} ${t.message}")
             stopSelf()
             return
         }
         if (projection == null) {
-            Log.w(TAG, "创建采集会话失败：系统未返回会话实例")
+            MmLog.w(TAG, "创建采集会话失败：系统未返回会话实例")
             stopSelf()
             return
         }
@@ -226,7 +226,7 @@ class CaptureService : Service() {
         val calibration = try {
             CalibrationStore.load(this)
         } catch (t: IllegalArgumentException) {
-            Log.w(TAG, "标定产物加载失败，回退未标定运行：${t.message}")
+            MmLog.w(TAG, "标定产物加载失败，回退未标定运行：${t.message}")
             null
         }
         recognitionLoop = calibration?.toLoop() ?: RecognitionLoop.uncalibrated()
@@ -242,13 +242,13 @@ class CaptureService : Service() {
             // 锚点数量单独报（T2-4）：FR-01 到底能不能点，第一眼就看这条——0 个锚点时弹窗即使在屏，
             // 闭环也只会"跳过"（宁可不点，红线 3/7）
             val anchorCount = calibration.signals.count { it.role == SignalRole.ANCHOR }
-            Log.i(
+            MmLog.i(
                 TAG,
                 "标定产物已加载：信号 ${calibration.signals.size} 个（其中锚点 $anchorCount 个），" +
                     "标定帧 ${calibration.frameWidth}x${calibration.frameHeight}",
             )
         } else {
-            Log.i(TAG, "未加载标定产物（未标定），以空配置运行")
+            MmLog.i(TAG, "未加载标定产物（未标定），以空配置运行")
         }
         framesReceived = 0
         framesProcessed = 0
@@ -331,7 +331,7 @@ class CaptureService : Service() {
             (image.width != calibratedFrameWidth || image.height != calibratedFrameHeight)
         ) {
             frameSizeWarned = true
-            Log.i(
+            MmLog.i(
                 TAG,
                 "运行画布 ${image.width}x${image.height} 与标定帧 " +
                     "${calibratedFrameWidth}x$calibratedFrameHeight 方向不同（建会话时机不同），" +
@@ -357,7 +357,7 @@ class CaptureService : Service() {
             )
         } catch (t: RuntimeException) {
             // 预期外的帧布局 / 数据不足：跳过本轮（不进入滞回），记录备查（不静默失败）
-            Log.w(TAG, "帧转换失败，跳过本轮识别：${t.javaClass.simpleName} ${t.message}")
+            MmLog.w(TAG, "帧转换失败，跳过本轮识别：${t.javaClass.simpleName} ${t.message}")
             return
         }
         val grayNs = SystemClock.elapsedRealtimeNanos() - startNs
@@ -380,12 +380,12 @@ class CaptureService : Service() {
         // 「守护待命搜入口标志（启动页 / 活动弹窗）→ 命中后扩为弹窗期集合 → 命中大厅后收回」
         if (result.searched != lastSearchedNames) {
             lastSearchedNames = result.searched
-            Log.i(TAG, "本轮搜索集合变化: " + searchedText(result.searched))
+            MmLog.i(TAG, "本轮搜索集合变化: " + searchedText(result.searched))
         }
 
         if (result.frozen != lastLoopFrozen) {
             lastLoopFrozen = result.frozen
-            Log.i(
+            MmLog.i(
                 TAG,
                 if (result.frozen) {
                     "识别循环冻结：目标不在前台，本轮不消耗滞回计数（FR-09）"
@@ -400,7 +400,7 @@ class CaptureService : Service() {
         if (!result.frozen) {
             val target = if (result.settled) STABLE_INTERVAL_MS else ACTIVE_INTERVAL_MS
             if (target != lastAppliedIntervalMs) {
-                Log.i(
+                MmLog.i(
                     TAG,
                     "节流间隔切换: ${lastAppliedIntervalMs}ms -> ${target}ms" +
                         "（${if (result.settled) "确实稳定轮" else "变化 / 过渡 / 未达预期轮"}）",
@@ -412,7 +412,7 @@ class CaptureService : Service() {
 
         result.transition?.let {
             // T1-13 ⑥ 取证：转移轮记录本轮实际搜索的信号名（补 T1-12 判据①⑤的取证缺口）
-            Log.i(
+            MmLog.i(
                 TAG,
                 "状态转移: ${it.from.label} -> ${it.to.label}（${it.reason}）；本轮搜索 " +
                     searchedText(result.searched),
@@ -467,7 +467,7 @@ class CaptureService : Service() {
                 // 同一原因只记一次：弹窗长期在屏时"未标定锚点"这类原因会每轮成立，记全套等于刷屏
                 if (step.note != lastFr01SkipNote) {
                     lastFr01SkipNote = step.note
-                    Log.i(TAG, "FR-01 不动作: ${step.note}")
+                    MmLog.i(TAG, "FR-01 不动作: ${step.note}")
                 }
             }
 
@@ -479,7 +479,7 @@ class CaptureService : Service() {
                     gameForeground = !result.frozen,
                     state = result.state,
                 )
-                Log.i(
+                MmLog.i(
                     TAG,
                     "FR-01 判定: 活动弹窗已确认，关闭控件「${step.request.anchorName}」" +
                         "点击点 (${step.request.frameX.toInt()}, ${step.request.frameY.toInt()})" +
@@ -488,7 +488,7 @@ class CaptureService : Service() {
                 )
             }
 
-            is PopupStep.GiveUp -> Log.w(
+            is PopupStep.GiveUp -> MmLog.w(
                 TAG,
                 "FR-01 放弃: 连续 ${step.attempts} 次点击后弹窗仍命中，判为误匹配，**停止点击**并记录" +
                     "（FR-01 失败处理：宁可漏关，不可错点）；弹窗消失后自动复位",
@@ -501,14 +501,17 @@ class CaptureService : Service() {
         when (val verification = outcome.verification) {
             is PopupVerification.None -> Unit
 
-            is PopupVerification.Closed -> Log.i(
+            is PopupVerification.Closed -> MmLog.i(
                 TAG,
-                "FR-01 验证通过: 弹窗已消失，上一枪生效（本次共点击 ${verification.attempts} 次）",
+                "FR-01 弹窗已消失（本段共点击 ${verification.attempts} 次）",
             )
 
-            is PopupVerification.StillPresent -> Log.i(
+            // 只作观测，**不是"失败"**：弹窗仍在既可能是没关掉，也可能是前一个关掉后冒出了新的那个
+            // （2026-09-13 真机实测二者在日志上无法区分，故不再由它决定是否停手）。
+            is PopupVerification.StillPresent -> MmLog.i(
                 TAG,
-                "FR-01 验证未通过: 点击后弹窗仍命中（已尝试 ${verification.attempts} 次）",
+                "FR-01 点击后仍命中弹窗（本段已点击 ${verification.attempts} 次）——" +
+                    "可能没关掉、也可能是新弹窗；按上限继续，不做单次成败判定",
             )
         }
     }
@@ -521,7 +524,7 @@ class CaptureService : Service() {
         val gray = grayTimingStats.record(grayNs / 1_000_000.0)
         val detect = detectTimingStats.record((totalNs - grayNs) / 1_000_000.0)
         val total = timingStats.record(totalNs / 1_000_000.0) ?: return
-        Log.i(
+        MmLog.i(
             TAG,
             "单帧处理耗时统计: 连续 ${total.sampleCount} 帧，总 P95 ${total.p95DisplayMs}ms" +
                 "（灰度 ${gray?.p95DisplayMs}ms / 识别 ${detect?.p95DisplayMs}ms），" +
@@ -540,7 +543,7 @@ class CaptureService : Service() {
         recognitionLoop.lastSignalCostMs.forEach { (name, costMs) ->
             val summary = signalCostStats.getOrPut(name) { FrameTimingStats() }.record(costMs)
                 ?: return@forEach
-            Log.i(
+            MmLog.i(
                 TAG,
                 "信号耗时统计: $name 连续 ${summary.sampleCount} 次，P95 ${summary.p95DisplayMs}ms，" +
                     "平均 ${summary.avgDisplayMs}ms，最大 ${summary.maxDisplayMs}ms",
@@ -556,7 +559,7 @@ class CaptureService : Service() {
             "实际参与匹配 $searchedSymbolTotal 次（$searchedRounds 轮：" +
                 "单信号 ${searchedRounds - multiSignalRounds - idleRounds} 轮 / " +
                 "多信号 $multiSignalRounds 轮 / 不搜 $idleRounds 轮）"
-        Log.i(
+        MmLog.i(
             TAG,
             "帧管线统计: 窗口 ${now - lastStatsAt}ms 接收 $framesReceived 帧 / 处理 $framesProcessed 帧；" +
                 "识别 $cyclesRun 轮（信号 ${recognitionLoop.signalCount} 个$signalNote），" +

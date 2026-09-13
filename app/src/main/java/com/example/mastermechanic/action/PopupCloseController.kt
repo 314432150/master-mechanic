@@ -3,90 +3,99 @@ package com.example.mastermechanic.action
 import com.example.mastermechanic.decision.AnchorHit
 
 /**
- * FR-01 活动弹窗自动关闭的决策本体（T2-4，纯逻辑，可 JVM 重跑）：把「识别 → 点击 → 验证」
- * 串成一次**有界重试**的闭环。
+ * FR-01 活动弹窗自动关闭的决策本体（T2-4，纯逻辑，可 JVM 重跑）。
  *
  * 职责边界（与邻层的关系）：
  * - **不产生点击**：只给出 [ClickRequest]，下发一律经 `ClickDispatch.submit`（红线 6 的唯一实现点）；
  * - **不定位锚点**：锚点由 `AnchorLocator` 按当前状态定位后作为输入传入（本类只决定"用哪个 + 要不要用"）；
  * - **不做识别**：弹窗是否命中 / 是否确认由识别循环的 `RoundResult` 如实传入。
  *
- * 状态机（每轮 [onRound] 一次）：
- * ```
- * ① 验证上一枪 ── 弹窗消失 → 成功（计数复位）
- *              └ 弹窗仍在 → 计数已满? 放弃 : 继续
- * ② 决定本轮 ─── 未见弹窗 / 未确认 / 无锚点 → 不动作（各自带原因）
- *              └ 确认 + 有锚点 → 下发一次点击，进入"等验证"
- * ```
- * **顺序不可颠倒**：先验证再动作，是红线 5「动作后未验证，不得执行下一步」在单轮粒度上的落地——
- * 上一枪还没被下一轮确认，就绝不允许再打一枪。
+ * ## 口径（T2-8，2026-09-13 真机实测后修订）
  *
- * 重试上限（requirements FR-01 失败处理）：连续 [maxAttempts] 次「点击后仍命中」→ 判为误匹配，
- * **放弃本次点击**并记录；此后不再点击，直到弹窗消失（用户手动关掉 / 换了界面）才复位。
+ * **不做"单次点击是否奏效"的判定，只要弹窗还在就继续点**，唯一停止条件是「同一段弹窗内点击次数达到上限」。
  *
- * 演练模式（[ClickMode.DRILL]，B5）：判定照算、日志照出（真机演练要看"本应点哪里"），
- * 但**不推进计数、不进入等待验证**——那 3 次重试是给真实下发的，演练下"放弃"等于放弃从未发出的点击。
+ * 为什么撤销原判据（原为「连续 [maxAttempts] 次点击后仍命中 → 判为误匹配，放弃」）：
+ * 真机日志证明**「点击后仍命中」无法区分两件事**——
+ * ① 弹窗没被关掉；② 前一个弹窗**已被关掉、紧接着冒出了下一个弹窗**（用户实测："挨个点掉，点掉一个马上又出现一个"）。
+ * 二者在日志上完全同形，于是原判据把"正常地关掉一个又一个弹窗"误判成"反复失败"，
+ * 3 次后放弃 → 剩下的弹窗再没人管（2026-09-13 实点现场即如此）。既然判不出来，就不该由它决定动作。
+ *
+ * **为什么仍保留一个上限**：上限防的不是"点不掉"，而是**"锚点匹配到了不是关闭控件的位置"**——
+ * 那种情况下程序会一直往错位置点，而游戏里点到别处可能是不可逆操作（需求 §3.1「宁可漏关，不可错点」）。
+ * 上限一到即停手；弹窗真的消失后自动复位，下一段弹窗重新计数。
+ *
+ * 每轮流程：
+ * ```
+ * ① 记录上一枪的观测结果（仅写日志，不影响动作）
+ * ② 弹窗真的不在 → 复位并结束
+ * ③ 已达上限 → 停止点击（等弹窗消失后复位）
+ * ④ 弹窗已确认 + 锚点命中 → 下发一次点击
+ * ```
+ * 相邻点击的间隔由统一转发层保证（红线 6，≥300ms），本类不做节流。
+ *
+ * 演练模式（[ClickMode.DRILL]，B5）：判定照算、日志照出（真机演练要看"本应点哪里"），但**不计数**——
+ * 否则演练长跑会把从未真正发出的点击算成"已达上限"。
  */
-class PopupCloseController(private val maxAttempts: Int = DEFAULT_MAX_ATTEMPTS) {
+class PopupCloseController(
+    private val maxClicksPerPopupRun: Int = DEFAULT_MAX_CLICKS_PER_POPUP_RUN,
+) {
 
     init {
-        require(maxAttempts >= 1) { "重试上限至少为 1：$maxAttempts" }
+        require(maxClicksPerPopupRun >= 1) { "点击上限至少为 1：$maxClicksPerPopupRun" }
     }
 
-    /** 本次弹窗已下发的点击次数（0 = 还没点过）。弹窗消失即复位。 */
+    /** 本段弹窗内已下发的点击次数（0 = 还没点过）。弹窗消失即复位。 */
     var attempt: Int = 0
         private set
 
-    /** 是否有一枪已下发、等下一轮验证。 */
+    /** 是否有一枪已下发、等下一轮记录观测结果（**不影响动作**）。 */
     var awaitingVerification: Boolean = false
         private set
 
-    /** 是否已放弃本次点击（连续 [maxAttempts] 次未生效）。 */
+    /** 是否已达本段上限（停止点击；弹窗消失后复位）。 */
     var gaveUp: Boolean = false
         private set
 
     fun onRound(input: PopupRoundInput): PopupRoundOutcome {
-        // 冻结轮（FR-09）：非前台时"弹窗还在不在"无从判断——不动作、也**不推进计数**（否则计数会被非前台时间吃掉）
+        // 冻结轮（FR-09）：非前台时"弹窗还在不在"无从判断——不动作、也**不推进计数**
         if (!input.foreground) {
             return outcome(PopupVerification.None, PopupStep.Skip("目标不在前台"))
         }
 
+        // 弹窗是否还在，用**本轮原始命中**（比滞回结论灵敏：弹窗刚弹出/刚消失都能立刻反映）
         val present = input.popupHit || input.popupConfirmed
         var verification: PopupVerification = PopupVerification.None
 
-        // ① 先验证上一枪（红线 5）：上一枪的结果决定这一轮能不能再打
-        if (awaitingVerification) {
-            awaitingVerification = false
-            val fired = attempt
-            if (present) {
-                verification = PopupVerification.StillPresent(fired)
-            } else {
-                verification = PopupVerification.Closed(fired)
-                reset()
-            }
-        }
-
-        if (gaveUp) {
-            return if (present) {
-                outcome(verification, PopupStep.Skip("已放弃本次点击（连续 $attempt 次未生效）"))
-            } else {
-                reset()
-                outcome(verification, PopupStep.Skip("弹窗已消失，重试计数复位"))
-            }
-        }
-
         if (!present) {
+            // 弹窗真的不在了 → 本段结束，计数复位（复位前把"上一枪之后的样子"记一次）
+            if (awaitingVerification) {
+                awaitingVerification = false
+                verification = PopupVerification.Closed(attempt)
+            }
             if (attempt != 0) reset()
             return outcome(verification, PopupStep.Skip("未见活动弹窗"))
         }
 
-        // 弹窗刚命中、滞回还没确认（连续 2 次命中才进入该状态）：等下一轮——宁可晚 200ms，不拿未确认的结论点击
+        // ① 上一枪的观测（只写日志）：点击之后弹窗是否还在。**不作为动作依据**
+        if (awaitingVerification) {
+            awaitingVerification = false
+            verification = PopupVerification.StillPresent(attempt)
+        }
+
+        if (gaveUp) {
+            return outcome(
+                verification,
+                PopupStep.Skip("已达本段点击上限（$attempt 次），停止点击，弹窗消失后自动复位"),
+            )
+        }
+
+        // 弹窗刚命中、滞回还没确认（连续 2 次命中才进入该状态）：等下一轮——不拿未确认的结论点击
         if (!input.popupConfirmed) {
             return outcome(verification, PopupStep.Skip("弹窗刚命中、尚未确认（等下一轮）"))
         }
 
-        // 上一枪确认没打成，且次数用尽 → 放弃（宁可漏关，不可错点）
-        if (verification is PopupVerification.StillPresent && attempt >= maxAttempts) {
+        // 兜底：达到上限 → 停手（防"锚点匹配到非关闭控件"时无限点击）
+        if (attempt >= maxClicksPerPopupRun) {
             gaveUp = true
             return outcome(verification, PopupStep.GiveUp(attempt))
         }
@@ -105,7 +114,7 @@ class PopupCloseController(private val maxAttempts: Int = DEFAULT_MAX_ATTEMPTS) 
             frameX = anchor.frameX,
             frameY = anchor.frameY,
         )
-        // 演练：只出判定（日志写"本应点击"），不计数、不等验证——见类注释。
+        // 演练：只出判定（日志写"本应点击"），不计数——见类注释。
         // 计数只在实点推进，故演练下 attempt 恒为 0，状态描述里统一按"第 1 次"呈现。
         val live = input.mode == ClickMode.LIVE
         if (live) {
@@ -126,8 +135,14 @@ class PopupCloseController(private val maxAttempts: Int = DEFAULT_MAX_ATTEMPTS) 
 
     companion object {
 
-        /** requirements FR-01 失败处理：连续 3 次仍命中 → 放弃本次点击。 */
-        const val DEFAULT_MAX_ATTEMPTS = 3
+        /**
+         * 同一段弹窗内的点击次数上限（T2-8，2026-09-13 用户拍板取 12）。
+         *
+         * 用途**仅是兜底**"锚点匹配到非关闭控件"的情形——不是"单次点击成败"的判据
+         * （那个判不出来，见类注释）。12 足以覆盖常见弹窗数（实测一次登录 3~5 个）与少量误判；
+         * 即使锚点全错，配合转发层 ≥300ms 的间隔，最多约 4 秒即停手。
+         */
+        const val DEFAULT_MAX_CLICKS_PER_POPUP_RUN = 12
     }
 }
 
@@ -150,16 +165,21 @@ data class PopupRoundInput(
     val decisionId: String,
 )
 
-/** 上一枪的验证结论（写日志用，也是后续审计"动作是否生效"的依据）。 */
+/**
+ * 上一枪的**观测**结论（只写日志、供事后审计"动作是否生效"，**不驱动任何动作**）。
+ *
+ * 之所以只观测不决策：见 [PopupCloseController] 类注释——「点击后仍命中」无法区分
+ * "没关掉"与"换了一个新弹窗"，因此它不能作为成败判据。
+ */
 sealed interface PopupVerification {
 
-    /** 本轮没有待验证的点击（没点过、或冻结轮）。 */
+    /** 本轮没有待观测的点击（没点过、或冻结轮）。 */
     data object None : PopupVerification
 
-    /** 弹窗已消失，上一枪生效；[attempts] = 本次共下发了几枪。 */
+    /** 上一枪之后弹窗**已不再命中**（本段共点击 [attempts] 次）。 */
     data class Closed(val attempts: Int) : PopupVerification
 
-    /** 弹窗仍在，上一枪未生效；[attempts] = 目前已尝试几次。 */
+    /** 上一枪之后**仍命中**弹窗（[attempts] = 本段已点击次数）——可能是没关掉，也可能是换了新弹窗。 */
     data class StillPresent(val attempts: Int) : PopupVerification
 }
 
@@ -172,11 +192,11 @@ sealed interface PopupStep {
     /** 下发一次点击（**是否真的下发由门禁决定**：演练 / 非前台 / 状态未知都会被拒并留痕）。 */
     data class Click(val request: ClickRequest, val attempt: Int) : PopupStep
 
-    /** 连续 [attempts] 次未生效 → 放弃本次点击（FR-01 失败处理）。 */
+    /** 本段点击次数达上限 → 停止点击（兜底；弹窗消失后复位）。 */
     data class GiveUp(val attempts: Int) : PopupStep
 }
 
-/** 一轮决策的完整结果：既说明"上一枪打成没打成"，也说明"这一轮要不要开枪"。 */
+/** 一轮决策的完整结果：既说明"上一枪之后的观测"，也说明"这一轮要不要开枪"。 */
 data class PopupRoundOutcome(
     val verification: PopupVerification,
     val attempt: Int,

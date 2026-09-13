@@ -3,7 +3,7 @@ package com.example.mastermechanic.calibration
 import android.content.Context
 import android.graphics.Bitmap
 import android.media.Image
-import android.util.Log
+import com.example.mastermechanic.log.MmLog
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -36,7 +36,7 @@ object CalibrationFramePool {
         if (isRecording == enabled) return
         isRecording = enabled
         lastSavedAt = 0L
-        Log.i(
+        MmLog.i(
             TAG,
             if (enabled) {
                 "标定帧录制开始：每秒 1 帧，仅保存目标前台帧（已存 ${listFrames(context).size} 帧）"
@@ -57,12 +57,12 @@ object CalibrationFramePool {
         try {
             if (listFrames(context).size >= MAX_FRAMES) {
                 setRecording(context, false)
-                Log.w(TAG, "标定帧池已达上限 $MAX_FRAMES 帧，自动停止录制")
+                MmLog.w(TAG, "标定帧池已达上限 $MAX_FRAMES 帧，自动停止录制")
                 return
             }
             saveFrame(context, image, now)
         } catch (t: RuntimeException) {
-            Log.w(TAG, "标定帧保存失败（跳过本帧）：${t.javaClass.simpleName} ${t.message}")
+            MmLog.w(TAG, "标定帧保存失败（跳过本帧）：${t.javaClass.simpleName} ${t.message}")
         }
     }
 
@@ -79,7 +79,7 @@ object CalibrationFramePool {
     fun clear(context: Context): Int {
         val frames = listFrames(context)
         frames.forEach { it.delete() }
-        Log.i(TAG, "标定帧池已清空（删除 ${frames.size} 帧）")
+        MmLog.i(TAG, "标定帧池已清空（删除 ${frames.size} 帧）")
         return frames.size
     }
 
@@ -110,7 +110,7 @@ object CalibrationFramePool {
             FileOutputStream(file).use { out ->
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
             }
-            Log.i(TAG, "标定帧已保存：${file.name}（${width}x$height）")
+            MmLog.i(TAG, "标定帧已保存：${file.name}（${width}x$height）")
         } finally {
             bitmap.recycle()
         }

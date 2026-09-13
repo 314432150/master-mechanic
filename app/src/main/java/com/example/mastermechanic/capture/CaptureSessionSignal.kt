@@ -1,6 +1,6 @@
 package com.example.mastermechanic.capture
 
-import android.util.Log
+import com.example.mastermechanic.log.MmLog
 import java.util.concurrent.CopyOnWriteArraySet
 
 /**
@@ -37,7 +37,7 @@ object CaptureSessionSignal {
         if (next == current) return
         val previous = current
         current = next
-        Log.i(TAG, "采集会话状态变化: $previous -> $next（来源: $source）")
+        MmLog.i(TAG, "采集会话状态变化: $previous -> $next（来源: $source）")
         listeners.forEach { it(next) }
     }
 }

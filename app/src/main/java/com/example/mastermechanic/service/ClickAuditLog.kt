@@ -1,6 +1,6 @@
 package com.example.mastermechanic.service
 
-import android.util.Log
+import com.example.mastermechanic.log.MmLog
 import com.example.mastermechanic.action.ClickEvent
 
 /**
@@ -18,7 +18,7 @@ object ClickAuditLog {
             is ClickEvent.Decided -> {
                 val audit = event.audit
                 val verdict = if (audit.allowed) "下发" else "拒绝（${audit.reason?.label ?: "原因未知"}）"
-                Log.i(
+                MmLog.i(
                     TAG,
                     "点击$verdict｜来源: ${audit.source.label}｜锚点: ${audit.anchorName}" +
                         "｜点: (${audit.frameX}, ${audit.frameY})｜状态: ${audit.state.label}" +
@@ -26,7 +26,7 @@ object ClickAuditLog {
                 )
             }
 
-            is ClickEvent.GestureEnded -> Log.i(
+            is ClickEvent.GestureEnded -> MmLog.i(
                 TAG,
                 "手势结束: ${if (event.completed) "完成" else "被取消"}｜锚点: ${event.anchorName}" +
                     "｜判定: ${event.decisionId}",
