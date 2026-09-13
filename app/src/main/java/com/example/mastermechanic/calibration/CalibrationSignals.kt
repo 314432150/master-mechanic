@@ -103,6 +103,30 @@ object CalibrationSignals {
     }
 
     /**
+     * 同状态追加记录时的命名（T2-2 方案 A）：默认名未被占用即用默认名，否则依次追加序号
+     * （`popup_close` → `popup_close2` → `popup_close3`…），取产物中**尚未被任何信号占用**的名字。
+     *
+     * 采用追加而非覆盖的原因：同一状态的多种样式各有自己的搜索窗口与模板，合并进一条记录
+     * 只能把窗口扩到覆盖两处（T1-13b：耗时 ≈ 窗口网格数 × 模板采样数，窗口是最有效的成本杠杆），
+     * 且一条记录只对应一个点击位置（T2-3 动作锚点）。修正误标请先在产物清单中删除该条再重标。
+     *
+     * 序号在所有信号名中全局查重（信号名在产物内必须唯一，见 [CalibrationData]）。
+     * [base] 非法时抛 [IllegalArgumentException]（界面转为提示文本）。
+     */
+    fun nextName(current: CalibrationData?, base: String): String {
+        require(CalibrationData.isValidName(base)) { "默认信号名非法：$base" }
+        val used = current?.signals.orEmpty().mapTo(HashSet()) { it.name }
+        if (base !in used) return base
+        var index = 2
+        while (true) {
+            val candidate = base + index
+            require(CalibrationData.isValidName(candidate)) { "信号名过长，无法追加样式序号：$candidate" }
+            if (candidate !in used) return candidate
+            index++
+        }
+    }
+
+    /**
      * 删除一条信号：剩余为空返回 null（调用方据此删除产物文件——空产物无意义）。
      * 名称不存在时返回等价产物（幂等，不报错）。
      */

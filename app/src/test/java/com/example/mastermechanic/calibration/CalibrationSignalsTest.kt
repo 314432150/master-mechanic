@@ -14,7 +14,8 @@ import org.junit.Test
 
 /**
  * 标定产物直接写入单测（T1-5l，纯逻辑）：覆盖写入 / 覆盖同名 / 状态重归属 / 几何校验 /
- * 删除与删空 / 参数编辑 / 参数解析，以及随草稿模型迁入的选区 → 搜索窗口策略。
+ * 删除与删空 / 参数编辑 / 参数解析，同状态多条记录的命名（T2-2 方案 A），
+ * 以及随草稿模型迁入的选区 → 搜索窗口策略。
  *
  * 全部以帧比例与帧像素表达，不含任何设备绑定值。
  */
@@ -112,6 +113,66 @@ class CalibrationSignalsTest {
 
         assertEquals(listOf("hall", "farm"), second.signals.map { it.name })
         assertEquals(MatchParams(0.9, 0.2, 7), second.params)
+    }
+
+    // --- 同状态多条记录（T2-2 方案 A：默认名 + 自动序号，追加不覆盖） ---
+
+    @Test
+    fun nextNameUsesBaseWhenUnoccupied() {
+        assertEquals("popup_close", CalibrationSignals.nextName(null, "popup_close"))
+        val data = upsert(null, "hall", UiState.HALL)
+        assertEquals("popup_close", CalibrationSignals.nextName(data, "popup_close"))
+    }
+
+    @Test
+    fun nextNameAppendsSequenceSkippingOccupiedNames() {
+        var data = upsert(null, "popup_close", UiState.ACTIVITY_POPUP)
+        assertEquals("popup_close2", CalibrationSignals.nextName(data, "popup_close"))
+
+        data = upsert(data, "popup_close2", UiState.ACTIVITY_POPUP)
+        assertEquals("popup_close3", CalibrationSignals.nextName(data, "popup_close"))
+
+        // 序号从 2 起逐位取第一个空闲名（手工产物缺了 3 时会补 3，不复用被占的 4）
+        data = upsert(data, "popup_close4", UiState.ACTIVITY_POPUP)
+        assertEquals("popup_close3", CalibrationSignals.nextName(data, "popup_close"))
+    }
+
+    @Test
+    fun nextNameAvoidsNamesHeldByOtherStates() {
+        // 信号名在产物内全局唯一：默认名被别的状态占用时同样让位（防产物校验失败）
+        val data = upsert(null, "popup_close", UiState.HALL)
+        assertEquals("popup_close2", CalibrationSignals.nextName(data, "popup_close"))
+    }
+
+    @Test
+    fun nextNameRejectsInvalidBase() {
+        assertThrows(IllegalArgumentException::class.java) {
+            CalibrationSignals.nextName(null, "bad|name")
+        }
+    }
+
+    @Test
+    fun appendingStylesKeepsSingleRuleAndSeparateWindows() {
+        var data = upsert(
+            null,
+            CalibrationSignals.nextName(null, "popup_close"),
+            UiState.ACTIVITY_POPUP,
+            window = window(0.6, 0.55, 0.95, 0.6),
+        )
+        data = upsert(
+            data,
+            CalibrationSignals.nextName(data, "popup_close"),
+            UiState.ACTIVITY_POPUP,
+            window = window(0.85, 0.02, 0.97, 0.08),
+        )
+
+        // 同一状态的多条记录合成一条规则（任一命中即该状态命中），但各自保留自己的搜索窗口
+        assertEquals(1, data.stateRules.size)
+        assertEquals(UiState.ACTIVITY_POPUP, data.stateRules[0].state)
+        assertEquals(listOf("popup_close", "popup_close2"), data.stateRules[0].signalNames)
+        assertEquals(listOf("popup_close", "popup_close2"), data.signals.map { it.name })
+        assertEquals(window(0.6, 0.55, 0.95, 0.6), data.signals[0].window)
+        assertEquals(window(0.85, 0.02, 0.97, 0.08), data.signals[1].window)
     }
 
     // --- 几何校验与非法输入（T1-5l ⑥） ---

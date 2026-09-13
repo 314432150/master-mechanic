@@ -1,6 +1,7 @@
 package com.example.mastermechanic.ui
 
 import android.content.Context
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -31,6 +32,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -112,9 +114,20 @@ private val CLOSE_BUTTON_MARGIN = 16.dp
 private val CLOSE_BUTTON_TOUCH = 20.dp
 
 /**
- * 标定页（T1-5b 起；T1-5l 按真机反馈重构）：**产物即唯一数据源**——全屏工作台里挑帧 / 框选 /
- * 选归属状态，选中状态即写入产物（同名信号覆盖，无草稿、无「保存产物」两步）；页面本体只保留
- * 采集控制、产物清单（可查看 / 可删除）与产物级参数（合法即写入）。
+ * 工作台衬底是近黑（`0xFF101010` + 半透明黑浮层）：其上的文字**不能沿用主题色**——
+ * 应用是亮色主题，`primary` / `onSurfaceVariant` 在黑底上都是深色，真机上「看不清」（2026-09-13 用户反馈）。
+ * 深色衬底上的文字统一走这两个常量。
+ */
+private val ON_DARK_SECONDARY = Color.White.copy(alpha = 0.8f)
+
+/** 深色衬底的错误提示色（亮色主题的 `error` 为深红，黑底不可读）。 */
+private val ON_DARK_ERROR = Color(0xFFFF8A80)
+
+/**
+ * 标定页（T1-5b 起；T1-5l 按真机反馈重构；T2-2 起支持同状态多条记录）：**产物即唯一数据源**——
+ * 全屏工作台里挑帧 / 框选 / 选归属状态，选中状态即写入产物（名称取默认名、重名自动追加序号，
+ * 无草稿、无「保存产物」两步）；页面本体只保留采集控制、产物清单（可查看 / 可删除）与产物级参数
+ * （合法即写入）。
  *
  * 产物在采集会话建立时加载进识别循环（CaptureService），本页不直接驱动识别。
  */
@@ -732,7 +745,8 @@ private fun ParamField(
  * 两种模式：
  * - 浏览：左右滑动大图切换帧（缩略图「过半即同步」，T1-5j 口径）；工具栏「框选」进入框选模式；
  * - 框选：禁用滑页、隐藏缩略图条；工具栏左 ✕（放弃本次框选：清选框并回浏览）/
- *   右 ✓（确认写入：需已框选 + 已选归属状态）；工具栏上方为归属状态单选滑动条。
+ *   右 ✓（确认写入：需已框选 + 已选归属状态）；工具栏上方为归属状态单选滑动条，再上一行为选区信息
+ *   （单行全宽居中：原先夹在 ✕ / ✓ 之间会被挤得折行）。
  *
  * 写入时机（T1-5m 修订 T1-5l 口径）：点 ✓ 按选中状态写入产物（同名信号覆盖），成功后回浏览模式。
  */
@@ -782,7 +796,7 @@ private fun CalibrationWorkbench(
                     selectedFrame == null -> Text(
                         text = stringResource(R.string.calibration_frames_empty),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = ON_DARK_SECONDARY,
                         modifier = Modifier.align(Alignment.Center),
                     )
                     selectMode -> {
@@ -794,8 +808,7 @@ private fun CalibrationWorkbench(
                                     else R.string.calibration_preview_loading
                                 ),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (loaded) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (loaded) ON_DARK_ERROR else ON_DARK_SECONDARY,
                                 modifier = Modifier.align(Alignment.Center),
                             )
                             else -> InteractiveFrameCanvas(
@@ -869,7 +882,7 @@ private fun CalibrationWorkbench(
                                 Text(
                                     text = stringResource(R.string.calibration_annotate_hint_icon),
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = Color.White,
                                 )
                             }
                             Button(onClick = onClose) {
@@ -881,7 +894,7 @@ private fun CalibrationWorkbench(
                         Text(
                             text = message,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = Color.White,
                             modifier = Modifier.padding(horizontal = 16.dp),
                         )
                     }
@@ -900,10 +913,23 @@ private fun CalibrationWorkbench(
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         ) {
                             items(UiState.entries.filter { it.isCandidate }) { state ->
+                                val selected = selectedState == state
                                 FilterChip(
-                                    selected = selectedState == state,
+                                    selected = selected,
                                     onClick = { onStateSelect(state) },
-                                    label = { Text(state.label) },
+                                    label = {
+                                        Text(
+                                            text = state.label,
+                                            // 未选中默认色是 onSurfaceVariant（亮色主题下深灰）→ 黑底上看不清，必须显式给亮色
+                                            color = if (selected) {
+                                                MaterialTheme.colorScheme.onSecondaryContainer
+                                            } else {
+                                                Color.White
+                                            },
+                                        )
+                                    },
+                                    // 未选中的描边默认也是深色，黑底上看不出 chip 轮廓 → 统一浅白描边
+                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
                                 )
                             }
                         }
@@ -922,47 +948,67 @@ private fun CalibrationWorkbench(
                             }
                         }
                     }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (selectMode) {
+                    if (selectMode) {
+                        // 选区信息单独一行（T2-2 真机反馈）：原先夹在 ✕ 与 ✓ 之间只剩窄条，坐标一长就折行
+                        val info = preview
+                        val px = if (info != null) {
+                            selection?.toPixels(info.frameWidth, info.frameHeight)
+                        } else {
+                            null
+                        }
+                        Text(
+                            text = if (px != null) {
+                                stringResource(
+                                    R.string.calibration_selection_info,
+                                    px[0], px[1], px[2], px[3],
+                                )
+                            } else {
+                                stringResource(R.string.calibration_selection_none)
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ON_DARK_SECONDARY,
+                            maxLines = 1,
+                            softWrap = false,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp),
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             TextButton(onClick = onExitSelect) {
                                 Text(
                                     text = stringResource(R.string.calibration_workbench_cancel),
                                     style = MaterialTheme.typography.titleLarge,
+                                    color = Color.White,
                                 )
                             }
-                            val info = preview
-                            val px = if (info != null) {
-                                selection?.toPixels(info.frameWidth, info.frameHeight)
-                            } else {
-                                null
-                            }
-                            Text(
-                                text = if (px != null) {
-                                    stringResource(
-                                        R.string.calibration_selection_info,
-                                        px[0], px[1], px[2], px[3],
-                                    )
-                                } else {
-                                    stringResource(R.string.calibration_selection_none)
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.8f),
-                                modifier = Modifier.weight(1f),
-                                textAlign = TextAlign.Center,
-                            )
                             Button(
                                 onClick = onWriteSignal,
                                 enabled = selection != null,
+                                // 禁用态默认是 onSurface 12%（亮色主题=深色）→ 黑底上几乎看不见
+                                // （T2-2 真机反馈），显式给白系
+                                colors = ButtonDefaults.buttonColors(
+                                    disabledContainerColor = Color.White.copy(alpha = 0.12f),
+                                    disabledContentColor = Color.White.copy(alpha = 0.38f),
+                                ),
                             ) {
                                 Text(text = stringResource(R.string.calibration_workbench_confirm))
                             }
-                        } else {
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             Spacer(modifier = Modifier.weight(1f))
                             ToolIconButton(
                                 icon = R.drawable.ic_frame_select,
@@ -1246,7 +1292,7 @@ private fun InteractiveFrameCanvas(
                 " "
             },
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = ON_DARK_SECONDARY,
         )
     }
 }
@@ -1264,8 +1310,8 @@ private fun FrameThumb(file: File, selected: Boolean, onClick: () -> Unit) {
             .clip(RoundedCornerShape(6.dp))
             .border(
                 width = if (selected) 2.dp else 1.dp,
-                color = if (selected) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.outlineVariant,
+                // 缩略图条压在近黑浮层上：选中用纯白（主题 primary 是深紫、黑底上显不出选中），未选中用弱白
+                color = if (selected) Color.White else Color.White.copy(alpha = 0.25f),
                 shape = RoundedCornerShape(6.dp),
             )
             .background(MaterialTheme.colorScheme.surfaceVariant)
@@ -1319,7 +1365,9 @@ private class PreparedSignal(
 )
 
 /**
- * 框选 → 写入产物（T1-5l ①）：从选区提取模板与搜索窗口，按归属状态默认名**覆盖写入**同一条信号。
+ * 框选 → 写入产物（T1-5l ①；T2-2 方案 A 起为**追加**）：从选区提取模板与搜索窗口，按归属状态
+ * 默认名写入新记录——默认名已被占用时自动追加序号（`popup_close2`…，见 [CalibrationSignals.nextName]），
+ * 因此同一状态可积累多条记录（多种样式，各带自己的窗口与模板，任一命中即该状态命中）。
  *
  * 几何校验（T1-5l ⑥）：产物已记录的标定帧几何与本次标定帧不一致时拒绝写入——窗口按整幅比例
  * 记录、模板按像素记录，混几何会让同一产物内的信号互相矛盾。解码失败 / 选区过小 / 几何不一致
@@ -1378,8 +1426,9 @@ private suspend fun writeSignalFromSelection(
             )
         }
 
-        val name = state.defaultSignalName
-        withContext(Dispatchers.IO) {
+        // T2-2 方案 A：同状态可有多条记录（多种样式），名字在默认名基础上自动追加序号，不覆盖既有记录
+        val name = CalibrationSignals.nextName(current, state.defaultSignalName)
+        val written = withContext(Dispatchers.IO) {
             val data = CalibrationSignals.upsert(
                 current = current,
                 name = name,
@@ -1391,16 +1440,17 @@ private suspend fun writeSignalFromSelection(
                 frameHeight = prepared.frameHeight,
             )
             CalibrationStore.save(context, data)
+            data
         }
-        val replaced = current?.signals?.any { it.name == name } == true
+        val styleCount = written.stateRules.firstOrNull { it.state == state }?.signalNames?.size ?: 1
         WriteResult(
             message = context.getString(
-                if (replaced) R.string.calibration_signal_replaced
-                else R.string.calibration_signal_written,
+                R.string.calibration_signal_added,
                 name,
                 state.label,
                 prepared.template.width,
                 prepared.template.height,
+                styleCount,
             ),
             saved = true,
         )

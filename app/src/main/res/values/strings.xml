@@ -78,11 +78,10 @@
     <string name="calibration_zoom_label">画面缩放 ×%1$s（双指调整，可缩回 1 倍）</string>
     <string name="calibration_preview_loading">画面加载中…</string>
     <string name="calibration_preview_failed">画面加载失败（样本帧不可读）</string>
-    <string name="calibration_selection_info">选区（帧像素）：%1$d,%2$d → %3$d,%4$d</string>
+    <string name="calibration_selection_info">选区：%1$d,%2$d → %3$d,%4$d</string>
     <string name="calibration_signal_state_label">归属状态</string>
     <string name="calibration_need_selection">请先在画面上框选标志，再确认写入。</string>
-    <string name="calibration_signal_written">已写入产物：%1$s（%2$s，模板 %3$d×%4$d）</string>
-    <string name="calibration_signal_replaced">已覆盖产物中的信号：%1$s（%2$s，模板 %3$d×%4$d）</string>
+    <string name="calibration_signal_added">已新增信号：%1$s（%2$s，模板 %3$d×%4$d；该状态现有 %5$d 条记录）</string>
     <string name="calibration_write_failed">写入失败：%1$s</string>
     <string name="calibration_signal_deleted">已删除信号：%1$s</string>
     <string name="calibration_view">查看</string>
