@@ -117,17 +117,61 @@ object CalibrationSignals {
      * 序号在所有信号名中全局查重（信号名在产物内必须唯一，见 [CalibrationData]）。
      * [base] 非法时抛 [IllegalArgumentException]（界面转为提示文本）。
      */
-    fun nextName(current: CalibrationData?, base: String): String {
+    fun nextName(current: CalibrationData?, base: String): String =
+        nextName(current?.signals.orEmpty().map { it.name }, base)
+
+    /** 同上，[used] 为已被占用的信号名（一次写多个角色时按同批累计集合查重）。 */
+    fun nextName(used: Collection<String>, base: String): String {
         require(CalibrationData.isValidName(base)) { "默认信号名非法：$base" }
-        val used = current?.signals.orEmpty().mapTo(HashSet()) { it.name }
-        if (base !in used) return base
+        val taken = if (used is Set<String>) used else used.toHashSet()
+        if (base !in taken) return base
         var index = 2
         while (true) {
             val candidate = base + index
             require(CalibrationData.isValidName(candidate)) { "信号名过长，无法追加样式序号：$candidate" }
-            if (candidate !in used) return candidate
+            if (candidate !in taken) return candidate
             index++
         }
+    }
+
+    /**
+     * 角色的固定顺序（标志 → 锚点）：界面上的排布、产物文本与命名分配都按这个顺序（确定性）。
+     */
+    fun orderedRoles(roles: Collection<SignalRole>): List<SignalRole> =
+        SignalRole.entries.filter { it in roles }
+
+    /**
+     * 一次框选写**多个角色**时的名字分配（T2-3g）：同一个元素既要判状态又要点击时勾选两个角色，
+     * 一次写入**两条记录**（§2.1：一条记录只有一个角色），两条共用本次的模板与搜索窗口。
+     *
+     * 按 [orderedRoles] 的顺序各自取默认名（`popup_close` / `popup_close_anchor`），已被占用时追加序号；
+     * 同一批内的名字互相避让 → 这批记录之间不会重名。
+     *
+     * 角色集合为空或状态为「未知」抛 [IllegalArgumentException]（界面已在按钮上拦住这两条路径）。
+     */
+    fun namesFor(
+        current: CalibrationData?,
+        state: UiState,
+        roles: Collection<SignalRole>,
+    ): List<Pair<SignalRole, String>> {
+        require(state != UiState.UNKNOWN) { "「未知」不能作为归属状态" }
+        val ordered = orderedRoles(roles)
+        require(ordered.isNotEmpty()) { "至少要选一个角色（标志 / 锚点）" }
+        val used = current?.signals.orEmpty().mapTo(HashSet()) { it.name }
+        return ordered.map { role ->
+            val name = nextName(used, defaultNameFor(state, role))
+            used += name
+            role to name
+        }
+    }
+
+    /**
+     * 某状态下某角色的记录数（写入提示「该状态现有…」用；无规则返回 0）。
+     * 标志与锚点**分开计数**：混着数会让人误以为同一角色已经标了 N 条。
+     */
+    fun countOf(data: CalibrationData, state: UiState, role: SignalRole): Int {
+        val rule = data.stateRules.firstOrNull { it.state == state } ?: return 0
+        return if (role == SignalRole.ANCHOR) rule.anchorNames.size else rule.signalNames.size
     }
 
     /**

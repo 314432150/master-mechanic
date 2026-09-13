@@ -214,12 +214,19 @@
     （宽 = 白线外扩量 ×2、白线居中、贴内线也算带内），完全落在选框之外 → 框内仍只移动、更远处仍是新建；
     最小边长 = 模板最小边长（按帧尺寸换算）、clamp 在帧界内；从关闭钮拖出超过滑动阈值后按起点重判命中
     （左上角那一格不再是死区）。
-  - **验证**：`CalibrationCodecTest` / `CalibrationModelTest` / `CalibrationSignalsTest`（v1 兼容、角色往返、角色守卫；
-    T2-3d 新增 3 例 = 角色默认名 / 同状态标志与锚点两条记录 / 锚点默认名重名让位）、`FrameEditTest` 32 例
-    （T2-3f 净增 9 例 = 拉伸带命中 6 + 拉伸运算 5，其中 3 例按新口径改写）、`AnchorLocatorTest` 7 例、
-    `ClickGateTest` 9 例、`ClickForwarderTest` 5 例 —— `:app:test -PfastTests` **262 例 0 失败** + `assembleDebug` 通过。
+  - **T2-3g 「写入为」改为多选（已完成；2026-09-13 真机反馈当天修）**：同一个元素既可以判状态又要点击时，
+    角色行可**两个都勾** → 一次框选写**两条记录**（一条标志、一条锚点），两条共用本次的模板与搜索窗口；
+    名字由 `CalibrationSignals.namesFor` 分配（顺序固定「标志 → 锚点」，批内互相避让、已占名追加序号）；
+    ✓ 按钮与写入提示显示 `标志 + 锚点`（提示按角色分别报数）；画布上双角色 = **外圈红 + 内圈青**双框线；
+    两个都不勾时 ✓ 置灰 + 行尾提示「至少选一个角色」。
+    实现备注：material3 1.4.0 起 `MultiChoiceSegmentedButtonRow` 为 `@Deprecated(HIDDEN)`（仅二进制兼容），
+    用 `MultiChoiceRowScopeBridge` 桥接 `MultiChoiceSegmentedButtonRowScope` 继续使用其公开的多选 `SegmentedButton`。
+  - **验证**：`CalibrationCodecTest` / `CalibrationModelTest` / `CalibrationSignalsTest` 37 例（v1 兼容、角色往返、
+    角色守卫；T2-3d 新增 3 例、T2-3g 新增 6 例 = 角色顺序 / 双角色命名 / 已占名让位 / 非法入参 / 一次写两条共用几何 /
+    按角色计数）、`FrameEditTest` 32 例（T2-3f 净增 9 例）、`AnchorLocatorTest` 7 例、`ClickGateTest` 9 例、
+    `ClickForwarderTest` 5 例 —— `:app:test -PfastTests` **268 例 0 失败** + `assembleDebug` 通过。
   - **待做**：**T2-3e** 真机点击核对**随 B1 一起做**（红线 2 只承认三类合法来源，不为测试新增"标定页点一下"的第五类）；
-    B1 之前需要用户真机标一条锚点（弹窗上的 ×）；T2-3f 的界面真机核对与 T2-3e 同批做。
+    B1 之前需要用户真机标一条锚点（弹窗上的 ×）；T2-3f / T2-3g 的界面真机核对与 T2-3e 同批做。
 - **T2-2 真机复演取证（样式 ① 限时点券·宝箱版，2026-09-13 14:17 会话）**：证据归档 `docs/verification/m2/t2-2/`（说明 `t2-2-07-verification.txt`；含真机截图、会话日志、产物原样导出、离线逐信号明细、弹窗/大厅原始帧）。
   ① **T2-1 期望集合驱动在真机三态齐全**：`本轮搜索集合变化: 「launch_start」`（待命 1 条）→ 统计「单信号 34 轮 / 多信号 0 / 不搜 0，参与匹配 34 次」→ 命中启动页**当轮**扩为 7 条 → `状态转移: 启动页 -> 活动弹窗（连续 2 次命中（进入））`→ 弹窗期稳定 7 条/轮；悬浮窗同步显示「状态：活动弹窗」。
   ② **逐信号归因**：新增离线探针 `CalibrationReviewProbeTest`（设备帧池原始帧 + 设备产物 → 生产路径逐帧明细，双口径：生产期望集合 / 显式全集）——弹窗帧上 **4 条 popup 记录全部命中**（`popup_close` 0.88@1087,1825；`popup_close2/3/4` 0.99~1.00@≈1199,1327），大厅帧上四条全部 NOT_MATCHED（≤0.39）→ **无残留误报**。

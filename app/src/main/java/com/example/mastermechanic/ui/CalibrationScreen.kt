@@ -43,7 +43,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.MultiChoiceSegmentedButtonRowScope
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -154,7 +154,8 @@ fun CalibrationRoute(resumeTick: Int, onBack: () -> Unit) {
     var selection by remember(selectedFrame) { mutableStateOf<RatioRect?>(null) }
     var selectedState by remember(selectedFrame) { mutableStateOf<UiState?>(null) }
     // T2-3d：本次框选写入的角色（标志 = 判状态 / 锚点 = 点击位置），默认标志
-    var selectedRole by remember(selectedFrame) { mutableStateOf(SignalRole.MARKER) }
+    // T2-3g：改为**可多选**——同一个元素既要判状态又要点击时勾两个，一次写入两条记录（§2.1）
+    var selectedRoles by remember(selectedFrame) { mutableStateOf(setOf(SignalRole.MARKER)) }
     var workbenchOpen by remember { mutableStateOf(false) }
     // T1-5m：工作台是否处于「框选模式」（浏览 = 滑页挑帧；框选 = 禁滑页 + 状态条 + ✕/✓）
     var selectMode by remember { mutableStateOf(false) }
@@ -300,13 +301,15 @@ fun CalibrationRoute(resumeTick: Int, onBack: () -> Unit) {
             selectedFrame = selectedFrame,
             selection = selection,
             selectedState = selectedState,
-            selectedRole = selectedRole,
+            selectedRoles = selectedRoles,
             message = message,
             selectMode = selectMode,
             onSelectFrame = { selectedFrame = it },
             onSelectionChange = { selection = it },
             onStateSelect = { selectedState = it },
-            onRoleSelect = { selectedRole = it },
+            onRoleToggle = { role ->
+                selectedRoles = if (role in selectedRoles) selectedRoles - role else selectedRoles + role
+            },
             onEnterSelect = {
                 selection = null
                 message = null
@@ -319,18 +322,21 @@ fun CalibrationRoute(resumeTick: Int, onBack: () -> Unit) {
             onWriteSignal = {
                 if (selectedState == null) {
                     message = context.getString(R.string.calibration_need_state)
+                } else if (selectedRoles.isEmpty()) {
+                    message = context.getString(R.string.calibration_role_required)
                 }
                 val frame = selectedFrame
                 val sel = selection
                 val state = selectedState
-                if (frame != null && sel != null && state != null) {
+                val roles = selectedRoles
+                if (frame != null && sel != null && state != null && roles.isNotEmpty()) {
                     scope.launch {
                         val result = writeSignalFromSelection(
                             context = context,
                             frame = frame,
                             ratio = sel,
                             state = state,
-                            role = selectedRole,
+                            roles = roles,
                             // 实时读取编辑框内容（局部委托属性读取即时，不是组合快照）
                             params = CalibrationSignals.parseParams(
                                 thresholdText,
@@ -765,10 +771,12 @@ private fun ParamField(
  * 两种模式：
  * - 浏览：左右滑动大图切换帧（缩略图「过半即同步」，T1-5j 口径）；工具栏「框选」进入框选模式；
  * - 框选：禁用滑页、隐藏缩略图条；工具栏左 ✕（放弃本次框选：清选框并回浏览）/
- *   右 ✓（确认写入：需已框选 + 已选归属状态）；工具栏上方为归属状态单选滑动条，再上一行为选区信息
+ *   右 ✓（确认写入：需已框选 + 已选归属状态 + 至少一个写入角色）；工具栏上方是两行各自的选项
+ *   （T2-3f：「归属状态」chip 行 +「写入为」角色行），再上一行为选区信息
  *   （单行全宽居中：原先夹在 ✕ / ✓ 之间会被挤得折行）。
  *
- * 写入时机（T1-5m 修订 T1-5l 口径）：点 ✓ 按选中状态写入产物（同名信号覆盖），成功后回浏览模式。
+ * 写入时机（T1-5m 修订 T1-5l 口径）：点 ✓ 按选中状态写入产物，成功后回浏览模式。
+ * 角色可多选（T2-3g）：勾两个 = 同一个元素同时写「标志 + 锚点」两条记录（§2.1）。
  */
 @Composable
 private fun CalibrationWorkbench(
@@ -776,13 +784,13 @@ private fun CalibrationWorkbench(
     selectedFrame: File?,
     selection: RatioRect?,
     selectedState: UiState?,
-    selectedRole: SignalRole,
+    selectedRoles: Set<SignalRole>,
     message: String?,
     selectMode: Boolean,
     onSelectFrame: (File) -> Unit,
     onSelectionChange: (RatioRect?) -> Unit,
     onStateSelect: (UiState) -> Unit,
-    onRoleSelect: (SignalRole) -> Unit,
+    onRoleToggle: (SignalRole) -> Unit,
     onEnterSelect: () -> Unit,
     onExitSelect: () -> Unit,
     onWriteSignal: () -> Unit,
@@ -836,7 +844,7 @@ private fun CalibrationWorkbench(
                             else -> InteractiveFrameCanvas(
                                 info = info,
                                 selection = selection,
-                                role = selectedRole,
+                                roles = selectedRoles,
                                 onSelectionChange = onSelectionChange,
                                 modifier = Modifier.fillMaxSize(),
                             )
@@ -964,30 +972,22 @@ private fun CalibrationWorkbench(
                         }
                         LabeledRow(label = stringResource(R.string.calibration_role_label)) {
                             // 角色用分段控件（不是 chip）：与状态在形态上就区分开；
-                            // 选中的是「这次框选写成什么」，与右侧 ✓ 按钮上的角色名一致
-                            SingleChoiceSegmentedButtonRow(modifier = Modifier.padding(start = 12.dp)) {
-                                val roles = SignalRole.entries
-                                roles.forEachIndexed { index, role ->
-                                    SegmentedButton(
-                                        selected = selectedRole == role,
-                                        onClick = { onRoleSelect(role) },
-                                        shape = SegmentedButtonDefaults.itemShape(
-                                            index = index,
-                                            count = roles.size,
-                                        ),
-                                        colors = SegmentedButtonDefaults.colors(
-                                            activeContainerColor = MaterialTheme.colorScheme.primary,
-                                            activeContentColor = MaterialTheme.colorScheme.onPrimary,
-                                            activeBorderColor = Color.Transparent,
-                                            inactiveContainerColor = Color.Transparent,
-                                            inactiveContentColor = Color.White,
-                                            inactiveBorderColor = Color.White.copy(alpha = 0.5f),
-                                        ),
-                                        label = { Text(text = role.label) },
-                                    )
-                                }
-                            }
+                            // 多选（T2-3g）：同一个元素既要判状态又要点击时勾两个 —— ✓ 按钮上的角色名同步显示两个
+                            RoleToggleRow(
+                                selectedRoles = selectedRoles,
+                                onRoleToggle = onRoleToggle,
+                                modifier = Modifier.padding(start = 12.dp),
+                            )
                             Spacer(modifier = Modifier.weight(1f))
+                            // 一个都不选时明确提示（✓ 同时置灰）：避免"点了没反应"的哑状态
+                            if (selectedRoles.isEmpty()) {
+                                Text(
+                                    text = stringResource(R.string.calibration_role_required),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = ON_DARK_ERROR,
+                                    modifier = Modifier.padding(end = 12.dp),
+                                )
+                            }
                         }
                     } else {
                         LazyRow(
@@ -1046,7 +1046,7 @@ private fun CalibrationWorkbench(
                             }
                             Button(
                                 onClick = onWriteSignal,
-                                enabled = selection != null,
+                                enabled = selection != null && selectedRoles.isNotEmpty(),
                                 // 禁用态默认是 onSurface 12%（亮色主题=深色）→ 黑底上几乎看不见
                                 // （T2-2 真机反馈），显式给白系
                                 colors = ButtonDefaults.buttonColors(
@@ -1054,12 +1054,16 @@ private fun CalibrationWorkbench(
                                     disabledContentColor = Color.White.copy(alpha = 0.38f),
                                 ),
                             ) {
-                                // 按钮上直接写角色（✓ 写入标志 / ✓ 写入锚点）：最后一刻也能看清会写成什么
+                                // 按钮上直接写角色（✓ 写入标志 / ✓ 写入标志 + 锚点）：最后一刻也能看清会写成什么
                                 Text(
-                                    text = stringResource(
-                                        R.string.calibration_workbench_confirm,
-                                        selectedRole.label,
-                                    ),
+                                    text = if (selectedRoles.isEmpty()) {
+                                        stringResource(R.string.calibration_workbench_confirm_none)
+                                    } else {
+                                        stringResource(
+                                            R.string.calibration_workbench_confirm,
+                                            roleSummaryLabel(selectedRoles),
+                                        )
+                                    },
                                 )
                             }
                         }
@@ -1170,7 +1174,7 @@ private fun FramePage(file: File?) {
 private fun InteractiveFrameCanvas(
     info: CalibrationFrames.Preview,
     selection: RatioRect?,
-    role: SignalRole,
+    roles: Set<SignalRole>,
     onSelectionChange: (RatioRect?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1361,7 +1365,7 @@ private fun InteractiveFrameCanvas(
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         drawSelectionOverlay(
                             rect = current,
-                            role = role,
+                            roles = roles,
                             scale = transform.scale,
                             strokePx = strokePx,
                             closeRadiusPx = closeRadiusPx,
@@ -1385,6 +1389,81 @@ private fun InteractiveFrameCanvas(
         )
     }
 }
+
+/**
+ * 角色集合 → 界面显示名（T2-3g）：`标志` / `锚点` / `标志 + 锚点`，顺序固定（标志 → 锚点，
+ * 见 [CalibrationSignals.orderedRoles]）。✓ 按钮与写入提示共用，保证「按下去写什么」处处一致。
+ */
+@Composable
+private fun roleSummaryLabel(roles: Set<SignalRole>): String {
+    val ordered = CalibrationSignals.orderedRoles(roles)
+    return when (ordered.size) {
+        0 -> ""
+        1 -> ordered.first().label
+        else -> stringResource(
+            R.string.calibration_role_pair,
+            ordered.first().label,
+            ordered.last().label,
+        )
+    }
+}
+
+/** 同上，供非 Composable 的写入路径（消息文本）使用。 */
+private fun roleSummaryText(context: Context, roles: Collection<SignalRole>): String {
+    val ordered = CalibrationSignals.orderedRoles(roles)
+    return when (ordered.size) {
+        0 -> ""
+        1 -> ordered.first().label
+        else -> context.getString(
+            R.string.calibration_role_pair,
+            ordered.first().label,
+            ordered.last().label,
+        )
+    }
+}
+
+/**
+ * 「写入为」的多选行（T2-3g）：标志 / 锚点各是一枚**可独立勾选**的分段按钮。
+ *
+ * 用的是 material3 的**多选**版分段控件 —— 它的行容器 `MultiChoiceSegmentedButtonRow` 从 1.4.0 起被标为
+ * `@Deprecated(HIDDEN)`（只留二进制兼容），但配套的多选 `SegmentedButton` 重载仍是公开 API，
+ * 只要求调用点位于 [MultiChoiceSegmentedButtonRowScope]（一个只继承 [RowScope] 的空标记接口）之内，
+ * 所以这里用一个 [Row] + 桥接作用域即可，外观与单选分段控件完全一致。
+ */
+@Composable
+private fun RoleToggleRow(
+    selectedRoles: Set<SignalRole>,
+    onRoleToggle: (SignalRole) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier) {
+        val multiChoiceScope = MultiChoiceRowScopeBridge(row = this)
+        with(multiChoiceScope) {
+            val roles = SignalRole.entries
+            roles.forEachIndexed { index, role ->
+                SegmentedButton(
+                    checked = role in selectedRoles,
+                    onCheckedChange = { onRoleToggle(role) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = roles.size),
+                    colors = SegmentedButtonDefaults.colors(
+                        activeContainerColor = MaterialTheme.colorScheme.primary,
+                        activeContentColor = MaterialTheme.colorScheme.onPrimary,
+                        activeBorderColor = Color.Transparent,
+                        inactiveContainerColor = Color.Transparent,
+                        inactiveContentColor = Color.White,
+                        inactiveBorderColor = Color.White.copy(alpha = 0.5f),
+                    ),
+                    label = { Text(text = role.label) },
+                )
+            }
+        }
+    }
+}
+
+/** [RoleToggleRow] 的作用域桥：把 [Row] 的 [RowScope] 适配成多选分段控件要求的作用域。 */
+private class MultiChoiceRowScopeBridge(private val row: RowScope) :
+    RowScope by row,
+    MultiChoiceSegmentedButtonRowScope
 
 /** 带前缀标签的一行（T2-3f）：标签固定不滚动，内容占满剩余宽度（用于「归属状态 / 写入为」两行）。 */
 @Composable
@@ -1480,13 +1559,16 @@ private class PreparedSignal(
  * 几何校验（T1-5l ⑥）：产物已记录的标定帧几何与本次标定帧不一致时拒绝写入——窗口按整幅比例
  * 记录、模板按像素记录，混几何会让同一产物内的信号互相矛盾。解码失败 / 选区过小 / 几何不一致
  * 均以文本返回（本页以文字呈现，不中断流程）。
+ *
+ * 多角色（T2-3g）：[roles] 可含两个角色 —— 同一个元素既要判状态又要点击时，一次框选写**两条记录**
+ * （一条标志、一条锚点，§2.1），两条共用本次提取的模板与搜索窗口（只解码 / 提取一次）。
  */
 private suspend fun writeSignalFromSelection(
     context: Context,
     frame: File,
     ratio: RatioRect,
     state: UiState,
-    role: SignalRole,
+    roles: Set<SignalRole>,
     params: MatchParams?,
 ): WriteResult {
     return try {
@@ -1537,35 +1619,49 @@ private suspend fun writeSignalFromSelection(
 
         // T2-2 方案 A：同状态可有多条记录（多种样式），名字在默认名基础上自动追加序号，不覆盖既有记录
         // T2-3d：默认名按角色区分（锚点 = 默认名 + _anchor）→ 标志与锚点各写各的记录，互不覆盖
-        val name = CalibrationSignals.nextName(current, CalibrationSignals.defaultNameFor(state, role))
+        // T2-3g：可一次写多个角色 —— 名字按角色顺序分配（同批内互相避让），逐条 upsert
+        val planned = CalibrationSignals.namesFor(current, state, roles)
+        val effectiveParams = params ?: current?.params ?: CalibrationSignals.defaultParams()
         val written = withContext(Dispatchers.IO) {
-            val data = CalibrationSignals.upsert(
-                current = current,
-                name = name,
-                state = state,
-                window = prepared.window,
-                template = prepared.template,
-                params = params ?: current?.params ?: CalibrationSignals.defaultParams(),
-                frameWidth = prepared.frameWidth,
-                frameHeight = prepared.frameHeight,
-                role = role,
-            )
-            CalibrationStore.save(context, data)
-            data
+            var data = current
+            planned.forEach { (role, name) ->
+                data = CalibrationSignals.upsert(
+                    current = data,
+                    name = name,
+                    state = state,
+                    window = prepared.window,
+                    template = prepared.template,
+                    params = effectiveParams,
+                    frameWidth = prepared.frameWidth,
+                    frameHeight = prepared.frameHeight,
+                    role = role,
+                )
+            }
+            val saved = requireNotNull(data) { "写入计划非空时产物必非空" }
+            CalibrationStore.save(context, saved)
+            saved
         }
         // 同角色计数：标志数 / 锚点数各自累计（不要混着数，否则「该状态现有 N 条」会误导标定）
-        val existingCount = written.stateRules.firstOrNull { it.state == state }
-            ?.let { if (role == SignalRole.ANCHOR) it.anchorNames.size else it.signalNames.size }
-            ?: 1
+        val counts = CalibrationSignals.orderedRoles(planned.map { it.first })
+            .joinToString("、") { role ->
+                context.getString(
+                    if (role == SignalRole.ANCHOR) {
+                        R.string.calibration_count_anchor
+                    } else {
+                        R.string.calibration_count_marker
+                    },
+                    CalibrationSignals.countOf(written, state, role),
+                )
+            }
         WriteResult(
             message = context.getString(
                 R.string.calibration_signal_added,
-                role.label,
-                name,
+                roleSummaryText(context, planned.map { it.first }),
+                planned.joinToString("、") { it.second },
                 state.label,
                 prepared.template.width,
                 prepared.template.height,
-                existingCount,
+                counts,
             ),
             saved = true,
         )
@@ -1588,32 +1684,50 @@ private suspend fun writeSignalFromSelection(
  *
  * 框线颜色跟角色走（T2-3f）：标志 = 红、锚点 = 青 —— 画布上直接反映"这次框选会写成什么"，
  * 配合底栏的分段控件与「✓ 写入X」按钮，避免把两种角色混着标。
+ * 两个角色都勾选时（T2-3g）：外圈红 + 内圈青（双框线），一眼看出这一框会同时写成标志与锚点。
  *
  * [closeMarginPx] 为关闭钮中心相对选框左上角的外扩屏幕像素（与命中测试同一口径，
  * 见 [FrameEditMath.closeButtonCenter]）；它同时是**外框拉伸带**的宽度来源（T2-3f）。
  */
 private fun DrawScope.drawSelectionOverlay(
     rect: RatioRect?,
-    role: SignalRole,
+    roles: Set<SignalRole>,
     scale: Float,
     strokePx: Float,
     closeRadiusPx: Float,
     closeMarginPx: Float,
 ) {
     if (rect == null || size.width <= 0f || size.height <= 0f) return
-    val accent = if (role == SignalRole.ANCHOR) ANCHOR_ACCENT else MARKER_ACCENT
+    val marker = SignalRole.MARKER in roles
+    val anchor = SignalRole.ANCHOR in roles
+    // 主色：只勾锚点才用青色；勾了标志（含两个都勾）以标志红为主，锚点青退到内圈
+    val accent = if (anchor && !marker) ANCHOR_ACCENT else MARKER_ACCENT
     val topLeft = Offset(rect.left * size.width, rect.top * size.height)
     val boxSize = Size(
         (rect.right - rect.left) * size.width,
         (rect.bottom - rect.top) * size.height,
     )
+    val stroke = strokePx / scale
     drawRect(color = accent.copy(alpha = 0.2f), topLeft = topLeft, size = boxSize)
     drawRect(
         color = accent,
         topLeft = topLeft,
         size = boxSize,
-        style = Stroke(width = strokePx / scale),
+        style = Stroke(width = stroke),
     )
+    if (marker && anchor) {
+        // 双角色：内圈再描一根锚点青线（选框太小放不下内圈时自动跳过，不画畸形线）
+        val inset = stroke
+        val innerSize = Size(boxSize.width - inset * 2f, boxSize.height - inset * 2f)
+        if (innerSize.width > 0f && innerSize.height > 0f) {
+            drawRect(
+                color = ANCHOR_ACCENT,
+                topLeft = Offset(topLeft.x + inset, topLeft.y + inset),
+                size = innerSize,
+                style = Stroke(width = stroke),
+            )
+        }
+    }
     val marginX = closeMarginPx / scale / size.width
     val marginY = closeMarginPx / scale / size.height
     // 外层白色细线（T1-5m 恢复，仅视觉：不参与命中，锚点仍无；线宽减半与内层红框区分）

@@ -69,10 +69,13 @@
     <string name="calibration_workbench_select">框选</string>
     <string name="calibration_workbench_cancel">✕</string>
     <string name="calibration_workbench_confirm">✓ 写入%1$s</string>
+    <string name="calibration_workbench_confirm_none">✓ 写入（先选角色）</string>
     <string name="calibration_need_state">请先选择归属状态，再点写入。</string>
-    <string name="calibration_role_label">写入为</string>
-    <string name="calibration_workbench_write_hint">浏览模式：左右滑动换帧、点缩略图跳帧；点「框选」进入框选模式：拖动画布建框，拖动框内整体移动，拖动外层白线拉伸 / 缩放选框，左上 ✕ 清除重画；下方「写入为」选角色（标志 = 判断状态 / 锚点 = 在该界面点这个位置）、「归属状态」选这个元素属于哪个界面，点「✓ 写入X」落库（重名自动追加序号）。框线颜色随角色变化：标志红、锚点青。双指捏合缩放 / 平移画面，尽量只含目标本身与稳定背景。</string>
-    <string name="calibration_annotate_hint">浏览模式：左右滑动大图切换样本帧（缩略图过半即同步）；点「框选」进入框选模式——拖动空白处新建选框，拖动框内整体移动，拖动外层白线拉伸 / 缩放选框，点选框左上角 × 清除重画。下方两行各管一件事：「归属状态」= 这个元素属于哪个界面，「写入为」= 这次框选写成什么（标志 = 判断状态 / 锚点 = 在该界面点这个位置），最后点「✓ 写入X」。框线颜色随角色变化：标志红、锚点青；双指捏合缩放 / 平移画面（小目标先放大再框选）。尽量只含目标本身与稳定背景，避开动态元素。</string>
+    <string name="calibration_role_label">写入为（可多选）</string>
+    <string name="calibration_role_pair">%1$s + %2$s</string>
+    <string name="calibration_role_required">至少选一个角色</string>
+    <string name="calibration_workbench_write_hint">浏览模式：左右滑动换帧、点缩略图跳帧；点「框选」进入框选模式：拖动画布建框，拖动框内整体移动，拖动外层白线拉伸 / 缩放选框，左上 ✕ 清除重画；下方「归属状态」选这个元素属于哪个界面，「写入为（可多选）」选这次框选写成什么（标志 = 判断状态 / 锚点 = 在该界面点这个位置）——同一个元素两样都要时**两个都勾**，一次写入两条记录，点「✓ 写入X」落库（重名自动追加序号）。框线颜色随角色变化：标志红、锚点青，两个都勾 = 红青双框线。双指捏合缩放 / 平移画面，尽量只含目标本身与稳定背景。</string>
+    <string name="calibration_annotate_hint">浏览模式：左右滑动大图切换样本帧（缩略图过半即同步）；点「框选」进入框选模式——拖动空白处新建选框，拖动框内整体移动，拖动外层白线拉伸 / 缩放选框，点选框左上角 × 清除重画。下方两行各管一件事：「归属状态」= 这个元素属于哪个界面，「写入为（可多选）」= 这次框选写成什么（标志 = 判断状态 / 锚点 = 在该界面点这个位置）——同一个元素两样都要就**两个都勾**，一次写两条记录，最后点「✓ 写入X」。框线颜色随角色变化：标志红、锚点青，两个都勾 = 红青双框线；双指捏合缩放 / 平移画面（小目标先放大再框选）。尽量只含目标本身与稳定背景，避开动态元素。</string>
     <string name="calibration_annotate_hint_icon">ⓘ</string>
     <string name="calibration_hint_close">知道了</string>
     <string name="calibration_selection_none">尚未框选</string>
@@ -82,7 +85,9 @@
     <string name="calibration_selection_info">选区：%1$d,%2$d → %3$d,%4$d</string>
     <string name="calibration_signal_state_label">归属状态</string>
     <string name="calibration_need_selection">请先在画面上框选标志，再确认写入。</string>
-    <string name="calibration_signal_added">已新增%1$s：%2$s（%3$s，模板 %4$d×%5$d；该状态现有 %6$d 条记录）</string>
+    <string name="calibration_signal_added">已新增%1$s：%2$s（%3$s，模板 %4$d×%5$d；该状态现有 %6$s）</string>
+    <string name="calibration_count_marker">标志 %1$d 条</string>
+    <string name="calibration_count_anchor">锚点 %1$d 条</string>
     <string name="calibration_write_failed">写入失败：%1$s</string>
     <string name="calibration_signal_deleted">已删除信号：%1$s</string>
     <string name="calibration_view">查看</string>

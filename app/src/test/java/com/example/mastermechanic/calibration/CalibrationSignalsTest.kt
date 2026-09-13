@@ -127,6 +127,96 @@ class CalibrationSignalsTest {
     /** 便利断言：唯一规则的锚点列表（避免测试里反复写 `stateRules.single().anchorNames`）。 */
     private fun CalibrationData.anchorNamesForTest(): List<String> = stateRules.single().anchorNames
 
+    // --- 一次框选写多个角色（T2-3g）：同一个元素既是标志又是锚点 → 一次写两条记录 ---
+
+    @Test
+    fun orderedRolesFollowsMarkerThenAnchor() {
+        // 顺序固定（标志 → 锚点）：界面排布、消息文本与命名分配都依赖它，不能随集合迭代顺序变
+        assertEquals(
+            listOf(SignalRole.MARKER, SignalRole.ANCHOR),
+            CalibrationSignals.orderedRoles(setOf(SignalRole.ANCHOR, SignalRole.MARKER)),
+        )
+        assertEquals(listOf(SignalRole.ANCHOR), CalibrationSignals.orderedRoles(setOf(SignalRole.ANCHOR)))
+        assertEquals(emptyList<SignalRole>(), CalibrationSignals.orderedRoles(emptySet()))
+    }
+
+    @Test
+    fun namesForBothRolesGivesOneNamePerRole() {
+        val planned = CalibrationSignals.namesFor(null, UiState.ACTIVITY_POPUP, SignalRole.entries.toSet())
+        assertEquals(
+            listOf(SignalRole.MARKER to "popup_close", SignalRole.ANCHOR to "popup_close_anchor"),
+            planned,
+        )
+    }
+
+    @Test
+    fun namesForAvoidsExistingNamesAndNamesWithinTheBatch() {
+        val occupiedMarker = upsert(null, "popup_close", UiState.ACTIVITY_POPUP)
+        assertEquals(
+            listOf(
+                SignalRole.MARKER to "popup_close2",
+                SignalRole.ANCHOR to "popup_close_anchor",
+            ),
+            CalibrationSignals.namesFor(occupiedMarker, UiState.ACTIVITY_POPUP, SignalRole.entries.toSet()),
+        )
+
+        // 连锚点默认名也被占用（例如先误标成标志）：两条各自让位，批内不重名
+        val both = upsert(occupiedMarker, "popup_close_anchor", UiState.ACTIVITY_POPUP)
+        val planned = CalibrationSignals.namesFor(both, UiState.ACTIVITY_POPUP, SignalRole.entries.toSet())
+        assertEquals(listOf("popup_close2", "popup_close_anchor2"), planned.map { it.second })
+        assertEquals(2, planned.map { it.second }.toSet().size)
+    }
+
+    @Test
+    fun namesForRejectsUnknownStateAndEmptyRoles() {
+        assertThrows(IllegalArgumentException::class.java) {
+            CalibrationSignals.namesFor(null, UiState.UNKNOWN, setOf(SignalRole.MARKER))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            CalibrationSignals.namesFor(null, UiState.ACTIVITY_POPUP, emptySet())
+        }
+    }
+
+    @Test
+    fun writingBothRolesOnceYieldsTwoRecordsSharingGeometry() {
+        // 一次框选写「标志 + 锚点」：两条记录共用本次提取的模板与搜索窗口（只解码 / 提取一次），角色各自成立
+        val sharedWindow = window(0.6, 0.55, 0.95, 0.6)
+        val sharedTemplate = template(w = 12, h = 9, seed = 7L)
+        var data: CalibrationData? = null
+        CalibrationSignals.namesFor(null, UiState.ACTIVITY_POPUP, SignalRole.entries.toSet())
+            .forEach { (role, name) ->
+                data = upsert(
+                    data,
+                    name,
+                    UiState.ACTIVITY_POPUP,
+                    window = sharedWindow,
+                    template = sharedTemplate,
+                    role = role,
+                )
+            }
+        val written = requireNotNull(data)
+
+        assertEquals(listOf("popup_close", "popup_close_anchor"), written.signals.map { it.name })
+        assertEquals(listOf(sharedWindow, sharedWindow), written.signals.map { it.window })
+        assertEquals(listOf(sharedTemplate, sharedTemplate), written.signals.map { it.templates.single() })
+        assertEquals(1, written.stateRules.size)
+        assertEquals(listOf("popup_close"), written.stateRules.single().signalNames)
+        assertEquals(listOf("popup_close_anchor"), written.stateRules.single().anchorNames)
+        // 锚点仍不进状态判定（锚点只用于点击）
+        assertEquals(listOf("popup_close"), written.markerSpecs().map { it.name })
+    }
+
+    @Test
+    fun countOfCountsPerRoleInsteadOfMixing() {
+        var data = upsert(null, "popup_close", UiState.ACTIVITY_POPUP)
+        data = upsert(data, "popup_close_x", UiState.ACTIVITY_POPUP, role = SignalRole.ANCHOR)
+
+        assertEquals(1, CalibrationSignals.countOf(data, UiState.ACTIVITY_POPUP, SignalRole.MARKER))
+        assertEquals(1, CalibrationSignals.countOf(data, UiState.ACTIVITY_POPUP, SignalRole.ANCHOR))
+        // 该状态还没有规则 = 0（写入提示不抛异常）
+        assertEquals(0, CalibrationSignals.countOf(data, UiState.FARM, SignalRole.MARKER))
+    }
+
     // --- 覆盖写入：首条 / 同名 / 状态重归属 ---
 
     @Test
