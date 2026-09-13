@@ -43,8 +43,24 @@
     <string name="capture_notification_title">屏幕采集中</string>
     <string name="capture_notification_text">用于识别游戏画面；点击打开应用</string>
 
-    <!-- 悬浮窗壳（M0-T0-5）与状态展示（M1-T1-7） -->
+    <!-- 悬浮窗壳（M0-T0-5）与状态展示（M1-T1-7）；交互与位置（M3-T3-4 / T3-5） -->
     <string name="floating_status_text">状态：%1$s</string>
+    <string name="floating_action_text">动作：%1$s</string>
+    <string name="floating_handle_text">≡</string>
+    <string name="floating_handle_desc">悬浮窗菜单（按住可拖动）</string>
+    <string name="floating_menu_start_patrol">开始巡查</string>
+    <string name="floating_reason_no_session">尚未建立采集会话：请先到「授权状态」页授予屏幕采集权限。</string>
+    <string name="floating_reason_config_empty">巡查列表为空：请先到「巡查配置」页添加至少一项。</string>
+    <string name="floating_reason_config_broken">巡查配置读取失败：%1$s</string>
+    <string name="floating_side_left">左侧</string>
+    <string name="floating_side_right">右侧</string>
+
+    <!-- 悬浮窗位置（M3-T3-4） -->
+    <string name="auth_floating_label">悬浮窗位置</string>
+    <string name="auth_floating_desc">游戏内的悬浮手柄贴屏幕边缘，按住可拖动，抬手吸附最近的边缘并记住位置（只露出约 40% 宽度，随时可拖回来）。状态标签始终不可触摸、不拦截游戏操作；可触摸的只有手柄这一小块。</string>
+    <string name="auth_floating_current">当前停靠：%1$s</string>
+    <string name="auth_floating_reset">重置到默认位置</string>
+    <string name="auth_floating_reset_done">已重置为默认位置（游戏切到前台时生效）。</string>
     <string name="accessibility_service_label">MasterMechanic</string>
     <string name="accessibility_service_description">用于代替手动重复操作：点击由本服务执行，不会读取或修改游戏数据。</string>
 
