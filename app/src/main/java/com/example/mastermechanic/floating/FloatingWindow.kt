@@ -2,8 +2,10 @@ package com.example.mastermechanic.floating
 
 import android.content.Context
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -12,6 +14,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.example.mastermechanic.R
@@ -23,20 +26,23 @@ import com.example.mastermechanic.patrol.PatrolConfigStore
 import com.example.mastermechanic.patrol.PatrolRequestSignal
 
 /**
- * 悬浮窗（FR-07 / ADR-004）：**两个部件、两个窗口**——
+ * 悬浮窗（FR-07 / ADR-004）：**三个窗口**——
  *
  * 1. **状态标签窗**：半透明黑底 + 白字，显示「状态：X」与「动作：Y」（无动作时不显示第二行）；
  *    **可拖动**、默认横屏底部居中；
- * 2. **手柄窗**：贴边的一条**窄竖条**（半透明琥珀黄 + 朝向屏幕中心的箭头），
- *    **一开始就贴边、拖不动到屏幕中间**（拖动只沿边缘上下走）；单击展开菜单；
+ * 2. **手柄窗**：贴屏幕边缘的一条**窄竖条**（半透明琥珀黄），位置固定、不可拖动、单击展开 / 收起菜单；
+ * 3. **菜单窗**：展开时才挂载的深色圆角面板（参考 vivo 游戏魔盒形态：图标 + 文案的功能行）；
  *    菜单项只**发出请求事件**（M4 消费），M3 不产生任何游戏点击。
  *
- * 外观口径（2026-09-14 用户定稿）：状态标签回到**半透明黑底 + 白字**；
- * 手柄用**半透明琥珀黄**、更窄（可见约 14dp）；展开菜单参考 vivo 手机游戏魔盒的形态——
- * 深色半透明圆角面板 + 「图标 + 文案」的功能行。
+ * 手感口径（2026-09-14 用户反馈"点击很难被触发"）：**可见区与触摸区分离**——
+ * 窗口里只有贴边的那一条是可见的（7dp，不挡视线），其余是**透明的触摸扩展区**（伸进屏内 16dp、上下各 6dp）。
+ * 曾经的做法是"窗口一半移出屏幕"，但移出屏幕的部分**收不到触摸**，等于只让点那 7dp。
+ * 另外窗口还向系统**声明手势排除区**（`systemGestureExclusionRects`，API 29+）：
+ * 手柄紧贴屏幕边缘，正是"侧滑返回"手势的起手区，不排除的话系统可能先一步把手势吃掉。
  *
  * 触摸口径（2026-09-14 修订，见 ADR-004「修订」）：状态标签也允许拦截自身覆盖范围内的触摸
- * （因为它要能拖动）；"不拦截游戏操作"由**尺寸紧凑**承接——两个部件都只吞自己那一小块矩形。
+ * （因为它要能拖动）；手柄的透明触摸区同理。"不拦截游戏操作"由**紧凑**承接——
+ * 这里如实记录代价：手柄确实会吞掉屏幕右缘一条 23dp×44dp 的触摸（比可见的 7dp 条宽）。
  *
  * 可见性由调用方按前台信号驱动（非前台整窗移除、回前台以收起态重建）；本类自行编组到主线程。
  */
@@ -56,8 +62,7 @@ class FloatingWindow(private val context: Context) {
     private var actionText: TextView? = null
 
     // ---- 手柄窗（可触摸）----
-    private var panel: LinearLayout? = null
-    private var handle: TextView? = null
+    private var panel: FrameLayout? = null
     private var menu: LinearLayout? = null
     private var reasonText: TextView? = null
 
@@ -122,10 +127,10 @@ class FloatingWindow(private val context: Context) {
         menu = menuView
         applyExpandedState()
 
-        // 收起态尺寸是**常量**，不靠测量：空文字的 MATCH_PARENT 手柄测出来是 0 宽，
-        // 会把初始位置算成"贴着屏幕外侧"（真机表现：看不到手柄与标签，直到位置被重置）。
-        val panelWidth = dp(HANDLE_WIDTH_DP)
-        val panelHeight = dp(HANDLE_HEIGHT_DP)
+        // 手柄窗尺寸是**常量**（可见条 + 透明触摸扩展），不靠测量：空文字 + MATCH_PARENT 的手柄
+        // 曾被测成 0 宽，把初始位置算成"贴着屏幕外侧"（真机表现：看不到手柄与标签，直到位置被重置）。
+        val panelWidth = handleWindowWidth()
+        val panelHeight = handleWindowHeight()
         measureSelf(labelView)
         val initial = computeOffsets(
             panelWidth,
@@ -198,7 +203,6 @@ class FloatingWindow(private val context: Context) {
         statusText = null
         actionText = null
         panel = null
-        handle = null
         menu = null
         reasonText = null
         expanded = false
@@ -221,20 +225,32 @@ class FloatingWindow(private val context: Context) {
     }
 
     /**
-     * 手柄窗 = 贴边窄条**本身**（浅琥珀黄 + 外侧圆角），**形态永不变化**。
+     * 手柄窗 = **透明触摸区（整窗）+ 贴边可见窄条（子视图）**，形态永不变化。
      *
-     * 2026-09-14 用户口径：位置固定贴在右侧边缘上方三分之一处；不支持拖动；
-     * **点击展开菜单后手柄不消失**——所以菜单不再"长"在手柄上（见 [buildMenu]）。
+     * 为什么要分开（2026-09-14 用户反馈"点击很难被触发"）：可见窄条只有 7dp 宽，
+     * 用户根本点不中；窗口内的透明部分照样能接触摸，于是把窗口向**屏内**多留出
+     * [HANDLE_TOUCH_EXTRA_WIDTH_DP] × [HANDLE_TOUCH_EXTRA_HEIGHT_DP] 的"好点"区域，
+     * 而视觉上还是那一条 7dp 的窄条。
      */
-    private fun buildPanel(): LinearLayout = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        handle = textView(13f, HANDLE_TEXT_COLOR).apply {
-            gravity = Gravity.CENTER
-            contentDescription = context.getString(R.string.floating_handle_desc)
+    private fun buildPanel(): FrameLayout {
+        val side = FloatingPosition.DEFAULT.side
+        // 可见竖条：贴在**屏幕边缘那一侧**（右贴边 = 窗口最右侧）
+        val visual = FrameLayout.LayoutParams(dp(HANDLE_VISUAL_WIDTH_DP), dp(HANDLE_VISUAL_HEIGHT_DP)).apply {
+            gravity = when (side) {
+                FloatingSide.RIGHT -> Gravity.END or Gravity.CENTER_VERTICAL
+                FloatingSide.LEFT -> Gravity.START or Gravity.CENTER_VERTICAL
+            }
         }
-        addView(handle)
-        background = handleBackground(FloatingPosition.DEFAULT.side)
-        setOnClickListener { toggleExpanded() }
+        val visualBar = TextView(context).apply {
+            layoutParams = visual
+            contentDescription = context.getString(R.string.floating_handle_desc)
+            background = handleBackground(side)
+        }
+        return FrameLayout(context).apply {
+            // 根视图**不画任何东西**（否则透明的触摸区会露出来）
+            addView(visualBar)
+            setOnClickListener { toggleExpanded() }
+        }
     }
 
     /**
@@ -301,11 +317,14 @@ class FloatingWindow(private val context: Context) {
     }
 
     /**
-     * 贴边手柄底：**贴屏幕边缘的一侧是直角，朝向屏幕中心的一侧是大圆角**；
+     * 贴边手柄可见条的底：**贴屏幕边缘的一侧是直角，朝向屏幕中心的一侧是半圆角**；
      * 半透明琥珀黄填充（2026-09-14 用户口径）。
+     *
+     * 圆角半径跟着可见宽度走（= 可见宽度的一半）：它现在只有 7dp 宽，写死大半径会画成畸形
+     * （这条是 2026-09-14 缩短宽度时发现的：半径必须 ≤ 可见宽度的一半）。
      */
     private fun handleBackground(side: FloatingSide): GradientDrawable = GradientDrawable().apply {
-        val r = dp(HANDLE_CORNER_DP).toFloat()
+        val r = dp(HANDLE_VISUAL_WIDTH_DP) / 2f
         // 顺序：topLeft、topRight、bottomRight、bottomLeft
         cornerRadii = when (side) {
             FloatingSide.RIGHT -> floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
@@ -313,6 +332,26 @@ class FloatingWindow(private val context: Context) {
         }
         setColor(HANDLE_FILL_COLOR)
         setStroke(dp(1), HANDLE_STROKE_COLOR)
+    }
+
+    /** 手柄窗尺寸（px）：**可见条 + 透明触摸扩展**（见 [buildPanel]）。 */
+    private fun handleWindowWidth(): Int = dp(HANDLE_VISUAL_WIDTH_DP + HANDLE_TOUCH_EXTRA_WIDTH_DP)
+
+    private fun handleWindowHeight(): Int = dp(HANDLE_VISUAL_HEIGHT_DP + HANDLE_TOUCH_EXTRA_HEIGHT_DP)
+
+    /**
+     * 向系统声明"这块区域别当手势起手区"（API 29+）。
+     *
+     * 为什么需要：手柄紧贴屏幕边缘，正是各家 ROM"侧滑返回"的手势起手区，
+     * 系统可能先一步把触摸判成手势 → 用户感觉"点了没反应"（2026-09-14 真机反馈）。
+     * 这是**尽力而为**：不同 ROM 是否真的采纳无法保证，也不影响其它行为（采纳不了就退化成"点得更准"）。
+     */
+    private fun excludeFromSystemGestures(view: View) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val width = view.width
+        val height = view.height
+        if (width <= 0 || height <= 0) return
+        view.systemGestureExclusionRects = listOf(Rect(0, 0, width, height))
     }
 
     /**
@@ -362,7 +401,7 @@ class FloatingWindow(private val context: Context) {
             positions.handle.side,
             menuWidth,
             screen.width,
-            params.width,
+            dp(HANDLE_VISUAL_WIDTH_DP), // 避让的是**可见条**（窗口其余部分是透明触摸区）
             dp(MENU_MARGIN_DP),
         )
         val y = FloatingLayout.menuY(
@@ -572,10 +611,12 @@ class FloatingWindow(private val context: Context) {
         val side = positions.handle.side
         val panelY = FloatingLayout.y(positions.handle.yRatio, panelHeight, screen.height)
         // 手柄**永远贴边**（不再有"展开态临时进屏"：菜单已独立成窗，手柄不需要让位）
-        val panelX = FloatingLayout.handleX(side, panelWidth, screen.width)
+        // 注意传入的是**可见条宽度**：窗口里剩下的部分是透明触摸区，菜单只需避开看得见的那一条
+        val handleVisualWidth = dp(HANDLE_VISUAL_WIDTH_DP)
+        val panelX = FloatingLayout.handleX(side, panelWidth, screen.width, handleVisualWidth)
         val margin = dp(LABEL_MARGIN_DP)
         val menuX = if (menuWidth > 0) {
-            FloatingLayout.menuX(side, menuWidth, screen.width, panelWidth, dp(MENU_MARGIN_DP))
+            FloatingLayout.menuX(side, menuWidth, screen.width, handleVisualWidth, dp(MENU_MARGIN_DP))
         } else {
             null
         }
@@ -608,8 +649,8 @@ class FloatingWindow(private val context: Context) {
     private fun applyPositions() {
         val panelView = panel ?: return
         val labelView = label ?: return
-        val panelWidth = panelView.width.takeIf { it > 0 } ?: dp(HANDLE_WIDTH_DP)
-        val panelHeight = panelView.height.takeIf { it > 0 } ?: dp(HANDLE_HEIGHT_DP)
+        val panelWidth = panelView.width.takeIf { it > 0 } ?: handleWindowWidth()
+        val panelHeight = panelView.height.takeIf { it > 0 } ?: handleWindowHeight()
         if (labelView.width == 0) return
         val menuView = menu?.takeIf { expanded && menuAttached }
         val (menuWidth, menuHeight) = menuView?.let { viewSize(it) } ?: (0 to 0)
@@ -646,9 +687,11 @@ class FloatingWindow(private val context: Context) {
     /**
      * 尺寸一变就重新落位：比"挂载后 post 一次"可靠——
      * 首帧布局的时序不确定，只 post 一次可能读到 0 宽而算错位置（真机踩过：窗口贴到屏幕外侧）。
+     * 顺带在这里声明手势排除区（尺寸就绪才能声明）。
      */
     private fun attachLayoutRefresh(view: View) {
         view.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            excludeFromSystemGestures(view)
             if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
                 applyPositions()
             }
@@ -772,14 +815,19 @@ class FloatingWindow(private val context: Context) {
         const val REASON_COLOR = 0xFFFF8A80.toInt()
 
         /**
-         * 收起态手柄尺寸（dp）：**窄竖条**，一半在屏外 → 可见约 9dp。
-         * 沿革：28×64（可见 14）→ 14×32（可见 7）→ **19×32**（2026-09-14 用户口径"加宽三分之一"）。
-         * **手感提示**：可见约 9dp 仍然偏小，若点不中，把 `FloatingPosition.REVEAL_RATIO` 调到 1.0
-         * （整条都露在屏内 = 可见 19dp），再考虑加大本值。
+         * 手柄（dp）：**可见条**与**透明触摸扩展**分开定义（2026-09-14）。
+         *
+         * 沿革：28×64（可见 14）→ 14×32（可见 7）→ 19×32 一半在屏外（可见约 10）→
+         * **可见条 7×32 + 触摸扩展 16×12**（用户口径："缩短 1/4 宽度" + "点击很难被触发"）。
+         *
+         * 为什么不再"一半移出屏幕"：移出去的部分**收不到触摸**，等于只让用户点那 7dp。
+         * 现在窗口 = 23×44dp，其中只有贴边的 7×32dp 可见，其余透明但可点。
+         * **代价如实记录**：屏幕右缘这条 23×44dp 会吞掉游戏触摸（比可见的 7dp 条宽）。
          */
-        const val HANDLE_WIDTH_DP = 19
-        const val HANDLE_HEIGHT_DP = 32
-        const val HANDLE_CORNER_DP = 9
+        const val HANDLE_VISUAL_WIDTH_DP = 7
+        const val HANDLE_VISUAL_HEIGHT_DP = 32
+        const val HANDLE_TOUCH_EXTRA_WIDTH_DP = 16
+        const val HANDLE_TOUCH_EXTRA_HEIGHT_DP = 12
 
         /** 菜单面板（独立窗口：圆角 + 内边距 + 与屏幕 / 手柄的间距）。 */
         const val MENU_CORNER_DP = 14

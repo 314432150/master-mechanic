@@ -34,9 +34,6 @@ data class FloatingPosition(
 
     companion object {
 
-        /** 贴边时手柄露出的宽度比例（2026-09-14 用户定稿：一半在屏外）。 */
-        const val REVEAL_RATIO = 0.5
-
         /**
          * 默认位置：**右侧边缘、纵向三分之一**（2026-09-14 用户口径："贴横屏右边缘上方三分之一"）。
          * 手柄**不支持拖动**，位置只由默认值 / 重置决定；纵向存比例是为了跨分辨率还原。
@@ -95,36 +92,40 @@ data class FloatingPositions(val label: LabelPosition) {
  * 悬浮窗几何换算（纯逻辑，T3-4 / T3-7 / T3-7 修订）：把位置换算成**三个窗口**的偏移量。
  *
  * 三个窗口（ADR-004 第 2 / 5 条；第 2 条于 2026-09-14 修订为"菜单独立成窗"）：
- * - **手柄窗**（可触摸）：固定贴边、露出 [FloatingPosition.REVEAL_RATIO] 宽度（窄竖条），**不随展开变化**；
+ * - **手柄窗**（可触摸）：**可见竖条贴屏幕边缘、不随展开变化**；窗口里除了这条可见竖条，
+ *   其余是**透明的触摸扩展区**（伸进屏内）——可见的 7dp 很难点中，
+ *   所以"好点"交给透明区、"不挡视线"交给可见条（两者宽度分别传入，见 [handleX]）；
  * - **菜单窗**（可触摸）：展开时才挂载，贴着屏内边缘、与手柄纵向对齐；
  * - **状态标签窗**（可触摸、可拖动）：自由位置，默认底部居中。
  */
 object FloatingLayout {
 
-    /** 贴边手柄**露在屏内**的宽度（px）：菜单要避开这一条，否则会被手柄压住。 */
-    fun revealWidth(handleWidth: Int): Int =
-        (handleWidth * FloatingPosition.REVEAL_RATIO).roundToInt()
-
-    /** 手柄窗横向偏移：贴边 + 露出 [FloatingPosition.REVEAL_RATIO] 宽度（其余移出屏幕）。 */
-    fun handleX(side: FloatingSide, handleWidth: Int, screenWidth: Int): Int = when (side) {
-        FloatingSide.LEFT ->
-            -((handleWidth * (1.0 - FloatingPosition.REVEAL_RATIO)).roundToInt())
-        FloatingSide.RIGHT ->
-            screenWidth - revealWidth(handleWidth)
-    }
+    /**
+     * 手柄窗横向偏移。可见竖条紧贴屏幕边缘，窗口剩余部分（= 窗口宽 - 可见宽）是**透明触摸区**。
+     *
+     * 注意：这里**没有"一半移出屏幕"**了——移出屏幕的部分根本收不到触摸，
+     * 正是"可见 7dp 又只能点那 7dp"的原因（真机反馈："点击很难被触发"）。
+     */
+    fun handleX(side: FloatingSide, windowWidth: Int, screenWidth: Int, visualWidth: Int): Int =
+        when (side) {
+            // 左贴边：窗口右缘 = 可见宽度（窗口左侧留出的透明区由窗口宽度自然决定）
+            FloatingSide.LEFT -> -(windowWidth - visualWidth)
+            // 右贴边：窗口右缘 = 屏幕右缘（可见竖条是窗口最右侧那一条）
+            FloatingSide.RIGHT -> screenWidth - windowWidth
+        }
 
     /**
-     * 菜单窗横向偏移：**完全在屏内**（菜单不能被屏幕边缘裁掉）且**避开手柄露在屏内那一条**
-     * （否则面板会压在手柄上），另留 [margin] 内边距。
+     * 菜单窗横向偏移：**完全在屏内**（菜单不能被屏幕边缘裁掉）且**避开手柄可见的那一条**
+     * （否则面板会压住手柄），另留 [margin] 内边距。
      */
     fun menuX(
         side: FloatingSide,
         menuWidth: Int,
         screenWidth: Int,
-        handleWidth: Int,
+        handleVisualWidth: Int,
         margin: Int,
     ): Int {
-        val gap = revealWidth(handleWidth) + margin
+        val gap = handleVisualWidth + margin
         val limit = (screenWidth - menuWidth - margin).coerceAtLeast(margin)
         return when (side) {
             FloatingSide.LEFT -> gap.coerceIn(margin, limit)

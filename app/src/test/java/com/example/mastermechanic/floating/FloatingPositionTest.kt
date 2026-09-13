@@ -8,8 +8,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 悬浮窗几何与手势判据单测（M3-T3-4 / T3-7 / FR-07）：手柄贴边露出比例、状态标签中心点定位、
- * 跨分辨率还原、吸附最近边缘、拖动阈值判据（不得用"位移是否非零"）。
+ * 悬浮窗几何与手势判据单测（M3-T3-4 / T3-7 / FR-07）：手柄贴边（窗口完全在屏内，可见条贴边）、
+ * 菜单相对手柄的落位、状态标签中心点定位、跨分辨率还原、拖动阈值判据（不得用"位移是否非零"）。
  *
  * 数值用抽象的"屏幕"尺寸代入，不绑定任何真实设备（红线 4）。
  */
@@ -23,15 +23,26 @@ class FloatingPositionTest {
     private val margin = 12
 
     @Test
-    fun handleHugsEdgeAndRevealsHalf() {
-        val reveal = (handleWidth * FloatingPosition.REVEAL_RATIO).toInt()
-        // 右侧：窗口左缘 = 屏宽 - 露出宽度
-        assertEquals(screenWidth - reveal, FloatingLayout.handleX(FloatingSide.RIGHT, handleWidth, screenWidth))
-        // 左侧：窗口右缘 = 露出宽度，其余移出屏幕
-        assertEquals(-(handleWidth - reveal), FloatingLayout.handleX(FloatingSide.LEFT, handleWidth, screenWidth))
-        // 露出宽度确实是 50%（扁半圆：一半在屏外）
-        assertEquals(reveal, FloatingLayout.handleX(FloatingSide.LEFT, handleWidth, screenWidth) + handleWidth)
-        assertEquals(reveal, screenWidth - FloatingLayout.handleX(FloatingSide.RIGHT, handleWidth, screenWidth))
+    fun handleWindowIsFlushToEdgeSoTheWholeTouchAreaWorks() {
+        val visualWidth = 7
+        // 右贴边：窗口右缘 = 屏幕右缘（窗口**完全在屏内** → 透明触摸区全都点得到）
+        assertEquals(
+            screenWidth - handleWidth,
+            FloatingLayout.handleX(FloatingSide.RIGHT, handleWidth, screenWidth, visualWidth),
+        )
+        assertEquals(
+            screenWidth,
+            FloatingLayout.handleX(FloatingSide.RIGHT, handleWidth, screenWidth, visualWidth) + handleWidth,
+        )
+        // 左贴边：可见条贴左边（与右贴边对称）
+        assertEquals(
+            -(handleWidth - visualWidth),
+            FloatingLayout.handleX(FloatingSide.LEFT, handleWidth, screenWidth, visualWidth),
+        )
+        assertEquals(
+            visualWidth,
+            FloatingLayout.handleX(FloatingSide.LEFT, handleWidth, screenWidth, visualWidth) + handleWidth,
+        )
     }
 
     @Test
@@ -152,30 +163,24 @@ class FloatingPositionTest {
     }
 
     @Test
-    fun revealWidthIsHalfOfHandle() {
-        assertEquals(handleWidth / 2, FloatingLayout.revealWidth(handleWidth))
-        // 19dp 手柄 → 露出 10dp（一半在屏外）
-        assertEquals(10, FloatingLayout.revealWidth(19))
-    }
-
-    @Test
-    fun menuSitsBesideHandleAndStaysInsideScreen() {
+    fun menuSitsBesideVisibleBarAndStaysInsideScreen() {
         val menuWidth = 300
-        val gap = FloatingLayout.revealWidth(handleWidth) + margin
-        // 右贴边：菜单右缘 = 屏宽 -（手柄露出宽度 + 间距）→ 不会被手柄压住
+        val visualWidth = 7
+        val gap = visualWidth + margin
+        // 右贴边：菜单右缘 = 屏宽 -（手柄**可见条**宽 + 间距）→ 不会被手柄压住
         assertEquals(
             screenWidth - gap - menuWidth,
-            FloatingLayout.menuX(FloatingSide.RIGHT, menuWidth, screenWidth, handleWidth, margin),
+            FloatingLayout.menuX(FloatingSide.RIGHT, menuWidth, screenWidth, visualWidth, margin),
         )
         // 左贴边：对称
         assertEquals(
             gap,
-            FloatingLayout.menuX(FloatingSide.LEFT, menuWidth, screenWidth, handleWidth, margin),
+            FloatingLayout.menuX(FloatingSide.LEFT, menuWidth, screenWidth, visualWidth, margin),
         )
         // 菜单比屏幕还宽 → 退化到边距，不产生越屏（菜单绝不能被裁）
         assertEquals(
             margin,
-            FloatingLayout.menuX(FloatingSide.RIGHT, screenWidth + 100, screenWidth, handleWidth, margin),
+            FloatingLayout.menuX(FloatingSide.RIGHT, screenWidth + 100, screenWidth, visualWidth, margin),
         )
     }
 
