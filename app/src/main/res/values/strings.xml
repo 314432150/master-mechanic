@@ -74,7 +74,7 @@
     <string name="calibration_role_label">写入为（可多选）</string>
     <string name="calibration_role_pair">%1$s + %2$s</string>
     <string name="calibration_role_required">请先选标志或锚点。</string>
-    <string name="calibration_select_hint_short">拖动＝新建选框 · 拖框内＝移动 · 拖白线＝缩放 · 左上 ✕＝清除</string>
+    <string name="calibration_select_hint_short">拖动＝建框，拖框内＝移动，拖白线＝缩放，✕＝清除</string>
     <string name="calibration_write_missing">还差：%1$s</string>
     <string name="calibration_write_ready">条件已齐，可以写入</string>
     <string name="calibration_missing_box">新建选框</string>

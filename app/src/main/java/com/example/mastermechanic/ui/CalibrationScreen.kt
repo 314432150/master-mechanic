@@ -932,16 +932,18 @@ private fun CalibrationWorkbench(
                         }
                     }
                     // 框选模式的操作说明（T2-3h）：一句话放进顶部条，不必再点 ⓘ 翻长文案。
-                    // 单行 + 不换行：进出框选时顶部条高度只差这一行，不会被折行撑开。
+                    // `fillMaxWidth` 钉住测量宽度 + 允许换行（maxLines=2 兜底）——**不能 softWrap=false**：
+                    // 那样文字既不换行也顶出屏幕（2026-09-13 真机反馈）。
                     if (selectMode) {
                         Text(
                             text = stringResource(R.string.calibration_select_hint_short),
                             style = MaterialTheme.typography.bodySmall,
                             color = ON_DARK_SECONDARY,
-                            maxLines = 1,
-                            softWrap = false,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp),
                         )
                     }
                     if (message != null) {
@@ -1046,6 +1048,35 @@ private fun CalibrationWorkbench(
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp),
                         )
+                        // 写入前置条件（T2-3h）：**缺什么就写在那儿**，不必点一次才知道。
+                        // 为什么不做"点一下再提示"：置灰的 Button 收不到点击事件（Compose 语义），
+                        // 要让点击有反馈只能让它可点 —— 那等于纵容一次注定失败的写入，用户还会以为已经能写。
+                        // 位置：**独立一行 + 全宽 + 居中**（原先挤在 ✕ 与 ✓ 之间只剩窄条，文案一长就顶出屏幕，
+                        // 2026-09-13 真机反馈）——与上面"选区信息"行同一处理；允许换行（maxLines=2）兜底。
+                        val missing = buildList {
+                            if (selection == null) add(stringResource(R.string.calibration_missing_box))
+                            if (selectedState == null) add(stringResource(R.string.calibration_missing_state))
+                            if (selectedRoles.isEmpty()) add(stringResource(R.string.calibration_missing_roles))
+                        }
+                        Text(
+                            text = if (missing.isEmpty()) {
+                                stringResource(R.string.calibration_write_ready)
+                            } else {
+                                stringResource(
+                                    R.string.calibration_write_missing,
+                                    missing.joinToString(stringResource(R.string.calibration_missing_sep)),
+                                )
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            // 缺条件 = 琥珀黄（与画布"还没决定写什么"同一语义：未完成态）；齐了转白
+                            color = if (missing.isEmpty()) Color.White else PENDING_ACCENT,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp),
+                        )
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1060,35 +1091,6 @@ private fun CalibrationWorkbench(
                                     color = Color.White,
                                 )
                             }
-                            // 写入前置条件（T2-3h）：**缺什么就写在那儿**（✓ 左侧），不必点一次才知道。
-                            // 为什么不做"点一下再提示"：置灰的 Button 收不到点击事件（Compose 语义），
-                            // 要让点击有反馈只能让它可点 —— 那等于纵容一次注定失败的写入，用户还会以为已经能写。
-                            // 硬约束：**maxLines=1 + softWrap=false**，否则长文案逐字换行、把整条底栏撑高（T2-3g 的 BUG 形态）。
-                            val missing = buildList {
-                                if (selection == null) add(stringResource(R.string.calibration_missing_box))
-                                if (selectedState == null) add(stringResource(R.string.calibration_missing_state))
-                                if (selectedRoles.isEmpty()) add(stringResource(R.string.calibration_missing_roles))
-                            }
-                            Text(
-                                text = if (missing.isEmpty()) {
-                                    stringResource(R.string.calibration_write_ready)
-                                } else {
-                                    stringResource(
-                                        R.string.calibration_write_missing,
-                                        missing.joinToString(stringResource(R.string.calibration_missing_sep)),
-                                    )
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                // 缺条件 = 琥珀黄（与画布"还没决定写什么"同一语义：未完成态）；齐了转白
-                                color = if (missing.isEmpty()) Color.White else PENDING_ACCENT,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.End,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(horizontal = 12.dp),
-                            )
                             Button(
                                 onClick = onWriteSignal,
                                 // 与上面这行提示同一判据（T2-3h 补上「归属状态」：原先状态没选时按钮是可点的，
