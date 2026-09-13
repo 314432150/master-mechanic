@@ -68,10 +68,11 @@
     <string name="calibration_workbench_frames">样本帧（点选切换）</string>
     <string name="calibration_workbench_select">框选</string>
     <string name="calibration_workbench_cancel">✕</string>
-    <string name="calibration_workbench_confirm">✓ 写入</string>
-    <string name="calibration_need_state">请先选择归属状态，再点 ✓ 写入产物。</string>
-    <string name="calibration_workbench_write_hint">浏览模式：左右滑动换帧、点缩略图跳帧；点「框选」进入框选模式：拖动画布建框（框内移动 / 框外新建 / 左上 ✕ 清除重画），上方先选角色（标志 = 判状态 / 锚点 = 点击位置）再选归属状态，点 ✓ 写入产物（重名自动追加序号），✕ 放弃。双指捏合缩放 / 平移画面，尽量只含目标本身与稳定背景。</string>
-    <string name="calibration_annotate_hint">浏览模式：左右滑动大图切换样本帧（缩略图过半即同步）；点「框选」进入框选模式——拖动空白处新建选框，拖动框内整体移动，点选框左上角 × 清除重画，外层白色细线仅作标示；双指捏合缩放 / 平移画面（小目标先放大再框选）。选好角色与归属状态后点 ✓ 写入产物（重名自动追加序号），✕ 放弃本次框选。尽量只含目标本身与稳定背景，避开动态元素。</string>
+    <string name="calibration_workbench_confirm">✓ 写入%1$s</string>
+    <string name="calibration_need_state">请先选择归属状态，再点写入。</string>
+    <string name="calibration_role_label">写入为</string>
+    <string name="calibration_workbench_write_hint">浏览模式：左右滑动换帧、点缩略图跳帧；点「框选」进入框选模式：拖动画布建框，拖动框内整体移动，拖动外层白线拉伸 / 缩放选框，左上 ✕ 清除重画；下方「写入为」选角色（标志 = 判断状态 / 锚点 = 在该界面点这个位置）、「归属状态」选这个元素属于哪个界面，点「✓ 写入X」落库（重名自动追加序号）。框线颜色随角色变化：标志红、锚点青。双指捏合缩放 / 平移画面，尽量只含目标本身与稳定背景。</string>
+    <string name="calibration_annotate_hint">浏览模式：左右滑动大图切换样本帧（缩略图过半即同步）；点「框选」进入框选模式——拖动空白处新建选框，拖动框内整体移动，拖动外层白线拉伸 / 缩放选框，点选框左上角 × 清除重画。下方两行各管一件事：「归属状态」= 这个元素属于哪个界面，「写入为」= 这次框选写成什么（标志 = 判断状态 / 锚点 = 在该界面点这个位置），最后点「✓ 写入X」。框线颜色随角色变化：标志红、锚点青；双指捏合缩放 / 平移画面（小目标先放大再框选）。尽量只含目标本身与稳定背景，避开动态元素。</string>
     <string name="calibration_annotate_hint_icon">ⓘ</string>
     <string name="calibration_hint_close">知道了</string>
     <string name="calibration_selection_none">尚未框选</string>

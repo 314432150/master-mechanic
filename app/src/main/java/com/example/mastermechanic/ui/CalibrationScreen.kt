@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.aspectRatio
@@ -40,6 +41,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -123,6 +127,12 @@ private val ON_DARK_SECONDARY = Color.White.copy(alpha = 0.8f)
 
 /** 深色衬底的错误提示色（亮色主题的 `error` 为深红，黑底不可读）。 */
 private val ON_DARK_ERROR = Color(0xFFFF8A80)
+
+/** 选框主色 —— 标志（判状态）：沿用 T1-5k 的红色。 */
+private val MARKER_ACCENT = Color(0xFFFF5252)
+
+/** 选框主色 —— 锚点（点击位置）：青色（与红色色相相距最远，黑底上同样醒目）。 */
+private val ANCHOR_ACCENT = Color(0xFF4DD0E1)
 
 /**
  * 标定页（T1-5b 起；T1-5l 按真机反馈重构；T2-2 起支持同状态多条记录）：**产物即唯一数据源**——
@@ -826,6 +836,7 @@ private fun CalibrationWorkbench(
                             else -> InteractiveFrameCanvas(
                                 info = info,
                                 selection = selection,
+                                role = selectedRole,
                                 onSelectionChange = onSelectionChange,
                                 modifier = Modifier.fillMaxSize(),
                             )
@@ -920,50 +931,63 @@ private fun CalibrationWorkbench(
                         .background(Color.Black.copy(alpha = 0.65f)),
                 ) {
                     if (selectMode) {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                        ) {
-                            // T2-3d：先选角色（标志 = 判状态 / 锚点 = 点击位置），再选归属状态；
-                            // 同一行滚动，不额外占高度
-                            items(SignalRole.entries) { role ->
-                                val selected = selectedRole == role
-                                FilterChip(
-                                    selected = selected,
-                                    onClick = { onRoleSelect(role) },
-                                    label = {
-                                        Text(
-                                            text = role.label,
-                                            color = if (selected) {
-                                                MaterialTheme.colorScheme.onSecondaryContainer
-                                            } else {
-                                                Color.White
-                                            },
-                                        )
-                                    },
-                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
-                                )
+                        // 两个维度分两行、各自带标签（T2-3f）：原先「角色 chip」与「状态 chip」混排成一行，
+                        // 看起来像同一组同级选项，容易被误读（2026-09-13 用户反馈）。
+                        // 顺序：归属状态在上（高频、每条记录都要选），角色在下（低频、紧邻 ✓ 按钮）
+                        LabeledRow(label = stringResource(R.string.calibration_signal_state_label)) {
+                            LazyRow(
+                                modifier = Modifier.weight(1f),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp),
+                            ) {
+                                items(UiState.entries.filter { it.isCandidate }) { state ->
+                                    val selected = selectedState == state
+                                    FilterChip(
+                                        selected = selected,
+                                        onClick = { onStateSelect(state) },
+                                        label = {
+                                            Text(
+                                                text = state.label,
+                                                // 未选中默认色是 onSurfaceVariant（亮色主题下深灰）→ 黑底上看不清，必须显式给亮色
+                                                color = if (selected) {
+                                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                                } else {
+                                                    Color.White
+                                                },
+                                            )
+                                        },
+                                        // 未选中的描边默认也是深色，黑底上看不出 chip 轮廓 → 统一浅白描边
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
+                                    )
+                                }
                             }
-                            items(UiState.entries.filter { it.isCandidate }) { state ->
-                                val selected = selectedState == state
-                                FilterChip(
-                                    selected = selected,
-                                    onClick = { onStateSelect(state) },
-                                    label = {
-                                        Text(
-                                            text = state.label,
-                                            // 未选中默认色是 onSurfaceVariant（亮色主题下深灰）→ 黑底上看不清，必须显式给亮色
-                                            color = if (selected) {
-                                                MaterialTheme.colorScheme.onSecondaryContainer
-                                            } else {
-                                                Color.White
-                                            },
-                                        )
-                                    },
-                                    // 未选中的描边默认也是深色，黑底上看不出 chip 轮廓 → 统一浅白描边
-                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
-                                )
+                        }
+                        LabeledRow(label = stringResource(R.string.calibration_role_label)) {
+                            // 角色用分段控件（不是 chip）：与状态在形态上就区分开；
+                            // 选中的是「这次框选写成什么」，与右侧 ✓ 按钮上的角色名一致
+                            SingleChoiceSegmentedButtonRow(modifier = Modifier.padding(start = 12.dp)) {
+                                val roles = SignalRole.entries
+                                roles.forEachIndexed { index, role ->
+                                    SegmentedButton(
+                                        selected = selectedRole == role,
+                                        onClick = { onRoleSelect(role) },
+                                        shape = SegmentedButtonDefaults.itemShape(
+                                            index = index,
+                                            count = roles.size,
+                                        ),
+                                        colors = SegmentedButtonDefaults.colors(
+                                            activeContainerColor = MaterialTheme.colorScheme.primary,
+                                            activeContentColor = MaterialTheme.colorScheme.onPrimary,
+                                            activeBorderColor = Color.Transparent,
+                                            inactiveContainerColor = Color.Transparent,
+                                            inactiveContentColor = Color.White,
+                                            inactiveBorderColor = Color.White.copy(alpha = 0.5f),
+                                        ),
+                                        label = { Text(text = role.label) },
+                                    )
+                                }
                             }
+                            Spacer(modifier = Modifier.weight(1f))
                         }
                     } else {
                         LazyRow(
@@ -1030,7 +1054,13 @@ private fun CalibrationWorkbench(
                                     disabledContentColor = Color.White.copy(alpha = 0.38f),
                                 ),
                             ) {
-                                Text(text = stringResource(R.string.calibration_workbench_confirm))
+                                // 按钮上直接写角色（✓ 写入标志 / ✓ 写入锚点）：最后一刻也能看清会写成什么
+                                Text(
+                                    text = stringResource(
+                                        R.string.calibration_workbench_confirm,
+                                        selectedRole.label,
+                                    ),
+                                )
                             }
                         }
                     } else {
@@ -1140,6 +1170,7 @@ private fun FramePage(file: File?) {
 private fun InteractiveFrameCanvas(
     info: CalibrationFrames.Preview,
     selection: RatioRect?,
+    role: SignalRole,
     onSelectionChange: (RatioRect?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1181,11 +1212,15 @@ private fun InteractiveFrameCanvas(
                         var closeCandidate = FrameEditMath.hitCloseButton(
                             startSelection, startRatio[0], startRatio[1], mx, my, rx, ry,
                         )
-                        val hit = if (closeCandidate) {
+                        // 拉伸带与关闭钮同源（同一 margin）：白线两侧各一指宽都能抓到，见 FrameEditMath.hitTest
+                        var hit: FrameHit? = if (closeCandidate) {
                             null
                         } else {
-                            FrameEditMath.hitTest(startSelection, startRatio[0], startRatio[1])
+                            FrameEditMath.hitTest(startSelection, startRatio[0], startRatio[1], mx, my)
                         }
+                        // 拉伸时选框最小边长 = 模板最小边长（拉出更小的框也提取不出模板，写了必失败）
+                        val minRatioX = MIN_TEMPLATE_PX / info.frameWidth.toFloat()
+                        val minRatioY = MIN_TEMPLATE_PX / info.frameHeight.toFloat()
                         val touchSlop = viewConfiguration.touchSlop
 
                         var transforming = false
@@ -1238,6 +1273,11 @@ private fun InteractiveFrameCanvas(
                                 change.consume()
                                 if ((change.position - down.position).getDistance() > touchSlop) {
                                     closeCandidate = false
+                                    // 拖离关闭钮后不再"什么都不做"：按起点重判命中——左上角那一格
+                                    // 落在拉伸带上（T2-3f），从关闭钮拖出去就等于拖外框角
+                                    hit = FrameEditMath.hitTest(
+                                        startSelection, startRatio[0], startRatio[1], mx, my,
+                                    )
                                 }
                                 continue
                             }
@@ -1245,6 +1285,22 @@ private fun InteractiveFrameCanvas(
                                 change.position.x, change.position.y, startTransform, width, height,
                             )
                             when (hit) {
+                                // 拖外框白线 = 拉伸（T2-3f；不画手柄，白线本身是抓手）
+                                is FrameHit.Resize -> {
+                                    change.consume()
+                                    startSelection?.let {
+                                        onSelectionChange(
+                                            FrameEditMath.resize(
+                                                it,
+                                                hit as FrameHit.Resize,
+                                                ratio[0] - startRatio[0],
+                                                ratio[1] - startRatio[1],
+                                                minRatioX,
+                                                minRatioY,
+                                            ),
+                                        )
+                                    }
+                                }
                                 FrameHit.Inside -> {
                                     change.consume()
                                     startSelection?.let {
@@ -1305,6 +1361,7 @@ private fun InteractiveFrameCanvas(
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         drawSelectionOverlay(
                             rect = current,
+                            role = role,
                             scale = transform.scale,
                             strokePx = strokePx,
                             closeRadiusPx = closeRadiusPx,
@@ -1326,6 +1383,25 @@ private fun InteractiveFrameCanvas(
             style = MaterialTheme.typography.bodySmall,
             color = ON_DARK_SECONDARY,
         )
+    }
+}
+
+/** 带前缀标签的一行（T2-3f）：标签固定不滚动，内容占满剩余宽度（用于「归属状态 / 写入为」两行）。 */
+@Composable
+private fun LabeledRow(label: String, content: @Composable RowScope.() -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = ON_DARK_SECONDARY,
+            modifier = Modifier.padding(start = 16.dp),
+        )
+        content()
     }
 }
 
@@ -1507,28 +1583,33 @@ private suspend fun writeSignalFromSelection(
 }
 
 /**
- * 选框叠加（T1-5l 起）：**只有内层真实选区**（填充 + 红框线，边缘与角不被任何锚点遮挡）
+ * 选框叠加（T1-5l 起）：**只有内层真实选区**（填充 + 框线，边缘与角不被任何手柄遮挡）
  * 与**左上角外置关闭钮**。线宽与关闭钮尺寸按视图缩放反向补偿，屏幕视觉大小恒定。
  *
+ * 框线颜色跟角色走（T2-3f）：标志 = 红、锚点 = 青 —— 画布上直接反映"这次框选会写成什么"，
+ * 配合底栏的分段控件与「✓ 写入X」按钮，避免把两种角色混着标。
+ *
  * [closeMarginPx] 为关闭钮中心相对选框左上角的外扩屏幕像素（与命中测试同一口径，
- * 见 [FrameEditMath.closeButtonCenter]）。
+ * 见 [FrameEditMath.closeButtonCenter]）；它同时是**外框拉伸带**的宽度来源（T2-3f）。
  */
 private fun DrawScope.drawSelectionOverlay(
     rect: RatioRect?,
+    role: SignalRole,
     scale: Float,
     strokePx: Float,
     closeRadiusPx: Float,
     closeMarginPx: Float,
 ) {
     if (rect == null || size.width <= 0f || size.height <= 0f) return
+    val accent = if (role == SignalRole.ANCHOR) ANCHOR_ACCENT else MARKER_ACCENT
     val topLeft = Offset(rect.left * size.width, rect.top * size.height)
     val boxSize = Size(
         (rect.right - rect.left) * size.width,
         (rect.bottom - rect.top) * size.height,
     )
-    drawRect(color = Color(0x33FF5252), topLeft = topLeft, size = boxSize)
+    drawRect(color = accent.copy(alpha = 0.2f), topLeft = topLeft, size = boxSize)
     drawRect(
-        color = Color(0xFFFF5252),
+        color = accent,
         topLeft = topLeft,
         size = boxSize,
         style = Stroke(width = strokePx / scale),

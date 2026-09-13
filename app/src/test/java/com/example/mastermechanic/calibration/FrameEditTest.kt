@@ -7,8 +7,8 @@ import org.junit.Test
 import kotlin.math.abs
 
 /**
- * 框编辑纯运算单测（T1-5d 起；T1-5l 起**移除全部锚点与拉伸**）：
- * 命中（框内移动 / 框外新建）、外置关闭钮、整体移动、视图变换与坐标反算。
+ * 框编辑纯运算单测（T1-5d 起；T1-5l 移除手柄，T2-3f 恢复「拖外框白线拉伸」但**不画手柄**）：
+ * 命中（框内移动 / 外框拉伸带 / 框外新建）、外框拉伸、外置关闭钮、整体移动、视图变换与坐标反算。
  *
  * 全部以帧比例坐标验证，与视图尺寸、缩放、帧分辨率解耦（零设备绑定口径）。
  */
@@ -17,45 +17,215 @@ class FrameEditTest {
     private val rect = RatioRect(left = 0.3f, top = 0.4f, right = 0.6f, bottom = 0.7f)
     private val eps = 0.0001f
 
-    /** 关闭钮外置边距（帧比例）：0.05 ≈ 72px @ 1440 宽帧。 */
+    /** 外框外扩 / 关闭钮外置边距（帧比例）：0.05 ≈ 72px @ 1440 宽帧。拉伸带宽度同为 0.05（白线两侧各 0.05）。 */
     private val margin = 0.05f
 
-    // --- hitTest：只有「框内移动」与「框外新建」两类（T1-5l） ---
+    // --- hitTest：框内移动 / 外框拉伸带（T2-3f）/ 框外新建 ---
 
     @Test
     fun hitTestOnNullSelectionIsOutside() {
-        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(null, 0.5f, 0.5f))
+        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(null, 0.5f, 0.5f, margin, margin))
     }
 
     @Test
     fun hitTestCenterIsInside() {
-        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.45f, 0.55f))
+        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.45f, 0.55f, margin, margin))
     }
 
     @Test
     fun hitTestNearEdgesIsInside() {
-        // 无锚点后，选框的边缘与角都归选框本体：拖动即整体移动
-        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.31f, 0.41f))
-        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.59f, 0.41f))
-        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.31f, 0.69f))
-        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.59f, 0.69f))
-        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.45f, 0.41f))
-        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.31f, 0.55f))
+        // 拉伸带完全落在选框之外：选框内部的边缘与角照旧只归「整体移动」
+        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.31f, 0.41f, margin, margin))
+        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.59f, 0.41f, margin, margin))
+        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.31f, 0.69f, margin, margin))
+        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.59f, 0.69f, margin, margin))
+        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.45f, 0.41f, margin, margin))
+        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.31f, 0.55f, margin, margin))
     }
 
     @Test
-    fun hitTestOutsideRegionIsOutside() {
-        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(rect, 0.1f, 0.1f))
-        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(rect, 0.65f, 0.55f))
+    fun hitTestOnOuterLineResizesThatEdge() {
+        // 外层白线在 0.25 / 0.65（外框线）：按在线上 = 拉那一条边；缩放的补偿由调用方换算，纯运算口径只看比例
+        assertEquals(
+            FrameHit.Resize(left = true, top = false, right = false, bottom = false),
+            FrameEditMath.hitTest(rect, 0.25f, 0.55f, margin, margin),
+        )
+        assertEquals(
+            FrameHit.Resize(left = false, top = false, right = true, bottom = false),
+            FrameEditMath.hitTest(rect, 0.65f, 0.55f, margin, margin),
+        )
+        assertEquals(
+            FrameHit.Resize(left = false, top = true, right = false, bottom = false),
+            FrameEditMath.hitTest(rect, 0.45f, 0.35f, margin, margin),
+        )
+        assertEquals(
+            FrameHit.Resize(left = false, top = false, right = false, bottom = true),
+            FrameEditMath.hitTest(rect, 0.45f, 0.75f, margin, margin),
+        )
     }
 
     @Test
-    fun hitTestOnSelectionBorderIsOutside() {
-        // 边界线不属于「框内」：贴边按下按新建处理（选框本体由框内一像素起算）
-        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(rect, rect.left, 0.55f))
-        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(rect, 0.45f, rect.top))
-        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(rect, rect.right, 0.55f))
-        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(rect, 0.45f, rect.bottom))
+    fun hitTestInsideGrabRingOnEitherSideOfLineResizes() {
+        // 抓手带宽 = 线上 ±margin（环的外边界 = 外框线再外扩 margin）：线内侧 0.26 与线外侧 0.24 都要认
+        assertEquals(
+            FrameHit.Resize(left = true, top = false, right = false, bottom = false),
+            FrameEditMath.hitTest(rect, 0.26f, 0.55f, margin, margin),
+        )
+        assertEquals(
+            FrameHit.Resize(left = true, top = false, right = false, bottom = false),
+            FrameEditMath.hitTest(rect, 0.20f, 0.55f, margin, margin),
+        )
+    }
+
+    @Test
+    fun hitTestOnSelectionBorderResizesInsteadOfCreatingNew() {
+        // 贴内线也算拉伸带（T2-3f）：否则选框线上那一像素落到「新建」，贴边一按就毁掉整条选框
+        assertEquals(
+            FrameHit.Resize(left = true, top = false, right = false, bottom = false),
+            FrameEditMath.hitTest(rect, rect.left, 0.55f, margin, margin),
+        )
+        assertEquals(
+            FrameHit.Resize(left = false, top = true, right = false, bottom = false),
+            FrameEditMath.hitTest(rect, 0.45f, rect.top, margin, margin),
+        )
+        assertEquals(
+            FrameHit.Resize(left = false, top = false, right = true, bottom = false),
+            FrameEditMath.hitTest(rect, rect.right, 0.55f, margin, margin),
+        )
+        assertEquals(
+            FrameHit.Resize(left = false, top = false, right = false, bottom = true),
+            FrameEditMath.hitTest(rect, 0.45f, rect.bottom, margin, margin),
+        )
+    }
+
+    @Test
+    fun hitTestAtOuterCornerResizesBothAxes() {
+        val topLeft = FrameEditMath.hitTest(rect, 0.25f, 0.35f, margin, margin)
+        assertEquals(
+            FrameHit.Resize(left = true, top = true, right = false, bottom = false),
+            topLeft,
+        )
+        assertEquals(
+            FrameHit.Resize(left = false, top = true, right = true, bottom = false),
+            FrameEditMath.hitTest(rect, 0.65f, 0.35f, margin, margin),
+        )
+        assertEquals(
+            FrameHit.Resize(left = true, top = false, right = false, bottom = true),
+            FrameEditMath.hitTest(rect, 0.25f, 0.75f, margin, margin),
+        )
+        assertEquals(
+            FrameHit.Resize(left = false, top = false, right = true, bottom = true),
+            FrameEditMath.hitTest(rect, 0.65f, 0.75f, margin, margin),
+        )
+    }
+
+    @Test
+    fun hitTestOutsideGrabBandIsOutside() {
+        // 环外才是「新建」：够远（>2×margin）才另起一条选框
+        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(rect, 0.1f, 0.1f, margin, margin))
+        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(rect, 0.19f, 0.55f, margin, margin))
+        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(rect, 0.75f, 0.55f, margin, margin))
+        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(rect, 0.45f, 0.85f, margin, margin))
+    }
+
+    @Test
+    fun hitTestOutsideVerticallyAlignedButOutOfBandIsOutside() {
+        // 只对上了某一轴的坐标、但整体在环外 → 仍是新建（否则选区上下方一大片都会变成拉伸）
+        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(rect, 0.25f, 0.2f, margin, margin))
+        assertEquals(FrameHit.Outside, FrameEditMath.hitTest(rect, 0.15f, 0.35f, margin, margin))
+    }
+
+    // --- 外框拉伸：按命中的边调整，clamp 在帧界与最小边长内 ---
+
+    @Test
+    fun resizeMovesOnlyHitEdges() {
+        val right = FrameEditMath.resize(
+            rect,
+            FrameHit.Resize(left = false, top = false, right = true, bottom = false),
+            dx = 0.1f,
+            dy = 0.2f,
+            minWidth = 0.01f,
+            minHeight = 0.01f,
+        )
+        assertEquals(0.3f, right.left, eps)
+        assertEquals(0.4f, right.top, eps)
+        assertEquals(0.7f, right.right, eps)
+        assertEquals(0.7f, right.bottom, eps)
+    }
+
+    @Test
+    fun resizeCornerAdjustsBothAxes() {
+        val grown = FrameEditMath.resize(
+            rect,
+            FrameHit.Resize(left = true, top = true, right = false, bottom = false),
+            dx = -0.1f,
+            dy = -0.1f,
+            minWidth = 0.01f,
+            minHeight = 0.01f,
+        )
+        assertEquals(0.2f, grown.left, eps)
+        assertEquals(0.3f, grown.top, eps)
+        assertEquals(0.6f, grown.right, eps)
+        assertEquals(0.7f, grown.bottom, eps)
+    }
+
+    @Test
+    fun resizeClampsToFrameBounds() {
+        // 往帧外拖：左边界顶到 0 就停住，不会跑出帧（其余边不动）
+        val pinned = FrameEditMath.resize(
+            rect,
+            FrameHit.Resize(left = true, top = false, right = false, bottom = false),
+            dx = -0.9f,
+            dy = 0f,
+            minWidth = 0.01f,
+            minHeight = 0.01f,
+        )
+        assertEquals(0f, pinned.left, eps)
+        assertEquals(0.6f, pinned.right, eps)
+
+        val pinnedRight = FrameEditMath.resize(
+            rect,
+            FrameHit.Resize(left = false, top = false, right = true, bottom = false),
+            dx = 0.9f,
+            dy = 0f,
+            minWidth = 0.01f,
+            minHeight = 0.01f,
+        )
+        assertEquals(1f, pinnedRight.right, eps)
+    }
+
+    @Test
+    fun resizeKeepsMinimumEdgeLength() {
+        // 往内拖：右边界最多缩到 left + minWidth（模板最小边长口径，拉出更小的框也提取不出模板）
+        val squeezed = FrameEditMath.resize(
+            rect,
+            FrameHit.Resize(left = false, top = false, right = true, bottom = false),
+            dx = -0.5f,
+            dy = 0f,
+            minWidth = 0.05f,
+            minHeight = 0.05f,
+        )
+        assertEquals(0.3f, squeezed.left, eps)
+        assertEquals(0.35f, squeezed.right, eps)
+    }
+
+    @Test
+    fun resizeOnDegenerateSmallRectDoesNotThrow() {
+        // 已有选框比最小边长还小时（旧产物 / 快速拖出的小框）：clamp 区间不得上下界倒置
+        // （coerceIn(min > max) 会抛 IllegalArgumentException，那是真机崩溃）
+        val tiny = RatioRect(0.5f, 0.5f, 0.501f, 0.501f)
+        val grown = FrameEditMath.resize(
+            tiny,
+            FrameHit.Resize(left = true, top = true, right = false, bottom = false),
+            dx = -0.02f,
+            dy = -0.02f,
+            minWidth = 0.05f,
+            minHeight = 0.05f,
+        )
+        assertTrue("左边界必须落在帧内且不越过右边界：${grown.left}", grown.left >= 0f && grown.left < tiny.right)
+        assertTrue("上边界必须落在帧内且不越过下边界：${grown.top}", grown.top >= 0f && grown.top < tiny.bottom)
+        assertEquals(tiny.right, grown.right, eps)
+        assertEquals(tiny.bottom, grown.bottom, eps)
     }
 
     // --- 外置关闭钮：中心几何与命中 ---
@@ -101,7 +271,7 @@ class FrameEditTest {
                 abs(0.405f - (rect.top - tightMargin)) <= 0.05f,
         )
         assertFalse(FrameEditMath.hitCloseButton(rect, 0.305f, 0.405f, tightMargin, tightMargin, 0.05f, 0.05f))
-        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.305f, 0.405f))
+        assertEquals(FrameHit.Inside, FrameEditMath.hitTest(rect, 0.305f, 0.405f, tightMargin, tightMargin))
     }
 
     @Test
