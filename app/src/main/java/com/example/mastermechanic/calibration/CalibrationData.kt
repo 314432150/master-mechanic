@@ -1,5 +1,6 @@
 package com.example.mastermechanic.calibration
 
+import com.example.mastermechanic.decision.AnchorLocator
 import com.example.mastermechanic.decision.ExpectedSignals
 import com.example.mastermechanic.decision.PopupPhaseExpectedSignals
 import com.example.mastermechanic.decision.RecognitionLoop
@@ -133,6 +134,16 @@ class CalibrationData(
             expectedSignals = expectedSignals ?: PopupPhaseExpectedSignals.fromRules(rules),
         )
     }
+
+    /**
+     * 产物 → 锚点定位器（T2-3b）：按状态汇总锚点规格；几何与识别循环同源（同一标定帧尺寸）。
+     * 没标锚点的产物得到空定位器（[AnchorLocator.isEmpty] 为真），运行日志据此说明"没标锚点"。
+     */
+    fun toAnchorLocator(): AnchorLocator = AnchorLocator(
+        anchorsByState = stateRules.associate { it.state to anchorSpecs(it.state) },
+        params = params,
+        geometry = CanvasGeometry.of(frameWidth, frameHeight),
+    )
 
     /** 记录角色；名称不存在返回 null。 */
     fun roleOf(name: String): SignalRole? = signals.firstOrNull { it.name == name }?.role

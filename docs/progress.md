@@ -191,6 +191,24 @@
 - 提交（分支 `stage/m1`，未 push）：`380763b` docs(t1-12) / `544752b` feat(m1-t1-13) / `50ae721` perf(m1-t1-13b)；`.idea/gradle.xml` 未提交（IDE 自身改动）。
 - **M2 前置实现：标定页支持「同一状态多条样式记录」（T2-2 方案 A，用户拍板）**：原写入路径固定「信号名 = 归属状态默认名 + 同名整体覆盖」→ 新增 `CalibrationSignals.nextName`（默认名空闲即用、否则取序号最小的未占用名，全局查重）并让 `CalibrationScreen.writeSignalFromSelection` **追加**写入；提示文案改为「已新增信号：…；该状态现有 N 条记录」（原「已写入 / 已覆盖」两条废弃）。产物格式与识别侧**未改动**（`state=` 行多信号名 / `SignalStateMapping` 多对一 / `ActiveSignalSelector` 子集均原生支持同一状态多条记录）。单测新增 5 例（命名 4 + 同状态多记录合成单条规则且窗口各自独立 1），全量单测 + `assembleDebug` 通过。计划卡同步 `plans/m2-auto-handling.md` T2-2（含方案 A 理由与 B 不采纳原因）。**待真机（用户执行）**：逐样式停稳后框选写入（自动落 `popup_close2`…）+ 停在弹窗界面复演取证（证据拟归档 `verification/m2/t2-2/`）。
 - 完成 T2-2 真机标定采集（用户执行）+ 工作台两轮 UI 修正（用户真机反馈，2026-09-13）：产物 `ACTIVITY_POPUP` 现挂 **4 条记录**——`popup_close` = 右下「今日不再弹出」（原窗口），`popup_close2/3/4` = 右上角「×」的三种样式（三窗口几乎重合），产物文件 35478 B。UI 修正两轮：① **黑底可读性**——亮色主题的 `primary` / `onSurfaceVariant` / `error` 在近黑衬底上全是深色、不可读，新增 `ON_DARK_SECONDARY` / `ON_DARK_ERROR` 常量，chip 未选中改白字 + 白 0.5 描边、缩略图选中框由深紫改纯白、「✓ 写入」禁用态显式给白系；② **选区信息独占一行**（全宽居中、不折行）并去掉「（帧像素）」备注（原先夹在 ✕ / ✓ 之间只剩窄条、坐标一长即折行）。同批 `UiState` 删除新手引导 / 新手大厅状态（FR-02 已在需求侧移除）。验证：全量单测 + `assembleDebug` 通过后两次装机，用户复核「符合预期」（改动清单见提交 `41a10d4`）。
+- **T2-3a / T2-3b / T2-3c 完成：产物 v2 角色字段（标志 / 锚点）+ 锚点定位 + 点击转发层**（2026-09-13）
+  - **T2-3a 产物 v2（提交 `6b3584d`）**：`SignalRole { MARKER, ANCHOR }`；`signal=<名>|<角色>|<窗口>` +
+    新增 `anchor=<状态>|<锚点名>[,<锚点名>…]`；**v1 产物仍可读、写入一律 v2 → 设备上现有 10 信号产物无需重标**。
+    校验：角色与所在行不匹配 / 同一条记录被多处引用即拒收；**锚点必须有归属状态**（没有归属 = 永远不会被启用），
+    标志允许暂不归属（离线回放工具的"只有信号没有规则"产物沿用）。`toLoop` 只吃标志：锚点不进状态判定与期望集合。
+  - **T2-3b 锚点定位**：`decision/AnchorLocator.kt`（纯逻辑）——只定位**当前状态**声明的锚点（其余不搜，省成本且不会点到别界面）；
+    点击点 = **匹配区域中心**，并把标定坐标按画面区反算回**运行帧坐标**；不可信按未命中处理（红线 7）；
+    另提供 `windowRegions` 供采集层把锚点窗口一并纳入灰度转换（否则锚点会读到全零像素而静默失败）；
+    `CalibrationData.toAnchorLocator()` 给出同源几何入口。
+  - **T2-3c 点击转发层**：`action/ClickGate.kt`（门禁 + 节流，纯逻辑）、`action/ClickForwarder.kt`（门禁 → 审计 → 注入 → 手势结束回填）、
+    `action/ClickDispatch.kt`（进程内**唯一入口**，服务连接时安装、断开即卸载）、`service/AccessibilityGestureInjector.kt`（`dispatchGesture` 短行程 stroke）、
+    `service/ClickAuditLog.kt`（TAG `MM-Click`，**拒绝也留痕**）。门禁顺序固定：演练 → 非前台 → 状态未知 → 串行 → 间隔不足；
+    间隔按 ADR-002 量"上次手势**完成** → 本次**开始** ≥ 300ms"，硬下限写在门禁里（调小即抛）；模式默认**演练**，
+    `ClickDispatch.enableLive()` 是唯一进入实点的路径（B5）。
+  - **验证**：`CalibrationCodecTest` / `CalibrationModelTest` / `CalibrationSignalsTest`（v1 兼容、角色往返、角色守卫）、
+    `AnchorLocatorTest` 7 例、`ClickGateTest` 9 例、`ClickForwarderTest` 5 例 —— 全量 **261 例 0 失败**。
+  - **待做**：**T2-3d** 标定页角色选择（否则锚点只能靠改产物文本写入）；**T2-3e** 真机点击核对**随 B1 一起做**
+    （红线 2 只承认三类合法来源，不为测试新增"标定页点一下"的第五类）。
 - **T2-2 真机复演取证（样式 ① 限时点券·宝箱版，2026-09-13 14:17 会话）**：证据归档 `docs/verification/m2/t2-2/`（说明 `t2-2-07-verification.txt`；含真机截图、会话日志、产物原样导出、离线逐信号明细、弹窗/大厅原始帧）。
   ① **T2-1 期望集合驱动在真机三态齐全**：`本轮搜索集合变化: 「launch_start」`（待命 1 条）→ 统计「单信号 34 轮 / 多信号 0 / 不搜 0，参与匹配 34 次」→ 命中启动页**当轮**扩为 7 条 → `状态转移: 启动页 -> 活动弹窗（连续 2 次命中（进入））`→ 弹窗期稳定 7 条/轮；悬浮窗同步显示「状态：活动弹窗」。
   ② **逐信号归因**：新增离线探针 `CalibrationReviewProbeTest`（设备帧池原始帧 + 设备产物 → 生产路径逐帧明细，双口径：生产期望集合 / 显式全集）——弹窗帧上 **4 条 popup 记录全部命中**（`popup_close` 0.88@1087,1825；`popup_close2/3/4` 0.99~1.00@≈1199,1327），大厅帧上四条全部 NOT_MATCHED（≤0.39）→ **无残留误报**。

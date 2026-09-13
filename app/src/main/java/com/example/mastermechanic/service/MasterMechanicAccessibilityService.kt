@@ -4,7 +4,9 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
+import com.example.mastermechanic.action.ClickDispatch
 import com.example.mastermechanic.floating.FloatingWindow
 import com.example.mastermechanic.foreground.ForegroundEvaluator
 import com.example.mastermechanic.foreground.ForegroundSignal
@@ -13,7 +15,8 @@ import com.example.mastermechanic.foreground.ForegroundStatus
 /**
  * 无障碍服务：点击注入（ADR-002）、悬浮窗（ADR-004）、前台判定（ADR-005）的共同承载者。
  *
- * M0-T0-2 授权流所需的最小壳；T0-3 起承载前台判定（FR-09）；T0-5 起承载悬浮窗（FR-07，仅前台可见）。
+ * M0-T0-2 授权流所需的最小壳；T0-3 起承载前台判定（FR-09）；T0-5 起承载悬浮窗（FR-07，仅前台可见）；
+ * T2-3c 起承载点击转发层的安装（服务连接时安装手势注入通道，断开即卸载 —— 服务不可用 = 不能点击）。
  */
 class MasterMechanicAccessibilityService : AccessibilityService() {
 
@@ -36,6 +39,12 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        // 点击通道（T2-3c）：注入实现 + 单调时钟 + 审计输出；模式默认演练（B5：实点需显式开启）
+        ClickDispatch.install(
+            injector = AccessibilityGestureInjector(this),
+            clock = SystemClock::elapsedRealtime,
+            audit = ClickAuditLog::write,
+        )
         refreshForeground("服务已连接")
         ForegroundSignal.addListener(onForegroundChanged)
         onForegroundChanged(ForegroundSignal.status) // 初始同步（监听只覆盖后续变化）
@@ -51,6 +60,7 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         stopRecheck()
+        ClickDispatch.uninstall()
         ForegroundSignal.removeListener(onForegroundChanged)
         floatingWindow.hide()
         ForegroundSignal.reset("服务被中断")
@@ -58,6 +68,7 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         stopRecheck()
+        ClickDispatch.uninstall()
         ForegroundSignal.removeListener(onForegroundChanged)
         floatingWindow.hide()
         ForegroundSignal.reset("服务已断开")
@@ -66,6 +77,7 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         stopRecheck()
+        ClickDispatch.uninstall()
         ForegroundSignal.removeListener(onForegroundChanged)
         floatingWindow.hide()
         ForegroundSignal.reset("服务已销毁")
