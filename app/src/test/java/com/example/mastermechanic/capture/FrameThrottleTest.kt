@@ -57,4 +57,15 @@ class FrameThrottleTest {
         val throttle = FrameThrottle(1000)
         assertThrows(IllegalArgumentException::class.java) { throttle.setInterval(0) }
     }
+
+    @Test
+    fun markProcessedEndRestartsIntervalFromProcessingEnd() {
+        // T1-13：间隔是「两轮之间的休息时间」——单轮耗时（此处 270ms，大窗口信号量级）不计入间隔，
+        // 否则会出现"处理完就满足间隔"的连续满负荷。
+        val throttle = FrameThrottle(200)
+        assertTrue(throttle.shouldProcess(0))
+        throttle.markProcessedEnd(270)
+        assertFalse("距本轮结束不足 200ms → 跳过", throttle.shouldProcess(400))
+        assertTrue("距本轮结束满 200ms → 放行", throttle.shouldProcess(470))
+    }
 }

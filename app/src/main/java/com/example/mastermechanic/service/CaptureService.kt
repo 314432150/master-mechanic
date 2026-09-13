@@ -82,10 +82,21 @@ class CaptureService : Service() {
     private var lastFrameWidth = 0
     private var lastFrameHeight = 0
 
+    // 子集搜索取证（T1-13 ⑥，仅帧线程访问）：统计窗口内「实际参与匹配的信号数」分布
+    private var searchedRounds = 0L
+    private var fullScanRounds = 0L
+    private var searchedSymbolTotal = 0L
+
     /** 单帧处理耗时统计（T1-9，NFR-01）：连续 100 帧一窗；总段 / 灰度段 / 识别段同窗同步记录。仅帧线程访问。 */
     private val timingStats = FrameTimingStats()
     private val grayTimingStats = FrameTimingStats()
     private val detectTimingStats = FrameTimingStats()
+
+    /**
+     * 逐信号匹配耗时统计（T1-13b）：**每个信号各自**连续 100 次为一窗，满窗输出一行（P95 / 平均 / 最大），
+     * 用于真机核对「每步（每条信号）到底花多久」。仅帧线程访问。
+     */
+    private val signalCostStats = mutableMapOf<String, FrameTimingStats>()
 
     /** 节流目标档位上次生效值（T1-9 切换日志用）。仅帧线程访问。 */
     private var lastAppliedIntervalMs = ACTIVE_INTERVAL_MS
@@ -300,7 +311,19 @@ class CaptureService : Service() {
 
         val result = recognitionLoop.process(gray, ForegroundSignal.isForeground)
         recordProcessingCost(SystemClock.elapsedRealtimeNanos() - startNs, grayNs)
+        recordSignalCosts()
         cyclesRun++
+        if (!result.frozen) {
+            // T1-13 ⑥：窗口内「实际参与匹配的信号数」分布，用于自证"稳态每轮只搜 1 个"
+            searchedRounds++
+            if (result.searched == null) {
+                // 全扫轮按「本轮参与匹配的信号总数」计入：否则"匹配次数"会小于"轮数"，被误读成"少搜了"
+                fullScanRounds++
+                searchedSymbolTotal += recognitionLoop.signalCount
+            } else {
+                searchedSymbolTotal += result.searched.size
+            }
+        }
 
         if (result.frozen != lastLoopFrozen) {
             lastLoopFrozen = result.frozen
@@ -314,14 +337,15 @@ class CaptureService : Service() {
             )
         }
 
-        // NFR-02 自适应两档：稳定轮用长间隔，其余（含刚发生状态变化）用短间隔
+        // NFR-02 自适应两档（T1-13）：只有「确实稳定」（预期命中 ∧ 无候选累积 ∧ 无转移）才用长间隔；
+        // 未达预期 / 画面正在变 / 刚转移一律短间隔——历史判据 transition == null 会把"白等预期"错当稳定而降频。
         if (!result.frozen) {
-            val target = if (result.stable) STABLE_INTERVAL_MS else ACTIVE_INTERVAL_MS
+            val target = if (result.settled) STABLE_INTERVAL_MS else ACTIVE_INTERVAL_MS
             if (target != lastAppliedIntervalMs) {
                 Log.i(
                     TAG,
                     "节流间隔切换: ${lastAppliedIntervalMs}ms -> ${target}ms" +
-                        "（${if (result.stable) "稳定轮" else "变化 / 过渡轮"}）",
+                        "（${if (result.settled) "确实稳定轮" else "变化 / 过渡 / 未达预期轮"}）",
                 )
                 lastAppliedIntervalMs = target
                 frameThrottle.setInterval(target)
@@ -329,8 +353,18 @@ class CaptureService : Service() {
         }
 
         result.transition?.let {
+            // T1-13 ⑥ 取证：转移轮记录本轮实际搜索的信号名（补 T1-12 判据①⑤的取证缺口）
+            Log.i(
+                TAG,
+                "状态转移: ${it.from.label} -> ${it.to.label}（${it.reason}）；本轮搜索 " +
+                    (result.searched?.sorted()?.joinToString("、")?.let { names -> "「$names」" }
+                        ?: "全部信号"),
+            )
             UiStateSignal.update(it.to, it.reason)
         }
+
+        // 节流基准回填到「本轮结束」（T1-13）：使间隔成为两轮之间的休息时间，不与单轮耗时叠加、也不退化。
+        frameThrottle.markProcessedEnd(SystemClock.elapsedRealtime())
     }
 
     /**
@@ -349,19 +383,46 @@ class CaptureService : Service() {
         )
     }
 
+    /**
+     * 逐信号匹配耗时统计（T1-13b）：每个信号**各自**连续 100 次为一窗，满窗输出一行。
+     *
+     * 口径（与离线探针 `SpeedupProbeTest.profilePerSignalCost` 一致）：**纯匹配耗时**——
+     * 不含灰度转换与方向归一（轮级固定开销）、不含节流等待、不含全扫兜底
+     * （一轮搜几个信号就产生几个样本，故稳态「每轮只搜 1 个信号」时本行即该步的真实成本）。
+     */
+    private fun recordSignalCosts() {
+        recognitionLoop.lastSignalCostMs.forEach { (name, costMs) ->
+            val summary = signalCostStats.getOrPut(name) { FrameTimingStats() }.record(costMs)
+                ?: return@forEach
+            Log.i(
+                TAG,
+                "信号耗时统计: $name 连续 ${summary.sampleCount} 次，P95 ${summary.p95DisplayMs}ms，" +
+                    "平均 ${summary.avgDisplayMs}ms，最大 ${summary.maxDisplayMs}ms",
+            )
+        }
+    }
+
     private fun maybeLogStats(now: Long) {
         if (now - lastStatsAt < STATS_WINDOW_MS) return
         val signalNote = if (recognitionLoop.signalCount == 0) "，未标定（无判定）" else ""
+        // T1-13 ⑥：搜索范围取证——"稳态每轮只搜 1 个 / 全扫只发生在状态未知"可由本行直接读出
+        val searchedNote =
+            "实际参与匹配 $searchedSymbolTotal 次（$searchedRounds 轮：" +
+                "子集 ${searchedRounds - fullScanRounds} 轮 / 全扫 $fullScanRounds 轮）"
         Log.i(
             TAG,
             "帧管线统计: 窗口 ${now - lastStatsAt}ms 接收 $framesReceived 帧 / 处理 $framesProcessed 帧；" +
                 "识别 $cyclesRun 轮（信号 ${recognitionLoop.signalCount} 个$signalNote），" +
-                "当前界面状态「${recognitionLoop.state.label}」；最近帧 ${lastFrameWidth}x$lastFrameHeight",
+                "$searchedNote；当前界面状态「${recognitionLoop.state.label}」；" +
+                "最近帧 ${lastFrameWidth}x$lastFrameHeight",
         )
         lastStatsAt = now
         framesReceived = 0
         framesProcessed = 0
         cyclesRun = 0
+        searchedRounds = 0
+        fullScanRounds = 0
+        searchedSymbolTotal = 0
     }
 
     private fun startForegroundCompat() {
@@ -417,9 +478,14 @@ class CaptureService : Service() {
         private const val NOTIFICATION_ID = 2
         private const val VIRTUAL_DISPLAY_NAME = "MM-Capture"
 
-        /** NFR-02 自适应两档（需求区间 0.5~1s / 3~5s 的保守取值）：T1-4 起按稳定度切换。 */
-        private const val ACTIVE_INTERVAL_MS = 1000L
-        private const val STABLE_INTERVAL_MS = 3000L
+        /**
+         * NFR-02 自适应两档（T1-13 人速口径）：间隔 = 两轮之间的**休息时间**（不含单轮耗时）。
+         *
+         * 取值依据：单信号真机 ≈62ms（小窗口）/ ≈270ms（大窗口），故一轮周期 ≈260~470ms，
+         * 与人工「看到界面 → 点击」的 200~400ms 同量级（FR-04 硬性 #8 要求相邻点击 ≥300ms）。
+         */
+        private const val ACTIVE_INTERVAL_MS = 200L
+        private const val STABLE_INTERVAL_MS = 1000L
         private const val STATS_WINDOW_MS = 10_000L
         private const val MAX_IMAGES = 2
 

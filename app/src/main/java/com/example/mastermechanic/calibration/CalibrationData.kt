@@ -68,7 +68,8 @@ class CalibrationData(
             params = params,
             mapping = SignalStateMapping(rules),
             geometry = CanvasGeometry.of(frameWidth, frameHeight),
-            // T1-10g：按状态启用信号子集（附加信号默认空；未搜到的信号不产生判定记录）
+            // T1-10g / T1-13：按状态启用信号子集（附加信号默认空、周期兜底默认关闭；
+            // 未搜到的信号不产生判定记录；全扫只发生在「状态未知」）
             selector = ActiveSignalSelector.fromRules(rules),
         )
     }

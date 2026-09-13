@@ -37,6 +37,12 @@ class UiStateMachine(initial: UiState = UiState.UNKNOWN) {
     private var currentMissStreak = 0
 
     /**
+     * 是否存在「不是当前状态」的候选正在累积（T1-13 降档判据）：
+     * 为真说明画面里已出现优先级更高的状态标志、可能即将转移 → 不得降频。
+     */
+    val hasForeignCandidate: Boolean get() = candidate != null && candidate != current
+
+    /**
      * 处理一轮判定结果，返回状态变化事件；状态未变化返回 null。
      *
      * @param hits 本轮命中的状态集合（可为空集，不得包含「未知」）

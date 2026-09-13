@@ -40,11 +40,19 @@ class RecognitionLoopTest {
         assertNull(first.transition)
         assertEquals(UiState.UNKNOWN, first.state)
         assertTrue(first.stable)
+        assertFalse("未知态下不得降档（预期尚未建立）", first.settled)
 
         val second = loop.process(image, isForeground = true)
         assertEquals(UiState.FARM, second.transition!!.to)
         assertEquals(UiState.FARM, second.state)
         assertFalse(second.stable) // 变化轮：用于 NFR-02 短间隔
+        assertFalse("转移轮不得降档", second.settled)
+
+        // T1-13 降档判据「确实稳定」：预期（当前状态）命中 ∧ 无候选累积 ∧ 无转移 → 才允许长间隔
+        val third = loop.process(image, isForeground = true)
+        assertNull(third.transition)
+        assertEquals(UiState.FARM, third.state)
+        assertTrue("连续命中且无转移 → 确实稳定", third.settled)
     }
 
     @Test
@@ -87,6 +95,45 @@ class RecognitionLoopTest {
         assertEquals(UiState.UNKNOWN, result.state)
         assertNull(result.transition)
         assertTrue(result.stable)
+    }
+
+    @Test
+    fun signalCostSamplesCoverExactlyTheSearchedSignals() {
+        // T1-13b：逐信号耗时只为「本轮真正搜索的信号」产生样本——
+        // 全扫 → 每个信号一个样本；子集生效 → 只有子集内的信号；冻结轮 → 空（不残留上一轮）。
+        val image = SyntheticImages.background(400, 300, seed = 101)
+        val pattern = SyntheticImages.pattern(20, 16, seed = 102)
+        SyntheticImages.drawPattern(image, 30, 40, 20, 16, pattern)
+        val signals = listOf(
+            SignalSpec("信号甲", fullWindow, listOf(Template(20, 16, pattern))),
+            SignalSpec("信号乙", fullWindow, listOf(Template(20, 16, pattern))),
+        )
+        val rules = listOf(SignalStateMapping.Rule(UiState.LAUNCH_PAGE, setOf("信号甲")))
+        val loop = RecognitionLoop(
+            signals,
+            params,
+            SignalStateMapping(rules),
+            selector = ActiveSignalSelector.fromRules(rules),
+        )
+
+        loop.process(image, isForeground = true) // 状态未知 → 全扫：两个信号各一个样本
+        assertEquals(setOf("信号甲", "信号乙"), loop.lastSignalCostMs.keys)
+        assertTrue(
+            "耗时样本应为有限非负值",
+            loop.lastSignalCostMs.values.all { it.isFinite() && it >= 0.0 },
+        )
+
+        loop.process(image, isForeground = true) // 连 2 次命中 → 转入启动页
+        assertEquals(UiState.LAUNCH_PAGE, loop.state)
+        loop.process(image, isForeground = true) // 子集生效：只搜当前状态的信号
+        assertEquals(setOf("信号甲"), loop.lastSignalCostMs.keys)
+
+        loop.process(image, isForeground = false) // 冻结轮不搜索
+        assertTrue("冻结轮不残留耗时样本", loop.lastSignalCostMs.isEmpty())
+
+        val uncalibrated = RecognitionLoop.uncalibrated()
+        uncalibrated.process(image, isForeground = true)
+        assertTrue("未标定循环无信号可测", uncalibrated.lastSignalCostMs.isEmpty())
     }
 
     @Test

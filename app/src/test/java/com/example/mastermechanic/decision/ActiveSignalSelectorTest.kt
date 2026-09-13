@@ -2,6 +2,7 @@ package com.example.mastermechanic.decision
 
 import com.example.mastermechanic.recognition.GrayImage
 import com.example.mastermechanic.recognition.MatchParams
+import com.example.mastermechanic.recognition.SearchWindow
 import com.example.mastermechanic.recognition.SignalSpec
 import com.example.mastermechanic.recognition.SyntheticImages
 import com.example.mastermechanic.recognition.Template
@@ -12,10 +13,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 按状态启用信号子集（T1-10g，纯逻辑）：
- * ① 选择规则（未知 / 转移探测 / 周期兜底 / 稳定子集 / 附加集）；
+ * 按状态启用信号子集（T1-10g 建立，T1-13 收敛口径）：
+ * ① 选择规则（状态未知 → 全扫；其余 → 当前状态信号 ∪ 附加集；**周期兜底默认关闭**）；
  * ② 子集模式下「未搜到的信号不产生判定记录」；
- * ③ 与全扫模式的**状态序列逐帧一致**（判定语义不变）。
+ * ③ **取消补扫**：预期未命中时不再于同轮发现新状态，需经滞回转「未知」后全扫
+ *   ——这是 T1-13 的**预期行为**（识别层只回答"预期在不在"，不做发现式搜索）。
  */
 class ActiveSignalSelectorTest {
 
@@ -27,7 +29,7 @@ class ActiveSignalSelectorTest {
             UiState.HALL to setOf("b"),
         ),
         attached: Map<UiState, Set<String>> = emptyMap(),
-        period: Int = 10,
+        period: Int = ActiveSignalSelector.NO_FALLBACK,
     ): ActiveSignalSelector = ActiveSignalSelector(
         signalsOf = { rules[it].orEmpty() },
         attached = attached,
@@ -38,38 +40,36 @@ class ActiveSignalSelectorTest {
 
     @Test
     fun unknownStateScansAll() {
-        assertNull("未知状态必须全扫", selector().select(UiState.UNKNOWN, probing = false, round = 3))
+        assertNull("未知状态必须全扫", selector().select(UiState.UNKNOWN, round = 3))
     }
 
     @Test
-    fun probingScansAll() {
-        assertNull(
-            "上一轮当前状态未命中（疑似转移）时立即全扫",
-            selector().select(UiState.LAUNCH_PAGE, probing = true, round = 3),
-        )
+    fun defaultDisablesPeriodicFallback() {
+        // T1-13：默认不启用周期兜底——全扫只保留「状态未知」这一种时刻
+        val s = selector()
+        assertEquals("第 0 轮不再是全扫", setOf("a"), s.select(UiState.LAUNCH_PAGE, round = 0))
+        assertEquals("任意轮次都不再有兜底全扫", setOf("a"), s.select(UiState.LAUNCH_PAGE, round = 100))
     }
 
     @Test
-    fun periodicFallbackScansAll() {
+    fun periodicFallbackScansAllWhenEnabled() {
+        // 能力保留（默认关闭）：显式给出周期时仍按周期全扫
         val s = selector(period = 5)
-        assertNull("周期兜底轮全扫", s.select(UiState.LAUNCH_PAGE, probing = false, round = 0))
-        assertNull(s.select(UiState.LAUNCH_PAGE, probing = false, round = 5))
-        assertEquals(
-            setOf("a"),
-            s.select(UiState.LAUNCH_PAGE, probing = false, round = 3),
-        )
+        assertNull("周期兜底轮全扫", s.select(UiState.LAUNCH_PAGE, round = 0))
+        assertNull(s.select(UiState.LAUNCH_PAGE, round = 5))
+        assertEquals(setOf("a"), s.select(UiState.LAUNCH_PAGE, round = 3))
     }
 
     @Test
     fun stableStateUsesOwnSignalsPlusAttached() {
-        val s = selector(attached = mapOf(UiState.HALL to setOf("popup", "guide")), period = Int.MAX_VALUE)
-        assertEquals(setOf("b", "popup", "guide"), s.select(UiState.HALL, probing = false, round = 7))
+        val s = selector(attached = mapOf(UiState.HALL to setOf("popup", "guide")))
+        assertEquals(setOf("b", "popup", "guide"), s.select(UiState.HALL, round = 7))
     }
 
     @Test
     fun stateWithoutSignalsFallsBackToFullScan() {
-        val s = selector(rules = mapOf(UiState.LAUNCH_PAGE to setOf("a")), period = Int.MAX_VALUE)
-        assertNull("没有可用信号的状态不能给出空子集", s.select(UiState.FARM, probing = false, round = 1))
+        val s = selector(rules = mapOf(UiState.LAUNCH_PAGE to setOf("a")))
+        assertNull("没有可用信号的状态不能给出空子集", s.select(UiState.FARM, round = 1))
     }
 
     @Test
@@ -84,10 +84,9 @@ class ActiveSignalSelectorTest {
                 SignalStateMapping.Rule(UiState.LAUNCH_PAGE, setOf("launch_start")),
                 SignalStateMapping.Rule(UiState.HALL, setOf("hall")),
             ),
-            fallbackPeriod = Int.MAX_VALUE,
         )
-        assertEquals(setOf("hall"), s.select(UiState.HALL, probing = false, round = 1))
-        assertNull(s.select(UiState.FARM, probing = false, round = 1))
+        assertEquals(setOf("hall"), s.select(UiState.HALL, round = 1))
+        assertNull(s.select(UiState.FARM, round = 1))
     }
 
     // --- ②③ 集成：子集模式 vs 全扫 ---
@@ -106,9 +105,10 @@ class ActiveSignalSelectorTest {
         return GrayImage(size, size, pixels)
     }
 
-    private val fullWindow = com.example.mastermechanic.recognition.SearchWindow(0.0, 0.0, 1.0, 1.0)
+    private val fullWindow = SearchWindow(0.0, 0.0, 1.0, 1.0)
 
-    private fun loop(selector: ActiveSignalSelector? = null, full: Boolean = false): RecognitionLoop {
+    /** [selector] 为 null 即全扫模式（每轮匹配全部信号）。 */
+    private fun loop(selector: ActiveSignalSelector? = null): RecognitionLoop {
         val a = template(1L)
         val b = template(2L)
         val signals = listOf(
@@ -125,9 +125,17 @@ class ActiveSignalSelectorTest {
             signals = signals,
             params = params,
             mapping = mapping,
-            selector = if (full) null else selector,
+            selector = selector,
         )
     }
+
+    /** 启动页搜索 a、大厅搜索 b（周期兜底默认关闭）。 */
+    private fun subsetSelector(): ActiveSignalSelector = ActiveSignalSelector.fromRules(
+        listOf(
+            SignalStateMapping.Rule(UiState.LAUNCH_PAGE, setOf("a")),
+            SignalStateMapping.Rule(UiState.HALL, setOf("b")),
+        ),
+    )
 
     /** 前 [first] 帧贴 A，其后贴 B；返回每轮结束时的状态序列。 */
     private fun run(loop: RecognitionLoop, a: Template, b: Template, rounds: Int, first: Int): List<UiState> {
@@ -140,33 +148,9 @@ class ActiveSignalSelectorTest {
     }
 
     @Test
-    fun subsetModeStateSequenceMatchesFullScan() {
-        val a = template(1L)
-        val b = template(2L)
-        val full = run(loop(null, full = true), a, b, rounds = 12, first = 6)
-        val subset = run(loop(ActiveSignalSelector.fromRules(
-            listOf(
-                SignalStateMapping.Rule(UiState.LAUNCH_PAGE, setOf("a")),
-                SignalStateMapping.Rule(UiState.HALL, setOf("b")),
-            ),
-        )), a, b, rounds = 12, first = 6)
-        assertEquals("子集模式与全扫的状态序列必须逐帧一致", full, subset)
-        assertTrue("应观察到状态转移：${full.distinct()}", full.distinct().size >= 3)
-    }
-
-    @Test
     fun subsetModeRecordsOnlySearchedSignals() {
         val a = template(1L)
-        val b = template(2L)
-        val loop = loop(
-            ActiveSignalSelector.fromRules(
-                listOf(
-                    SignalStateMapping.Rule(UiState.LAUNCH_PAGE, setOf("a")),
-                    SignalStateMapping.Rule(UiState.HALL, setOf("b")),
-                ),
-            ),
-            full = false,
-        )
+        val loop = loop(subsetSelector())
         // 先稳定进入 LAUNCH_PAGE（前 4 帧全贴 A）
         repeat(4) { loop.process(frameWith(a, 20, 20), isForeground = true) }
         assertEquals(UiState.LAUNCH_PAGE, loop.state)
@@ -179,28 +163,42 @@ class ActiveSignalSelectorTest {
             result.records.map { it.signalName },
         )
         assertTrue(result.records.first().matched)
-        assertTrue("本轮命中 → 不触发转移探测", result.stable)
+        assertTrue("命中当前状态且无候选累积 → 确实稳定（可降档）", result.settled)
     }
 
     @Test
-    fun missedOwnSignalTriggersFullScanNextRound() {
+    fun expectationChangeGoesThroughUnknownInsteadOfProbing() {
+        // T1-13：取消补扫后，画面变化时**不再当轮发现新状态**，而是连续未命中 → 转「未知」→ 全扫后识别
         val a = template(1L)
         val b = template(2L)
-        val loop = loop(
-            ActiveSignalSelector.fromRules(
-                listOf(
-                    SignalStateMapping.Rule(UiState.LAUNCH_PAGE, setOf("a")),
-                    SignalStateMapping.Rule(UiState.HALL, setOf("b")),
-                ),
-                fallbackPeriod = Int.MAX_VALUE,
-            ),
-            full = false,
-        )
+        val full = run(loop(null), a, b, rounds = 12, first = 6)
+        val subset = run(loop(subsetSelector()), a, b, rounds = 12, first = 6)
+
+        assertEquals("全扫模式：画面变化后连 2 命中即进入大厅", UiState.HALL, full[7])
+        assertEquals("子集模式：变化当轮不发现新状态（仍判为启动页）", UiState.LAUNCH_PAGE, subset[6])
+        assertTrue("子集模式：连续未命中后应出现「未知」", subset.contains(UiState.UNKNOWN))
+        assertEquals("子集模式：最终仍到达同一状态（语义不变，只是慢几轮）", UiState.HALL, subset.last())
+    }
+
+    @Test
+    fun missedOwnSignalDoesNotTriggerFullScan() {
+        val a = template(1L)
+        val b = template(2L)
+        val loop = loop(subsetSelector())
         repeat(4) { loop.process(frameWith(a, 20, 20), isForeground = true) }
-        // 当前状态未命中（换画面）→ 下一轮应全扫以发现新状态
+        assertEquals(UiState.LAUNCH_PAGE, loop.state)
+
+        val missed = loop.process(frameWith(b, 90, 90), isForeground = true)
+        assertEquals("未命中不补扫：仍只搜子集", setOf("a"), missed.searched)
+        assertEquals(1, missed.records.size)
+        assertTrue("未达预期 → 不得降档", !missed.settled)
+
+        // 连续 3 次未命中 → 转「未知」→ 下一轮全扫（全扫的唯一时刻）
         loop.process(frameWith(b, 90, 90), isForeground = true)
-        val next = loop.process(frameWith(b, 90, 90), isForeground = true)
-        assertNull("上一轮未命中 → 本轮全扫（转移探测）", next.searched)
-        assertEquals(2, next.records.size)
+        loop.process(frameWith(b, 90, 90), isForeground = true)
+        assertEquals(UiState.UNKNOWN, loop.state)
+        val afterUnknown = loop.process(frameWith(b, 90, 90), isForeground = true)
+        assertNull("状态未知 → 全扫", afterUnknown.searched)
+        assertEquals(2, afterUnknown.records.size)
     }
 }

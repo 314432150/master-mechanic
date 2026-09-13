@@ -31,7 +31,7 @@ class RecognitionLoop(
      */
     private val geometry: CanvasGeometry? = null,
     /**
-     * 按状态启用信号子集（T1-10g）：null = 每轮全扫（旧行为 / 未标定）。
+     * 按状态启用信号子集（T1-10g；T1-13 起取消补扫与周期兜底）：null = 每轮全扫（未标定）。
      * 子集外的信号**不产生判定记录**，状态机不会因"没搜"而累计离开计数。
      */
     private val selector: ActiveSignalSelector? = null,
@@ -64,57 +64,72 @@ class RecognitionLoop(
     /** 前台轮计数（供子集兜底全扫周期使用）。 */
     private var round = 0
 
-    /** 上一轮当前状态是否未命中（疑似正在转移 → 下一轮全扫以发现新状态）。 */
-    private var probing = false
+    /**
+     * 上一轮各信号的匹配耗时（T1-13b，毫秒）：key = 信号名、value = 该信号的**纯匹配**耗时。
+     *
+     * 口径与离线探针（`SpeedupProbeTest.profilePerSignalCost`）一致：**不含灰度转换与方向归一**
+     * （两者是轮级固定开销，不分摊到单个信号），故真机数值与桌面数值可直接对比；
+     * 也不含节流等待与全扫兜底（一轮搜几个信号就产生几个样本）。非前台轮为空。
+     *
+     * 刻意**不放进 [RoundResult]**：耗时是「测量结果」而非「判定结论」，塞进数据类会破坏
+     * 「同一输入序列产生完全相同的 RoundResult」这一既有不变式（单测 `sameSequenceProducesIdenticalResults`）。
+     * 仅帧线程访问。
+     */
+    var lastSignalCostMs: Map<String, Double> = emptyMap()
+        private set
 
     /** 当前界面状态（滞回结论）。 */
     val state: UiState get() = stateMachine.current
 
     /** 处理一轮：前台时执行「选子集 → 方向归一 → 检测 → 映射 → 状态机」；非前台时冻结（不产生判定数据）。 */
     fun process(gray: GrayImage, isForeground: Boolean): RoundResult {
-        val active = if (isForeground) selector?.select(stateMachine.current, probing, round) else null
-        val records = if (isForeground) detectWithFallback(gray, active) else emptyList()
+        val active = if (isForeground) selector?.select(stateMachine.current, round) else null
+        // 冻结轮不搜索：清空耗时样本，避免调用方读到上一轮的陈旧值（T1-13b）
+        if (!isForeground) lastSignalCostMs = emptyMap()
+        val records = if (isForeground) detectRound(gray, active) else emptyList()
         val hits = if (isForeground) mapping.resolve(records) else emptySet()
         val transition = stateMachine.update(hits, foreground = isForeground)
-        if (isForeground) {
-            probing = stateMachine.current != UiState.UNKNOWN && stateMachine.current !in hits
-            round++
-        }
+        // T1-13 降档判据「确实稳定」：预期（当前状态）本轮命中 ∧ 无外部候选累积 ∧ 无转移。
+        // 三者之外的任何情况（未命中 / 别的状态在累积 / 刚转移）都意味着"画面正在变或还没变到预期"，
+        // 正是最该保持快档的时刻——历史实现用 transition == null 判稳定，会把"白等预期"错当稳定而降频。
+        val settled = isForeground &&
+            stateMachine.current != UiState.UNKNOWN &&
+            stateMachine.current in hits &&
+            !stateMachine.hasForeignCandidate &&
+            transition == null
+        if (isForeground) round++
         return RoundResult(
             records = records,
             hits = hits,
             transition = transition,
             state = stateMachine.current,
             frozen = !isForeground,
-            searched = if (isForeground && !scanAllThisRound) active else null,
+            searched = if (isForeground) active else null,
+            settled = settled,
         )
     }
 
-    /** 上一轮是否触发了补扫（决定本轮 [RoundResult.searched] 是否记为全扫）。 */
-    private var scanAllThisRound = false
-
     /**
-     * 子集匹配的**按需补扫**（T1-10g）：先按子集判定；若本轮**当前状态未命中**
-     * （子集已包含当前状态的信号，说明画面可能已切换），则在同一轮补扫其余信号。
+     * 本轮检测（T1-13）：只匹配给定子集，**不做任何补扫**。
      *
-     * 这样既保留了"稳定态只搜子集"的成本收益，又让转移当轮的信息量与全扫**完全一致**——
-     * 状态序列不因子集而延迟（否则会晚一轮才发现新状态）。补扫只在未命中轮发生。
+     * 历史（T1-10g）在"当前状态未命中"时会在同一轮补扫其余信号以发现新状态；T1-13 取消该机制——
+     * 真实巡查由流程驱动、每步有明确预期，"发现新状态"不再是识别层的职责，补扫只是多余的尖峰成本。
+     * 子集为 null（状态未知 / 未启用子集）时全扫。
      */
-    private fun detectWithFallback(gray: GrayImage, subset: Set<String>?): List<DetectionRecord> {
+    private fun detectRound(gray: GrayImage, subset: Set<String>?): List<DetectionRecord> {
         val detector = this.detector ?: return emptyList()
-        scanAllThisRound = false
-        if (subset == null) {
-            scanAllThisRound = true
-            return detector.detect(normalized(gray, null), null)
+        val target = normalized(gray, subset)
+        // T1-13b 逐信号计时：把「一轮搜 N 个信号」拆成 N 个独立样本，回答"每步（每条信号）真正要花多久"。
+        // 逐个调用 detectSignal 与 detect(target, subset) 完全等价（后者本就是同顺序逐个判定），判定语义不变。
+        val costs = LinkedHashMap<String, Double>()
+        val records = (if (subset == null) signals else signals.filter { it.name in subset }).map { signal ->
+            val startedNs = System.nanoTime()
+            val record = detector.detectSignal(target, signal)
+            costs[signal.name] = (System.nanoTime() - startedNs) / 1_000_000.0
+            record
         }
-        val first = detector.detect(normalized(gray, subset), subset)
-        val missedCurrent = stateMachine.current != UiState.UNKNOWN &&
-            stateMachine.current !in mapping.resolve(first)
-        if (!missedCurrent) return first
-        val rest = signals.map { it.name }.toSet() - subset
-        if (rest.isEmpty()) return first
-        scanAllThisRound = true
-        return first + detector.detect(normalized(gray, null), rest)
+        lastSignalCostMs = costs
+        return records
     }
 
     /**
@@ -164,11 +179,21 @@ data class RoundResult(
     val state: UiState,
     val frozen: Boolean,
     /**
-     * 本轮实际参与匹配的信号名集合（T1-10g）：null = 全扫（未知 / 转移探测 / 周期兜底 / 未启用子集）。
+     * 本轮实际参与匹配的信号名集合（T1-10g）：null = 全扫（状态未知 / 未启用子集）。
      * 供运行日志与审计使用，便于确认"这一轮到底搜了哪些信号"。
      */
     val searched: Set<String>? = null,
+    /**
+     * 「确实稳定」（T1-13，NFR-02 长间隔的**唯一**判据）：本轮预期（当前状态）命中、
+     * 无外部候选累积、且无转移。为真时才允许降到长间隔。
+     */
+    val settled: Boolean = false,
 ) {
-    /** 本轮无状态变化（可用于下调检测频率）。 */
+    /**
+     * 本轮无状态变化。
+     *
+     * 注意：**不再作为节流降档判据**（T1-13）——「没有转移」不等于「达到了预期」，
+     * 二者之间那段"白等预期"的时间恰恰最该保持快档。降档请用 [settled]。
+     */
     val stable: Boolean get() = !frozen && transition == null
 }
