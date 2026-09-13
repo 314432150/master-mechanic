@@ -205,10 +205,14 @@
     `service/ClickAuditLog.kt`（TAG `MM-Click`，**拒绝也留痕**）。门禁顺序固定：演练 → 非前台 → 状态未知 → 串行 → 间隔不足；
     间隔按 ADR-002 量"上次手势**完成** → 本次**开始** ≥ 300ms"，硬下限写在门禁里（调小即抛）；模式默认**演练**，
     `ClickDispatch.enableLive()` 是唯一进入实点的路径（B5）。
-  - **验证**：`CalibrationCodecTest` / `CalibrationModelTest` / `CalibrationSignalsTest`（v1 兼容、角色往返、角色守卫）、
-    `AnchorLocatorTest` 7 例、`ClickGateTest` 9 例、`ClickForwarderTest` 5 例 —— 全量 **261 例 0 失败**。
-  - **待做**：**T2-3d** 标定页角色选择（否则锚点只能靠改产物文本写入）；**T2-3e** 真机点击核对**随 B1 一起做**
-    （红线 2 只承认三类合法来源，不为测试新增"标定页点一下"的第五类）。
+  - **T2-3d 标定页角色选择（已完成）**：框选模式底栏先出两枚角色 chip（标志 / 锚点，默认标志）、再出归属状态 chip
+    （同一行滚动，不额外占高度）；写入按所选角色落库，默认名分流（`popup_close` / `popup_close_anchor`，重名仍追加序号），
+    产物清单与模板详情显示角色，写入提示按**同角色**计数（标志数 / 锚点数各自累计）。
+  - **验证**：`CalibrationCodecTest` / `CalibrationModelTest` / `CalibrationSignalsTest`（v1 兼容、角色往返、角色守卫；
+    T2-3d 新增 3 例 = 角色默认名 / 同状态标志与锚点两条记录 / 锚点默认名重名让位）、`AnchorLocatorTest` 7 例、
+    `ClickGateTest` 9 例、`ClickForwarderTest` 5 例 —— `:app:test -PfastTests` **253 例 0 失败** + `assembleDebug` 通过。
+  - **待做**：**T2-3e** 真机点击核对**随 B1 一起做**（红线 2 只承认三类合法来源，不为测试新增"标定页点一下"的第五类）；
+    B1 之前需要用户真机标一条锚点（弹窗上的 ×）。
 - **T2-2 真机复演取证（样式 ① 限时点券·宝箱版，2026-09-13 14:17 会话）**：证据归档 `docs/verification/m2/t2-2/`（说明 `t2-2-07-verification.txt`；含真机截图、会话日志、产物原样导出、离线逐信号明细、弹窗/大厅原始帧）。
   ① **T2-1 期望集合驱动在真机三态齐全**：`本轮搜索集合变化: 「launch_start」`（待命 1 条）→ 统计「单信号 34 轮 / 多信号 0 / 不搜 0，参与匹配 34 次」→ 命中启动页**当轮**扩为 7 条 → `状态转移: 启动页 -> 活动弹窗（连续 2 次命中（进入））`→ 弹窗期稳定 7 条/轮；悬浮窗同步显示「状态：活动弹窗」。
   ② **逐信号归因**：新增离线探针 `CalibrationReviewProbeTest`（设备帧池原始帧 + 设备产物 → 生产路径逐帧明细，双口径：生产期望集合 / 显式全集）——弹窗帧上 **4 条 popup 记录全部命中**（`popup_close` 0.88@1087,1825；`popup_close2/3/4` 0.99~1.00@≈1199,1327），大厅帧上四条全部 NOT_MATCHED（≤0.39）→ **无残留误报**。

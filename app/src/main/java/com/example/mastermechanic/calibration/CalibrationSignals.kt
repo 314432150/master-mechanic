@@ -131,6 +131,23 @@ object CalibrationSignals {
     }
 
     /**
+     * 归属状态 + 角色 → 默认信号名（T2-3d）：标志用状态默认名（`popup_close`），锚点加后缀
+     * （`popup_close_anchor`）。
+     *
+     * 必须分开命名：同一元素两种角色写**两条记录**（§2.1），名字重了会在产物里互相覆盖，
+     * 清单里也分不清哪条是判状态的标志、哪条是点击锚点。
+     */
+    fun defaultNameFor(state: UiState, role: SignalRole): String =
+        if (role == SignalRole.ANCHOR) {
+            state.defaultSignalName + ANCHOR_SUFFIX
+        } else {
+            state.defaultSignalName
+        }
+
+    /** 锚点默认名后缀（见 [defaultNameFor]）：产物里一眼能看出这条记录是点击锚点。 */
+    const val ANCHOR_SUFFIX = "_anchor"
+
+    /**
      * 删除一条信号：剩余为空返回 null（调用方据此删除产物文件——空产物无意义）。
      * 名称不存在时返回等价产物（幂等，不报错）。
      */

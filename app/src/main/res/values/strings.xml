@@ -70,8 +70,8 @@
     <string name="calibration_workbench_cancel">✕</string>
     <string name="calibration_workbench_confirm">✓ 写入</string>
     <string name="calibration_need_state">请先选择归属状态，再点 ✓ 写入产物。</string>
-    <string name="calibration_workbench_write_hint">浏览模式：左右滑动换帧、点缩略图跳帧；点「框选」进入框选模式：拖动画布建框（框内移动 / 框外新建 / 左上 ✕ 清除重画），上方选归属状态，点 ✓ 写入产物（同名覆盖），✕ 放弃。双指捏合缩放 / 平移画面，尽量只含标志本身与稳定背景。</string>
-    <string name="calibration_annotate_hint">浏览模式：左右滑动大图切换样本帧（缩略图过半即同步）；点「框选」进入框选模式——拖动空白处新建选框，拖动框内整体移动，点选框左上角 × 清除重画，外层白色细线仅作标示；双指捏合缩放 / 平移画面（小标志先放大再框选）。选好归属状态后点 ✓ 写入产物（同名信号覆盖），✕ 放弃本次框选。尽量只含标志本身与稳定背景，避开动态元素。</string>
+    <string name="calibration_workbench_write_hint">浏览模式：左右滑动换帧、点缩略图跳帧；点「框选」进入框选模式：拖动画布建框（框内移动 / 框外新建 / 左上 ✕ 清除重画），上方先选角色（标志 = 判状态 / 锚点 = 点击位置）再选归属状态，点 ✓ 写入产物（重名自动追加序号），✕ 放弃。双指捏合缩放 / 平移画面，尽量只含目标本身与稳定背景。</string>
+    <string name="calibration_annotate_hint">浏览模式：左右滑动大图切换样本帧（缩略图过半即同步）；点「框选」进入框选模式——拖动空白处新建选框，拖动框内整体移动，点选框左上角 × 清除重画，外层白色细线仅作标示；双指捏合缩放 / 平移画面（小目标先放大再框选）。选好角色与归属状态后点 ✓ 写入产物（重名自动追加序号），✕ 放弃本次框选。尽量只含目标本身与稳定背景，避开动态元素。</string>
     <string name="calibration_annotate_hint_icon">ⓘ</string>
     <string name="calibration_hint_close">知道了</string>
     <string name="calibration_selection_none">尚未框选</string>
@@ -81,15 +81,15 @@
     <string name="calibration_selection_info">选区：%1$d,%2$d → %3$d,%4$d</string>
     <string name="calibration_signal_state_label">归属状态</string>
     <string name="calibration_need_selection">请先在画面上框选标志，再确认写入。</string>
-    <string name="calibration_signal_added">已新增信号：%1$s（%2$s，模板 %3$d×%4$d；该状态现有 %5$d 条记录）</string>
+    <string name="calibration_signal_added">已新增%1$s：%2$s（%3$s，模板 %4$d×%5$d；该状态现有 %6$d 条记录）</string>
     <string name="calibration_write_failed">写入失败：%1$s</string>
     <string name="calibration_signal_deleted">已删除信号：%1$s</string>
     <string name="calibration_view">查看</string>
     <string name="calibration_signal_remove">删除</string>
-    <string name="calibration_signal_item">%1$s → %2$s</string>
+    <string name="calibration_signal_item">%1$s（%2$s）→ %3$s</string>
     <string name="calibration_signal_meta">模板 %1$d×%2$d ｜ 窗口 %3$d,%4$d → %5$d,%6$d</string>
     <string name="calibration_template_title">模板详情：%1$s</string>
-    <string name="calibration_template_meta">归属状态 %1$s ｜ 模板 %2$d×%3$d（%4$d 条）</string>
+    <string name="calibration_template_meta">%1$s ｜ 归属状态 %2$s ｜ 模板 %3$d×%4$d（%5$d 条）</string>
     <string name="calibration_template_window">标定帧 %1$d×%2$d ｜ 搜索窗口（帧像素）：%3$d,%4$d → %5$d,%6$d</string>
     <string name="calibration_param_title">匹配参数（产物级；编辑合法即写入产物）</string>
     <string name="calibration_param_threshold">命中线</string>

@@ -87,6 +87,7 @@ import com.example.mastermechanic.calibration.FrameEditMath
 import com.example.mastermechanic.calibration.FrameHit
 import com.example.mastermechanic.calibration.RatioRect
 import com.example.mastermechanic.calibration.SelectionWindow
+import com.example.mastermechanic.calibration.SignalRole
 import com.example.mastermechanic.calibration.TemplateExtractor
 import com.example.mastermechanic.calibration.ViewTransform
 import com.example.mastermechanic.capture.CaptureSessionSignal
@@ -142,6 +143,8 @@ fun CalibrationRoute(resumeTick: Int, onBack: () -> Unit) {
     var selectedFrame by remember { mutableStateOf<File?>(null) }
     var selection by remember(selectedFrame) { mutableStateOf<RatioRect?>(null) }
     var selectedState by remember(selectedFrame) { mutableStateOf<UiState?>(null) }
+    // T2-3d：本次框选写入的角色（标志 = 判状态 / 锚点 = 点击位置），默认标志
+    var selectedRole by remember(selectedFrame) { mutableStateOf(SignalRole.MARKER) }
     var workbenchOpen by remember { mutableStateOf(false) }
     // T1-5m：工作台是否处于「框选模式」（浏览 = 滑页挑帧；框选 = 禁滑页 + 状态条 + ✕/✓）
     var selectMode by remember { mutableStateOf(false) }
@@ -287,11 +290,13 @@ fun CalibrationRoute(resumeTick: Int, onBack: () -> Unit) {
             selectedFrame = selectedFrame,
             selection = selection,
             selectedState = selectedState,
+            selectedRole = selectedRole,
             message = message,
             selectMode = selectMode,
             onSelectFrame = { selectedFrame = it },
             onSelectionChange = { selection = it },
             onStateSelect = { selectedState = it },
+            onRoleSelect = { selectedRole = it },
             onEnterSelect = {
                 selection = null
                 message = null
@@ -315,6 +320,7 @@ fun CalibrationRoute(resumeTick: Int, onBack: () -> Unit) {
                             frame = frame,
                             ratio = sel,
                             state = state,
+                            role = selectedRole,
                             // 实时读取编辑框内容（局部委托属性读取即时，不是组合快照）
                             params = CalibrationSignals.parseParams(
                                 thresholdText,
@@ -341,6 +347,7 @@ fun CalibrationRoute(resumeTick: Int, onBack: () -> Unit) {
         if (data != null && entry != null) {
             TemplateDetailDialog(
                 name = entry.name,
+                role = entry.role,
                 state = CalibrationSignals.stateOf(data, entry.name),
                 template = entry.templates.first(),
                 templateCount = entry.templates.size,
@@ -561,6 +568,7 @@ private fun ArtifactCard(
                                     text = stringResource(
                                         R.string.calibration_signal_item,
                                         entry.name,
+                                        entry.role.label,
                                         CalibrationSignals.stateOf(data, entry.name)?.label.orEmpty(),
                                     ),
                                     style = MaterialTheme.typography.bodyMedium,
@@ -601,10 +609,11 @@ private fun ArtifactCard(
     }
 }
 
-/** 产物中一条信号的详情（T1-5l ④）：模板灰度图 + 尺寸 + 搜索窗口（帧像素）+ 归属状态。 */
+/** 产物中一条信号的详情（T1-5l ④；T2-3d 起含角色）：模板灰度图 + 尺寸 + 搜索窗口（帧像素）+ 归属状态。 */
 @Composable
 private fun TemplateDetailDialog(
     name: String,
+    role: SignalRole,
     state: UiState?,
     template: Template,
     templateCount: Int,
@@ -636,6 +645,7 @@ private fun TemplateDetailDialog(
                 Text(
                     text = stringResource(
                         R.string.calibration_template_meta,
+                        role.label,
                         state?.label.orEmpty(),
                         template.width,
                         template.height,
@@ -756,11 +766,13 @@ private fun CalibrationWorkbench(
     selectedFrame: File?,
     selection: RatioRect?,
     selectedState: UiState?,
+    selectedRole: SignalRole,
     message: String?,
     selectMode: Boolean,
     onSelectFrame: (File) -> Unit,
     onSelectionChange: (RatioRect?) -> Unit,
     onStateSelect: (UiState) -> Unit,
+    onRoleSelect: (SignalRole) -> Unit,
     onEnterSelect: () -> Unit,
     onExitSelect: () -> Unit,
     onWriteSignal: () -> Unit,
@@ -900,7 +912,7 @@ private fun CalibrationWorkbench(
                     }
                 }
 
-                // 底部悬浮：缩略图条（浏览）/ 归属状态条（框选）+ 工具栏（T1-5m ②④）
+                // 底部悬浮：缩略图条（浏览）/ 角色 + 归属状态条（框选）+ 工具栏（T1-5m ②④；T2-3d 加角色）
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -912,6 +924,26 @@ private fun CalibrationWorkbench(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         ) {
+                            // T2-3d：先选角色（标志 = 判状态 / 锚点 = 点击位置），再选归属状态；
+                            // 同一行滚动，不额外占高度
+                            items(SignalRole.entries) { role ->
+                                val selected = selectedRole == role
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = { onRoleSelect(role) },
+                                    label = {
+                                        Text(
+                                            text = role.label,
+                                            color = if (selected) {
+                                                MaterialTheme.colorScheme.onSecondaryContainer
+                                            } else {
+                                                Color.White
+                                            },
+                                        )
+                                    },
+                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
+                                )
+                            }
                             items(UiState.entries.filter { it.isCandidate }) { state ->
                                 val selected = selectedState == state
                                 FilterChip(
@@ -1378,6 +1410,7 @@ private suspend fun writeSignalFromSelection(
     frame: File,
     ratio: RatioRect,
     state: UiState,
+    role: SignalRole,
     params: MatchParams?,
 ): WriteResult {
     return try {
@@ -1427,7 +1460,8 @@ private suspend fun writeSignalFromSelection(
         }
 
         // T2-2 方案 A：同状态可有多条记录（多种样式），名字在默认名基础上自动追加序号，不覆盖既有记录
-        val name = CalibrationSignals.nextName(current, state.defaultSignalName)
+        // T2-3d：默认名按角色区分（锚点 = 默认名 + _anchor）→ 标志与锚点各写各的记录，互不覆盖
+        val name = CalibrationSignals.nextName(current, CalibrationSignals.defaultNameFor(state, role))
         val written = withContext(Dispatchers.IO) {
             val data = CalibrationSignals.upsert(
                 current = current,
@@ -1438,19 +1472,24 @@ private suspend fun writeSignalFromSelection(
                 params = params ?: current?.params ?: CalibrationSignals.defaultParams(),
                 frameWidth = prepared.frameWidth,
                 frameHeight = prepared.frameHeight,
+                role = role,
             )
             CalibrationStore.save(context, data)
             data
         }
-        val styleCount = written.stateRules.firstOrNull { it.state == state }?.signalNames?.size ?: 1
+        // 同角色计数：标志数 / 锚点数各自累计（不要混着数，否则「该状态现有 N 条」会误导标定）
+        val existingCount = written.stateRules.firstOrNull { it.state == state }
+            ?.let { if (role == SignalRole.ANCHOR) it.anchorNames.size else it.signalNames.size }
+            ?: 1
         WriteResult(
             message = context.getString(
                 R.string.calibration_signal_added,
+                role.label,
                 name,
                 state.label,
                 prepared.template.width,
                 prepared.template.height,
-                styleCount,
+                existingCount,
             ),
             saved = true,
         )

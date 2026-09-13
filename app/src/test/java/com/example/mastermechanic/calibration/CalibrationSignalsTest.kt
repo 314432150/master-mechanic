@@ -79,6 +79,51 @@ class CalibrationSignalsTest {
         assertEquals(listOf("popup_close_x"), asAnchor.anchorNamesForTest())
     }
 
+    @Test
+    fun defaultNameForDistinguishesAnchorFromMarker() {
+        assertEquals(
+            "popup_close",
+            CalibrationSignals.defaultNameFor(UiState.ACTIVITY_POPUP, SignalRole.MARKER),
+        )
+        assertEquals(
+            "popup_close_anchor",
+            CalibrationSignals.defaultNameFor(UiState.ACTIVITY_POPUP, SignalRole.ANCHOR),
+        )
+    }
+
+    @Test
+    fun markerAndAnchorOfSameStateAreWrittenAsSeparateRecords() {
+        // 同一元素两种角色 = 两条记录（§2.1）：靠角色默认名分流，互不覆盖
+        var data = upsert(
+            null,
+            CalibrationSignals.defaultNameFor(UiState.ACTIVITY_POPUP, SignalRole.MARKER),
+            UiState.ACTIVITY_POPUP,
+        )
+        data = upsert(
+            data,
+            CalibrationSignals.defaultNameFor(UiState.ACTIVITY_POPUP, SignalRole.ANCHOR),
+            UiState.ACTIVITY_POPUP,
+            role = SignalRole.ANCHOR,
+        )
+
+        assertEquals(listOf("popup_close"), data.stateRules.single().signalNames)
+        assertEquals(listOf("popup_close_anchor"), data.anchorNamesForTest())
+        assertEquals(SignalRole.ANCHOR, data.roleOf("popup_close_anchor"))
+    }
+
+    @Test
+    fun anchorDefaultNameStillAvoidsCollisionWithExistingRecords() {
+        // 锚点默认名也可能已被占用（例如先误标成标志）→ 仍走序号追加，保证产物内名称唯一
+        val data = upsert(null, "popup_close_anchor", UiState.ACTIVITY_POPUP)
+        assertEquals(
+            "popup_close_anchor2",
+            CalibrationSignals.nextName(
+                data,
+                CalibrationSignals.defaultNameFor(UiState.ACTIVITY_POPUP, SignalRole.ANCHOR),
+            ),
+        )
+    }
+
     /** 便利断言：唯一规则的锚点列表（避免测试里反复写 `stateRules.single().anchorNames`）。 */
     private fun CalibrationData.anchorNamesForTest(): List<String> = stateRules.single().anchorNames
 
