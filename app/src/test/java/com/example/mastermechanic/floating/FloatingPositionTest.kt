@@ -56,22 +56,7 @@ class FloatingPositionTest {
     }
 
     @Test
-    fun edgeDragOnlyUpdatesVerticalRatioAndKeepsSide() {
-        // 2026-09-14 用户口径：手柄**始终贴边**，拖动只沿边缘上下走，停靠侧不变
-        val left = FloatingPosition(FloatingSide.LEFT, 0.2)
-        val moved = left.withTopY(1584, screenHeight)
-        assertEquals(0.5, moved.yRatio, 1e-9)
-        assertEquals(FloatingSide.LEFT, moved.side)
-        // 拖出屏幕（顶部为负 / 底部越界）→ 夹到 0..1
-        assertEquals(0.0, left.withTopY(-50, screenHeight).yRatio, 1e-9)
-        assertEquals(1.0, left.withTopY(screenHeight + 500, screenHeight).yRatio, 1e-9)
-    }
-
-    @Test
     fun invalidScreenSizeIsRejected() {
-        assertThrows(IllegalArgumentException::class.java) {
-            FloatingPosition(FloatingSide.RIGHT, 0.5).withTopY(10, 0)
-        }
         assertThrows(IllegalArgumentException::class.java) {
             FloatingLayout.snapLabelCenter(0, 0, 10, 10, 0, 100)
         }
@@ -175,7 +160,13 @@ class FloatingPositionTest {
 
     @Test
     fun defaultPositionsAreHandleRightAndLabelBottomCenter() {
+        // 手柄：右侧边缘、纵向三分之一（2026-09-14 用户口径；手柄不可拖动，位置只由默认 / 重置决定）
         assertEquals(FloatingSide.RIGHT, FloatingPositions.DEFAULT.handle.side)
+        // 6 位小数（写盘精度）→ 换算到像素仍是屏高的三分之一（3168 * 1/3 = 1056）
+        assertEquals(1.0 / 3.0, FloatingPositions.DEFAULT.handle.yRatio, 1e-6)
+        assertEquals(FloatingSide.RIGHT, FloatingPosition.DEFAULT.side)
+        assertEquals(screenHeight / 3, FloatingLayout.y(FloatingPosition.DEFAULT.yRatio, 0, screenHeight))
+        // 状态标签：底部居中
         assertEquals(LabelPosition.DEFAULT, FloatingPositions.DEFAULT.label)
         assertEquals(0.5, LabelPosition.DEFAULT.xRatio, 1e-9)
         assertEquals(1.0, LabelPosition.DEFAULT.yRatio, 1e-9)

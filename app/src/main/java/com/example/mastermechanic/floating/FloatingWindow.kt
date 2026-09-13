@@ -2,6 +2,7 @@ package com.example.mastermechanic.floating
 
 import android.content.Context
 import android.graphics.PixelFormat
+import android.hardware.display.DisplayManager
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
@@ -79,6 +80,22 @@ class FloatingWindow(private val context: Context) {
         mainHandler.post { applyActionText(action) }
     }
 
+    /** 屏幕尺寸 / 方向变化 → 重新落位（转屏后窗口尺寸可能不变，位置却已失效）。 */
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayChanged(displayId: Int) {
+            mainHandler.post { applyPositions() }
+        }
+
+        override fun onDisplayAdded(displayId: Int) = Unit
+
+        override fun onDisplayRemoved(displayId: Int) = Unit
+    }
+
+    private var displayManager: DisplayManager? = null
+
+    /** 上一次落位日志的内容（内容不变就不重复刷屏）。 */
+    private var lastPlacementTrace: String? = null
+
     /** 挂载两个窗口（收起态）；重复调用安全。 */
     fun show() {
         if (panel != null) return
@@ -140,6 +157,9 @@ class FloatingWindow(private val context: Context) {
         // 布局变化（文案变长 / 菜单展开）后自动重新落位：不依赖一次性 post 的时序
         attachLayoutRefresh(panelView)
         attachLayoutRefresh(labelView)
+        // 屏幕尺寸 / 方向变化后也要重新落位：转屏时窗口尺寸可能不变、位置却已失效
+        // （真机踩过：挂载瞬间用的是转屏前的尺寸 → 两个窗口一起跑到屏幕外，只能靠"重置位置"才回来）
+        attachDisplayRefresh()
         // 重建时以当前值初始化（监听只覆盖后续变化）
         applyStatusText(UiStateSignal.status)
         applyActionText(FloatingActionSignal.action)
@@ -148,8 +168,8 @@ class FloatingWindow(private val context: Context) {
         applyPositions()
         MmLog.i(
             TAG,
-            "悬浮窗已挂载（手柄停靠 ${positions.handle.side.token}，状态标签中心 " +
-                "${positions.label.xRatio}x${positions.label.yRatio}）",
+            "悬浮窗已挂载（手柄停靠 ${positions.handle.side.token}、纵向比例 ${positions.handle.yRatio}；" +
+                "状态标签中心 ${positions.label.xRatio}x${positions.label.yRatio}）",
         )
     }
 
@@ -158,6 +178,8 @@ class FloatingWindow(private val context: Context) {
         val panelView = panel ?: return
         UiStateSignal.removeListener(onStateChanged)
         FloatingActionSignal.removeListener(onActionChanged)
+        detachDisplayRefresh()
+        lastPlacementTrace = null
         label?.let { view -> runCatching { windowManager.removeView(view) } }
         runCatching { windowManager.removeView(panelView) }
         MmLog.i(TAG, "悬浮窗已移除")
@@ -201,8 +223,9 @@ class FloatingWindow(private val context: Context) {
             addView(it)
         }
         menu = buildMenu().also { addView(it) }
+        // 手柄不再支持拖动（2026-09-14 用户口径）：位置固定贴在右侧边缘上方三分之一处，
+        // 单击只展开 / 收起菜单。
         setOnClickListener { toggleExpanded() }
-        setOnTouchListener(::onPanelTouch)
     }
 
     private fun buildMenu(): LinearLayout = LinearLayout(context).apply {
@@ -312,71 +335,10 @@ class FloatingWindow(private val context: Context) {
         runCatching { windowManager.updateViewLayout(panelView, params) }
     }
 
-    // ---- 触摸：手柄（沿边缘拖动 / 单击展开）----
-
-    /**
-     * 手柄触摸处理：**抬手时**裁决"拖动还是单击"——
-     * 位移超过系统触摸滑动阈值 = 拖动（**只沿边缘上下走**，不允许离开边缘），未超过 = 单击（展开 / 收起）。
-     * 不用"位移是否非零"判断：手指轻微抖动不应让菜单永远展不开。
-     */
-    private fun onPanelTouch(view: View, event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                downRawX = event.rawX
-                downRawY = event.rawY
-                val params = view.layoutParams as WindowManager.LayoutParams
-                downWindowX = params.x
-                downWindowY = params.y
-                dragging = false
-                return true
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (!dragging) {
-                    dragging = FloatingGesture.isDrag(
-                        event.rawX - downRawX,
-                        event.rawY - downRawY,
-                        touchSlop,
-                    )
-                }
-                if (dragging) {
-                    val screen = FloatingScreen.spec(context)
-                    // 横向**不动**（贴边锁）：只跟手上下走，永远留在边缘
-                    place(
-                        view,
-                        downWindowX,
-                        FloatingLayout.clampInside(
-                            downWindowY + (event.rawY - downRawY).toInt(),
-                            view.height,
-                            screen.height,
-                        ),
-                    )
-                }
-                return true
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (dragging) {
-                    snapHandleAndPersist()
-                } else {
-                    view.performClick()
-                }
-                dragging = false
-                return true
-            }
-        }
-        return false
-    }
-
-    /** 抬手：把当前位置的纵向折成比例并持久化（**停靠侧不变**——手柄始终贴边）。 */
-    private fun snapHandleAndPersist() {
-        val panelView = panel ?: return
-        val screen = FloatingScreen.spec(context)
-        val params = panelView.layoutParams as WindowManager.LayoutParams
-        positions = positions.copy(handle = positions.handle.withTopY(params.y, screen.height))
-        applyPositions()
-        persist(screen, "手柄沿边缘移动（纵向比例 ${positions.handle.yRatio}）")
-    }
-
     // ---- 触摸：状态标签（自由拖动）----
+    //
+    // 手柄一侧**不再有任何拖动逻辑**（2026-09-14 用户口径）：位置固定贴在右侧边缘上方三分之一处，
+    // 触摸只由 `setOnClickListener { toggleExpanded() }` 承担（单击展开 / 收起菜单）。
 
     private fun onLabelTouch(view: View, event: MotionEvent): Boolean {
         when (event.actionMasked) {
@@ -557,13 +519,14 @@ class FloatingWindow(private val context: Context) {
         )
     }
 
-    /** 重新落位（尺寸未就绪时跳过；布局变化后会被 [attachLayoutRefresh] 再触发一次）。 */
+    /** 重新落位（尺寸未就绪时跳过；布局 / 屏幕变化后会被再次触发）。 */
     private fun applyPositions() {
         val panelView = panel ?: return
         val labelView = label ?: return
         val panelWidth = panelView.width.takeIf { it > 0 } ?: dp(HANDLE_WIDTH_DP)
         val panelHeight = panelView.height.takeIf { it > 0 } ?: dp(HANDLE_HEIGHT_DP)
         if (labelView.width == 0) return
+        val screen = FloatingScreen.spec(context)
         val offsets = computeOffsets(
             panelWidth,
             panelHeight,
@@ -572,6 +535,15 @@ class FloatingWindow(private val context: Context) {
         )
         place(panelView, offsets.panelX, offsets.panelY)
         place(labelView, offsets.labelX, offsets.labelY)
+        // 取证/排障用途：把"用了多大的屏、把两个窗口放到了哪"记进日志——
+        // 悬浮窗看不见时，一行日志就能判断是不是屏幕尺寸用错了（真机排障踩过坑）。
+        val trace = "屏 ${screen.width}x${screen.height} ｜ 手柄 (${offsets.panelX},${offsets.panelY})" +
+            " ${panelWidth}x$panelHeight ｜ 标签 (${offsets.labelX},${offsets.labelY})" +
+            " ${labelView.width}x${labelView.height}"
+        if (trace != lastPlacementTrace) {
+            lastPlacementTrace = trace
+            MmLog.i(TAG, "悬浮窗落位: $trace")
+        }
     }
 
     /**
@@ -584,6 +556,24 @@ class FloatingWindow(private val context: Context) {
                 applyPositions()
             }
         }
+    }
+
+    /**
+     * 屏幕尺寸 / 方向变化时重新落位（转屏、`wm size`、折叠屏展开等）。
+     *
+     * 为什么必须有：挂载那一刻拿到的屏幕尺寸可能**不是**最终用于摆放窗口的坐标系
+     * （真机现象：授权后刚挂载时用的还是转屏前的尺寸 → 两个窗口一起被摆到屏幕外，
+     * 用户只能靠"重置到默认位置"把它们找回来）。
+     */
+    private fun attachDisplayRefresh() {
+        val manager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return
+        displayManager = manager
+        runCatching { manager.registerDisplayListener(displayListener, mainHandler) }
+    }
+
+    private fun detachDisplayRefresh() {
+        displayManager?.let { runCatching { it.unregisterDisplayListener(displayListener) } }
+        displayManager = null
     }
 
     /** 挂载前的手工测量（标签是 WRAP_CONTENT，宽度内容相关）。 */
@@ -668,14 +658,14 @@ class FloatingWindow(private val context: Context) {
         const val REASON_COLOR = 0xFFFF8A80.toInt()
 
         /**
-         * 收起态手柄尺寸（dp）：**极窄竖条**，一半在屏外 → 可见约 7dp。
-         * 2026-09-14 用户口径："高度 / 宽度都缩减为目前的一半"（原 28×64 → 14×32）。
-         * **手感提示**：可见 7dp 已经很考验瞄准，若点不中，先调大 `FloatingPosition.REVEAL_RATIO`
-         * （让整条都露在屏内 = 可见 14dp），再考虑加大本值。
+         * 收起态手柄尺寸（dp）：**窄竖条**，一半在屏外 → 可见约 9dp。
+         * 沿革：28×64（可见 14）→ 14×32（可见 7）→ **19×32**（2026-09-14 用户口径"加宽三分之一"）。
+         * **手感提示**：可见约 9dp 仍然偏小，若点不中，把 `FloatingPosition.REVEAL_RATIO` 调到 1.0
+         * （整条都露在屏内 = 可见 19dp），再考虑加大本值。
          */
-        const val HANDLE_WIDTH_DP = 14
+        const val HANDLE_WIDTH_DP = 19
         const val HANDLE_HEIGHT_DP = 32
-        const val HANDLE_CORNER_DP = 7
+        const val HANDLE_CORNER_DP = 9
 
         /** 展开态面板（圆角 + 内边距）。 */
         const val MENU_CORNER_DP = 14

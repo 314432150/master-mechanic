@@ -50,7 +50,6 @@ import com.example.mastermechanic.decision.UiStateSignal
 import com.example.mastermechanic.foreground.ForegroundSignal
 import com.example.mastermechanic.recognition.GrayImage
 import com.example.mastermechanic.recognition.PixelBounds
-import com.example.mastermechanic.settings.AppPreferencesStore
 
 /**
  * 采集会话服务（T1-2，ADR-001）：以 mediaProjection 类型前台服务承载一次采集会话。
@@ -265,18 +264,12 @@ class CaptureService : Service() {
         detectTimingStats.reset()
         lastAppliedIntervalMs = ACTIVE_INTERVAL_MS
         lastStatsAt = SystemClock.elapsedRealtime()
-        // B5 / T2-6：会话（重）建立**默认**回到演练——实点必须由用户在**本次会话内**显式开启，
-        // 避免切走 / 重新授权之后仍在实点状态（落实计划口径「每次会话开始前由用户明确指示『这次实点』」）。
-        // 2026-09-14 用户反馈：授权采集会把用户带到游戏，用户**没法在授权后再切回来开实点** ——
-        // 于是"必须先建会话、再切回来开实点"与真实操作顺序相反。改为**显式偏好**：
-        // 默认仍回演练；用户打开「建立采集会话后保留运行方式」时保持其上次选择。
-        val preferences = AppPreferencesStore.loadOrRecover(this)
-        preferences.recoveredReason?.let { MmLog.w(TAG, "应用偏好：$it") }
-        if (preferences.preferences.keepClickModeOnSessionStart) {
-            MmLog.i(TAG, "应用偏好生效：建立会话后保留运行方式（${ClickDispatch.mode.label}）")
-        } else {
-            ClickDispatch.enableDrill()
-        }
+        // B5 / T2-6 的"边界 c"（会话建立 → 回演练）于 2026-09-14 **取消**（用户口径：直接不重置，不加开关）：
+        // 该边界与真实授权路径打架——授予采集权限会把用户带到游戏，用户切不回来开实点，
+        // 于是"先建会话、再开实点"的顺序根本做不到。
+        // 现在：**会话（重）建立不改变运行方式**；运行方式保留到用户下次手动切换。
+        // 仍然保留的两条边界：进程启动 = 演练；无障碍服务断开 / 被中断 = 回演练。
+        MmLog.i(TAG, "建立会话：保留当前运行方式（${ClickDispatch.mode.label}）")
         CaptureSessionSignal.update(CaptureSessionStatus.ACTIVE, SOURCE_USER_CREATED)
     }
 

@@ -50,7 +50,11 @@ object ClickDispatch {
         modeState.value = ClickMode.LIVE
     }
 
-    /** 回到演练（只识别）。用户手动关闭，或采集会话（重）建立时由 CaptureService 调用。 */
+    /**
+     * 回到演练（只识别）。**只有两条路径**（2026-09-14 修订）：
+     * 用户手动关闭开关；无障碍服务断开 / 被中断（见 [uninstall]）。
+     * 采集会话（重）建立**不再**调用它——见 `CaptureService.startSession`。
+     */
     fun enableDrill() {
         modeState.value = ClickMode.DRILL
     }
