@@ -237,6 +237,9 @@
     **首版踩坑（同日真机反馈）**：两行都写 `maxLines=1 + softWrap=false` 想防换行，结果 `softWrap=false` 下文字
     既不换行也不截断、**直接顶出屏幕**；「还差」行还塞在 ✕ 与 ✓ 之间只剩窄条。改为 **`fillMaxWidth` + 允许换行
     （`maxLines=2`）+ 说明文字独占一行**后正常（与选区信息行同一教训：工具栏行不放说明文字）。
+    ③ 删除「尚未框选」文案（用户 2026-09-13：能不能入框选状态自己看得见，是废话），但**保留这一行的占位**
+    （不换行空格 `\u00A0`）——否则第一次画出选框时下方「还差：…」与按钮行会整体下跳；字符串
+    `calibration_selection_none` 同步删除。
     验证：`:app:test -PfastTests` 268 例 0 失败 + `assembleDebug` 通过；界面真机核对并入 T2-3e。
   - **验证**：`CalibrationCodecTest` / `CalibrationModelTest` / `CalibrationSignalsTest` 37 例（v1 兼容、角色往返、
     角色守卫；T2-3d 新增 3 例、T2-3g 新增 6 例 = 角色顺序 / 双角色命名 / 已占名让位 / 非法入参 / 一次写两条共用几何 /

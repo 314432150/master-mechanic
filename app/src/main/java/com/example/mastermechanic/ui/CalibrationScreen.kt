@@ -1031,13 +1031,16 @@ private fun CalibrationWorkbench(
                             null
                         }
                         Text(
+                            // 尚无选区时不写文案（原「尚未框选」，用户 2026-09-13 指出是废话：能不能入框选状态
+                            // 自己看得见），但**必须占位** —— 用不换行空格撑住这一行的高度，
+                            // 否则第一次画出选框时下方「还差：…」与按钮行会整体下跳。
                             text = if (px != null) {
                                 stringResource(
                                     R.string.calibration_selection_info,
                                     px[0], px[1], px[2], px[3],
                                 )
                             } else {
-                                stringResource(R.string.calibration_selection_none)
+                                "\u00A0"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = ON_DARK_SECONDARY,
