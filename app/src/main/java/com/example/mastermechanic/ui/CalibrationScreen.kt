@@ -134,9 +134,6 @@ private val MARKER_ACCENT = Color(0xFFFF5252)
 /** 选框主色 —— 锚点（点击位置）：青色（与红色色相相距最远，黑底上同样醒目）。 */
 private val ANCHOR_ACCENT = Color(0xFF4DD0E1)
 
-/** 选框主色 —— 「写入为」一个都没勾（T2-3g）：中性白，别让它显示成标志红（那会像是已经选了标志）。 */
-private val NEUTRAL_ACCENT = Color.White
-
 /**
  * 标定页（T1-5b 起；T1-5l 按真机反馈重构；T2-2 起支持同状态多条记录）：**产物即唯一数据源**——
  * 全屏工作台里挑帧 / 框选 / 选归属状态，选中状态即写入产物（名称取默认名、重名自动追加序号，
@@ -979,7 +976,7 @@ private fun CalibrationWorkbench(
                             // 多选（T2-3g）：同一个元素既要判状态又要点击时勾两个 —— ✓ 按钮上的角色名同步显示两个
                             // 注意：这行**不能**再往右侧塞第二个元素（2026-09-13 真机 BUG）——分段按钮内部按
                             // weight 抢占整行剩余宽度，同行的其他控件会被挤成 0 宽（文字逐字换行 → 整条底栏变高）。
-                            // 一个都不勾的提示因此放在 ✓ 按钮文案里（见 `calibration_workbench_confirm_none`）。
+                            // 一个都不勾时**不加文字提示**（用户口径）：✓ 置灰 + 上方标签「写入为（可多选）」已经说明一切。
                             RoleToggleRow(
                                 selectedRoles = selectedRoles,
                                 onRoleToggle = onRoleToggle,
@@ -1697,13 +1694,9 @@ private fun DrawScope.drawSelectionOverlay(
     if (rect == null || size.width <= 0f || size.height <= 0f) return
     val marker = SignalRole.MARKER in roles
     val anchor = SignalRole.ANCHOR in roles
-    // 主色（T2-3g）：一个都没勾 = 中性白（还没决定写什么）；只勾锚点才用青色；
-    // 勾了标志（含两个都勾）以标志红为主，锚点青退到内圈
-    val accent = when {
-        roles.isEmpty() -> NEUTRAL_ACCENT
-        anchor && !marker -> ANCHOR_ACCENT
-        else -> MARKER_ACCENT
-    }
+    // 主色：只勾锚点才用青色；勾了标志（含两个都勾）以标志红为主，锚点青退到内圈；
+    // 一个都没勾维持标志红（2026-09-13 用户口径：选框颜色只认"标志 / 锚点"两种，不引入第三种颜色）
+    val accent = if (anchor && !marker) ANCHOR_ACCENT else MARKER_ACCENT
     val topLeft = Offset(rect.left * size.width, rect.top * size.height)
     val boxSize = Size(
         (rect.right - rect.left) * size.width,
