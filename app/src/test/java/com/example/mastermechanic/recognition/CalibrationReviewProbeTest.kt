@@ -21,8 +21,8 @@ import org.junit.Test
  * - 输入帧为设备私有目录 `files/calibration/frames/` 导出的**原始帧**（PNG，ARGB）；
  *   灰度按 [ReplayTool.decodeGrayPng] → [com.example.mastermechanic.capture.RgbaToGray]，
  *   与采集端**同一条亮度路径**（红线 4：不引入任何设备常量）；
- * - 走 `CalibrationData.toLoop()` 的**默认期望集合**（生产口径 = FR-01 弹窗阶段源），
- *   与真机会话同一套「待命搜入口标志（启动页 / 活动弹窗）→ 命中后扩为弹窗期集合 → 命中大厅收回」；
+ * - 两个口径各跑一遍：① `CalibrationData.toLoop()` 的**生产默认**（T2-5 后 = 每轮只搜活动弹窗记录），
+ *   真机会话看到的就是这一列；② 显式全集 `ExpectedSignals.ALL`，用于"这条弹窗被哪条样式记录认出来"的归因；
  * - 帧与标定帧同几何时走零拷贝快路径；不同几何时自动按画面区归一（T1-11c）。
  *
  * 工作目录 `app/build/replay-work/`（不入版本库）：
