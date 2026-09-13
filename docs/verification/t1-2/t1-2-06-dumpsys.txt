@@ -1,0 +1,17 @@
+M1-T1-2 dumpsys media_projection 快照（会话存活核对）
+
+[1] 会话活跃期间（第二会话，21:24–21:26；HOME 切走后静置期间亦复核过同样输出）：
+$ adb shell dumpsys media_projection
+MEDIA PROJECTION MANAGER (dumpsys media_projection)
+Media Projection:
+(com.example.mastermechanic, uid=10452): TYPE_SCREEN_CAPTURE
+
+[2] 系统侧终止后（21:27，系统录屏副作用停止后复核）：
+$ adb shell dumpsys media_projection
+MEDIA PROJECTION MANAGER (dumpsys media_projection)
+Media Projection:
+null
+
+结论：
+- [1] 证明「切走不终止」期间会话在系统侧真实存活（非界面假象）；
+- [2] 证明终止（含测试侧副作用）后无残留会话。

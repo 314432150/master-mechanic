@@ -1,0 +1,57 @@
+M1-T1-3 识别引擎 JVM 测试记录（验收 A2 / A3 / A4）
+设备无关性说明：识别层为纯逻辑（无安卓框架依赖），于 JVM 离线执行；
+测试参数（命中线 0.85 / 差距线 0.1 / 峰值间距 5）为测试数据，非生产硬编码。
+
+执行命令：
+  .\gradlew.bat :app:test
+  .\gradlew.bat :app:testDebugUnitTest --tests 'com.example.mastermechanic.recognition.*'
+结果：全量 32 例全部通过（0 失败）；识别包 18 例全部通过（见下表）
+
+===== 识别包用例明细 =====
+
+TemplateMatcherTest（7 例）
+- exactPatternLocksPositionAndHighScore
+    精确模板：位置锁定 (30,40)、分数 > 0.99
+- linearBrightnessContrastChangeLeavesScoreUnchanged
+    亮度 / 对比度线性变换下位置与高分保持（NCC 归一化不变量，§5-3 ②）
+- partialTranslucentOverlayKeepsMatch
+    目标约 40% 面积半透明遮罩：位置不变、分数 0.65（远高于噪声峰 ~0.25，§5-3 ①）
+- targetOutsideWindowIsNotSeen
+    搜索窗口外目标不产生命中（FR-01 局部搜索的机制基础）
+- windowBoundsFollowImageSize
+    窗口比例按帧尺寸换算（floor/ceil 确定性；400x300 下 0.25/0.5/0.75/1.0 → 100/150/300/300）
+- suppressPeaksPicksStrongestAndDropsNeighbors
+    峰值抑制：近邻候选合并、远处保留为竞争位置
+- suppressPeaksIsStableForEqualScores
+    同分按 y、x 升序 tie-break（确定性，§5-4）
+
+SignalDetectorTest（11 例）
+[判定规则级——§5-2 精确边界]
+- judgeRejectsWhenNoPeaks / judgeRejectsBestBelowThreshold
+    无候选 / 最高分低于命中线 → 未命中
+- judgeMatchesAtExactThresholdWithoutCompetitor
+    最高分恰等于命中线 → 命中（边界语义：低于才未命中）
+- judgeUnreliableWhenRunnerUpAlsoAboveThreshold
+    多处高分：竞争位置也达到命中线 → 不可信
+- judgeUnreliableWhenMarginTooSmall / judgeMatchedWhenMarginSufficient
+    同一组分数（0.97/0.80）、仅差距线不同（0.2 / 0.1）→ 不可信 / 命中
+[图像级——端到端]
+- detectMatchesTargetWithFullAuditRecord
+    A3：命中标志、位置 (30,40)、置信度 >0.99、最强竞争位置四项齐全
+- detectUnreliableWhenTwoIdenticalTargets
+    A4：两处相同目标均超过命中线 → 不可信（按未识别处理）
+- detectNotMatchedWhenTargetAbsent
+    目标不存在 → 未命中
+- multiTemplateSignalMatchesWhicheverTemplatePresent
+    多模板：其一命中即可（另一模板在画面中不存在）
+- replayOfSameInputProducesIdenticalRecords
+    A2：同数据 + 同参数三次重跑，判定记录逐字段一致（见 t1-3-02 回放比对报告）
+
+===== 全量回归（既有套件）=====
+AuthorizationSummaryTest 4 / ForegroundEvaluatorTest 5 / FrameThrottleTest 4 / ExampleUnitTest 1
+全部通过，零回归。
+
+===== 结果对照 =====
+A2 可复现（§5-4）：replayOfSameInputProducesIdenticalRecords + 确定性 tie-break 用例 → 通过
+A3 判定记录（§5-1）：detectMatchesTargetWithFullAuditRecord → 四项齐全
+A4 不可信（§5-2）：judge 规则级边界 2 例 + 图像级多处高分 1 例 → 通过

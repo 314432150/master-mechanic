@@ -1,0 +1,57 @@
+﻿09-13 06:32:47.388  2836  5091 I wm_create_activity: [0,108792474,12621,com.example.mastermechanic/.MainActivity,android.intent.action.MAIN,NULL,NULL,268435456]
+09-13 06:32:49.365  2836  6346 I wm_pause_activity: [0,108792474,com.example.mastermechanic/.MainActivity,userLeaving=true,resumeTopActivity]
+09-13 06:32:59.945  2836  5097 I am_foreground_service_start: [0,com.example.mastermechanic/.service.ResidentService,1,PROC_STATE_TOP,37,37,0,0,0,1,UNKNOWN,1073741824]
+09-13 06:33:02.649  2836  5096 I wm_pause_activity: [0,108792474,com.example.mastermechanic/.MainActivity,userLeaving=true,resumeTopActivity]
+09-13 06:33:35.948  2836  6344 I wm_pause_activity: [0,108792474,com.example.mastermechanic/.MainActivity,userLeaving=false,finish]
+09-13 06:33:36.935  2836  6343 I wm_create_activity: [0,67048989,12622,com.example.mastermechanic/.MainActivity,android.intent.action.MAIN,NULL,NULL,807403520]
+09-13 06:33:44.522  2836  4033 I wm_pause_activity: [0,67048989,com.example.mastermechanic/.MainActivity,userLeaving=true,resumeTopActivity]
+09-13 06:33:48.754  2836  5093 I am_foreground_service_start: [0,com.example.mastermechanic/.service.CaptureService,1,ACTIVITY_STARTER,37,37,0,0,0,1,UNKNOWN,32]
+09-13 06:36:13.970  2836  3255 I am_foreground_service_stop: [0,com.example.mastermechanic/.service.ResidentService,1,PROC_STATE_TOP,37,37,1,1,194025,1,STOP_SERVICE,1073741824]
+09-13 06:36:13.971  2836  3255 I am_foreground_service_stop: [0,com.example.mastermechanic/.service.CaptureService,1,ACTIVITY_STARTER,37,37,0,1,145217,1,STOP_SERVICE,32]
+09-13 06:36:14.581 19758 19758 I MM-Foreground: 前台状态变化: NOT_FOREGROUND -> FOREGROUND（来源: 服务已连接）
+09-13 06:36:14.628 19758 19758 I MM-Floating: 悬浮窗已挂载（状态：未知）
+09-13 06:38:36.792 19758 19758 I MM-Foreground: 前台状态变化: FOREGROUND -> NOT_FOREGROUND（来源: 窗口事件）
+09-13 06:38:36.795 19758 19758 I MM-Floating: 悬浮窗已移除
+09-13 06:38:37.281  2836  5096 I wm_create_activity: [0,73904042,12625,com.example.mastermechanic/.MainActivity,android.intent.action.MAIN,NULL,NULL,807403520]
+09-13 06:38:45.593  2836  4902 I wm_pause_activity: [0,73904042,com.example.mastermechanic/.MainActivity,userLeaving=true,resumeTopActivity]
+09-13 06:38:48.360  2836  5092 I am_foreground_service_start: [0,com.example.mastermechanic/.service.CaptureService,1,PROC_STATE_TOP,37,37,0,0,0,1,UNKNOWN,32]
+09-13 06:38:48.403 19758 19758 I MM-Capture: 标定产物已加载：信号 7 个（标定帧 1440x3168）
+09-13 06:38:48.403 19758 19758 I MM-Capture: 采集会话状态变化: INACTIVE -> ACTIVE（来源: 用户授权会话建立）
+09-13 06:38:48.437 19758 19758 I MM-Foreground: 前台状态变化: NOT_FOREGROUND -> FOREGROUND（来源: 窗口事件）
+09-13 06:38:48.450 19758 19758 I MM-Floating: 悬浮窗已挂载（状态：未知）
+09-13 06:38:49.057 19758 21044 I MM-Capture: 识别循环恢复：目标回到前台
+09-13 06:38:49.057 19758 21044 I MM-Capture: 节流间隔切换: 1000ms -> 3000ms（稳定轮）
+09-13 06:38:55.289 19758 21044 I MM-Capture: 节流间隔切换: 3000ms -> 1000ms（变化 / 过渡轮）
+09-13 06:38:55.289 19758 21044 I MM-UiState: 界面状态变化: 未知 -> 启动页（连续 2 次命中（进入））
+09-13 06:38:55.653 19758 21044 I MM-Capture: 节流间隔切换: 1000ms -> 3000ms（稳定轮）
+09-13 06:38:58.407 19758 21044 I MM-Capture: 帧管线统计: 窗口 10004ms 接收 447 帧 / 处理 4 帧；识别 4 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:39:08.409 19758 21044 I MM-Capture: 帧管线统计: 窗口 10001ms 接收 553 帧 / 处理 4 帧；识别 4 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:39:18.412 19758 21044 I MM-Capture: 帧管线统计: 窗口 10004ms 接收 503 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:39:28.413 19758 21044 I MM-Capture: 帧管线统计: 窗口 10000ms 接收 553 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:39:38.413 19758 21044 I MM-Capture: 帧管线统计: 窗口 10000ms 接收 539 帧 / 处理 4 帧；识别 4 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:39:48.412 19758 21044 I MM-Capture: 帧管线统计: 窗口 10000ms 接收 507 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:39:58.414 19758 21044 I MM-Capture: 帧管线统计: 窗口 10001ms 接收 559 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:40:08.417 19758 21044 I MM-Capture: 帧管线统计: 窗口 10003ms 接收 540 帧 / 处理 4 帧；识别 4 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:40:18.416 19758 21044 I MM-Capture: 帧管线统计: 窗口 10000ms 接收 511 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:40:20.730 19758 21044 I MM-Capture: 节流间隔切换: 3000ms -> 1000ms（变化 / 过渡轮）
+09-13 06:40:20.730 19758 21044 I MM-UiState: 界面状态变化: 启动页 -> 选择服务器（连续 2 次命中（进入））
+09-13 06:40:21.010 19758 21044 I MM-Capture: 节流间隔切换: 1000ms -> 3000ms（稳定轮）
+09-13 06:40:28.432 19758 21044 I MM-Capture: 帧管线统计: 窗口 10016ms 接收 494 帧 / 处理 4 帧；识别 4 轮（信号 7 个），当前界面状态「选择服务器」；最近帧 1440x3168
+09-13 06:40:38.433 19758 21044 I MM-Capture: 帧管线统计: 窗口 10001ms 接收 505 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「选择服务器」；最近帧 1440x3168
+09-13 06:40:39.802 19758 21044 I MM-Capture: 节流间隔切换: 3000ms -> 1000ms（变化 / 过渡轮）
+09-13 06:40:39.802 19758 21044 I MM-UiState: 界面状态变化: 选择服务器 -> 启动页（连续 2 次命中（进入））
+09-13 06:40:40.066 19758 21044 I MM-Capture: 节流间隔切换: 1000ms -> 3000ms（稳定轮）
+09-13 06:40:48.449 19758 21044 I MM-Capture: 帧管线统计: 窗口 10016ms 接收 455 帧 / 处理 4 帧；识别 4 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:40:58.451 19758 21044 I MM-Capture: 帧管线统计: 窗口 10001ms 接收 543 帧 / 处理 4 帧；识别 4 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:41:08.453 19758 21044 I MM-Capture: 帧管线统计: 窗口 10002ms 接收 561 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:41:18.465 19758 21044 I MM-Capture: 帧管线统计: 窗口 10013ms 接收 509 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:41:28.468 19758 21044 I MM-Capture: 帧管线统计: 窗口 10003ms 接收 541 帧 / 处理 4 帧；识别 4 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:41:38.484 19758 21044 I MM-Capture: 帧管线统计: 窗口 10016ms 接收 559 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:41:48.487 19758 21044 I MM-Capture: 帧管线统计: 窗口 10003ms 接收 511 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:41:58.503 19758 21044 I MM-Capture: 帧管线统计: 窗口 10015ms 接收 539 帧 / 处理 4 帧；识别 4 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:42:08.519 19758 21044 I MM-Capture: 帧管线统计: 窗口 10016ms 接收 554 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:42:18.520 19758 21044 I MM-Capture: 帧管线统计: 窗口 10001ms 接收 509 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:42:28.523 19758 21044 I MM-Capture: 帧管线统计: 窗口 10003ms 接收 538 帧 / 处理 4 帧；识别 4 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:42:38.540 19758 21044 I MM-Capture: 帧管线统计: 窗口 10017ms 接收 555 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:42:48.542 19758 21044 I MM-Capture: 帧管线统计: 窗口 10002ms 接收 505 帧 / 处理 3 帧；识别 3 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168
+09-13 06:42:58.542 19758 21044 I MM-Capture: 帧管线统计: 窗口 10000ms 接收 538 帧 / 处理 4 帧；识别 4 轮（信号 7 个），当前界面状态「启动页」；最近帧 1440x3168

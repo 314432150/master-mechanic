@@ -1,0 +1,98 @@
+M1-T1-4 状态机（滞回）与识别循环 JVM 测试记录（验收 A5）
+设备无关性说明：决策层（decision 包）与帧适配（capture 包）为纯逻辑（无安卓框架依赖），
+于 JVM 离线执行；测试参数为测试数据，非生产硬编码（生产参数来自 T1-5 标定）；
+未标定运行（RecognitionLoop.uncalibrated）为 T1-5 标定产物就绪前的既定链路验证方式。
+
+执行命令：
+  .\gradlew.bat :app:test
+结果：全量 60 例全部通过（0 失败 / 0 错误 / 0 跳过）；T1-4 新增 28 例（见下表）
+构建：.\gradlew.bat :app:assembleDebug 成功
+
+===== T1-4 新增用例明细（28 例）=====
+
+UiStateMachineTest（12 例）——滞回时序（§2.2）
+【进入：连续 2 次命中】
+- singleHitDoesNotEnter
+    单次命中不进入（保持「未知」）
+- consecutiveHitsEnterState
+    连续 2 次命中 → UNKNOWN -> FARM，恰好 1 条转移事件
+- brokenStreakDoesNotEnter
+    命中—未命中—命中（断链）不构成连续 → 不进入
+【离开：连续 3 次未命中】
+- twoMissesKeepState
+    连续 2 次未命中保持当前状态（不提前离开）
+- threeMissesLeaveToUnknown
+    连续 3 次未命中 → FARM -> UNKNOWN（连续 3 次未命中任何标志 → 未知）
+- hitResetsMissStreak
+    中途命中清零未命中计数（未命中 1 → 命中 → 再未命中 2 轮：不离开）
+【切换与优先级】
+- newStateEnteredOnTwoConsecutiveHits
+    状态间切换：连续 2 次 HALL 命中 → FARM -> HALL（进入与离开独立判定，不等待旧状态离开计数）
+- highestPriorityStateWinsWhenSeveralHit
+    同轮多状态命中 → 取声明顺序最靠前（ACTIVITY_POPUP 优先于 FARM）
+【未知】
+- staysUnknownWithoutAnyHit
+    连续 4 轮无任何命中：保持「未知」、无事件（当前为「未知」时不再累计离开计数）
+【非前台冻结（FR-09：不消耗连续计数）】
+- frozenRoundsDoNotConsumeEnterCounter
+    命中 1 → 冻结 ×2 → 再命中 1 → 即达连 2 进入（冻结轮不消耗进入计数）
+- frozenRoundsDoNotConsumeLeaveCounter
+    未命中 1 → 冻结 ×2 → 未命中 1 ≠ 连 3 → 保持状态（冻结轮不消耗离开计数）
+【确定性】
+- sameSequenceProducesIdenticalTransitions
+    同序列两次运行转移事件列表逐字段一致（§5-4）
+
+RecognitionLoopTest（5 例）——端到端编排（帧数据 → 判定 → 状态命中 → 状态机）
+- entersStateAfterTwoConsecutiveHits
+    合成画面含目标纹理：第 1 轮稳定（stable）→ 第 2 轮连 2 进入 FARM（变化轮 stable=false，供 NFR-02 短间隔）
+- nonForegroundRoundFreezesAndSkipsRecognition
+    非前台轮：不产生判定数据、冻结标记、无事件；恢复后下一前台轮即连 2 进入（冻结不消耗计数）
+- absentTargetKeepsUnknown
+    目标不存在：连续 5 轮「未知」，无事件
+- uncalibratedLoopRunsWithNoSignals
+    未标定空配置（信号 0 个）可运行：无判定、状态「未知」、稳定
+- sameSequenceProducesIdenticalResults
+    同序列（含冻结轮）两次运行 RoundResult 逐字段一致（§5-4）
+
+SignalStateMappingTest（5 例）——信号—状态映射
+- anySignalHitMakesStateHit
+    多信号构成的状态：任一信号 MATCHED 即状态命中（§2.1「任一命中即为大厅」）
+- ignoresNotMatchedAndUnreliable
+    NOT_MATCHED / UNRELIABLE 均不计入（§5-2 不可信按未识别处理）
+- severalStatesResolvedTogether
+    多条规则同时命中 → 状态集合完整（顺序确定性）
+- unknownCannotBeRuleTarget
+    「未知」不可作为映射目标（构造期拒绝）
+- ruleRequiresAtLeastOneSignalName
+    规则至少含一个信号名（构造期拒绝）
+
+RgbaToGrayTest（4 例）——帧适配（RGBA_8888 → 灰度）
+- bt601KnownValues
+    BT.601 已知值：红 76 / 绿 150 / 蓝 29 / 白 255 / 黑 0
+- rowStridePaddingSkipped
+    行跨度填充：2×2（rowStride=12）逐像素正确（若按连续布局误读将读到填充值 127）
+- rejectsInsufficientData
+    数据不足 → 拒绝并抛 IllegalArgumentException（不静默）
+- rejectsRowStrideBelowWidth
+    rowStride < width → 拒绝（非法布局）
+
+FrameThrottleTest（6 例，其中 T1-4 新增 2 例）
+- setIntervalTakesEffectOnNextDecision（新增）
+    间隔调大 / 调小均在下次判定生效（NFR-02 两档切换机制）
+- setIntervalRejectsNonPositive（新增）
+    非正间隔拒绝（不变量）
+- firstFrameAlwaysPasses / framesWithinIntervalAreSkipped /
+  frameAtIntervalBoundaryPasses / intervalRestartsAfterEachPass（既有 4 例）
+
+===== 全量回归（既有套件）=====
+AuthorizationSummaryTest 4 / ForegroundEvaluatorTest 5 / ExampleUnitTest 1 /
+SignalDetectorTest 11 / TemplateMatcherTest 7 —— 全部通过，零回归。
+
+===== 结果对照 =====
+A5 进入（连续 2 次命中）：consecutiveHitsEnterState / singleHitDoesNotEnter / brokenStreakDoesNotEnter → 通过
+A5 离开（连续 3 次未命中）：twoMissesKeepState / threeMissesLeaveToUnknown / hitResetsMissStreak → 通过
+A5 未知（连续 3 次未命中任何标志）：staysUnknownWithoutAnyHit → 通过
+A5 非前台冻结（FR-09）：frozenRoundsDoNotConsumeEnterCounter / frozenRoundsDoNotConsumeLeaveCounter
+    / nonForegroundRoundFreezesAndSkipsRecognition → 通过
+真机部分（识别循环运行与冻结核对）见 t1-4-02-runtime-log.txt；
+真实标志驱动的状态切换（进入 / 离开 / 未知）观察依赖 T1-5 标定产物，届时补充（任务卡备注既定）。

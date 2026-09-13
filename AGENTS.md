@@ -35,6 +35,11 @@
 - `.\gradlew.bat :app:test` — 运行单元测试
 - `.\gradlew.bat :app:assembleDebug` — 构建调试包
 - `.\gradlew.bat :app:assembleRelease` — 构建发布包（包体验收用）
+- `powershell -ExecutionPolicy Bypass -File tools\t1-13b-device-signal-cost.ps1 -UpdateDoc` — 采真机逐信号耗时并回填证据表（需真机；应用已跑过对应界面）
+
+取证 / 采集脚本放 `tools\`，**源码必须纯 ASCII**（含注释）：Windows PowerShell 5.1 会把无 BOM 的 UTF-8
+`.ps1` 按 GBK 读取，中文注释的续字节会吞掉换行、把下一条语句并进注释（症状：变量静默为 `$null`）。
+需要在输出里写中文时，用 `\uXXXX` 转义构造（见该脚本的 `Cn`）。
 
 依赖统一走版本目录 `gradle/libs.versions.toml`；新增依赖前先说明用途并征得确认。
 

@@ -10,7 +10,8 @@
     <string name="auth_capture_label">屏幕采集</string>
     <string name="auth_capture_desc">用于识别游戏画面；授权弹窗可选择共享范围时，请选择《王者荣耀》；系统要求每次采集会话都需重新授权</string>
     <string name="auth_capture_action">授予采集权限</string>
-    <string name="auth_capture_status_granted">本会话已授权</string>
+    <string name="auth_capture_action_stop">停止采集</string>
+    <string name="auth_capture_status_granted">采集中</string>
     <string name="auth_capture_status_missing">未授权</string>
     <string name="auth_notifications_label">通知</string>
     <string name="auth_notifications_desc">用于展示常驻运行状态，避免「什么都不发生」的静默失败</string>
@@ -36,8 +37,81 @@
     <string name="resident_notification_title">MasterMechanic 守护运行中</string>
     <string name="resident_notification_text">常驻后台；点击打开应用</string>
 
-    <!-- 悬浮窗壳（M0-T0-5） -->
-    <string name="floating_handle_text">待命</string>
+    <!-- 采集会话（M1-T1-2） -->
+    <string name="capture_channel_name">屏幕采集</string>
+    <string name="capture_channel_desc">采集会话期间常驻展示，便于随时确认与停止</string>
+    <string name="capture_notification_title">屏幕采集中</string>
+    <string name="capture_notification_text">用于识别游戏画面；点击打开应用</string>
+
+    <!-- 悬浮窗壳（M0-T0-5）与状态展示（M1-T1-7） -->
+    <string name="floating_status_text">状态：%1$s</string>
     <string name="accessibility_service_label">MasterMechanic</string>
     <string name="accessibility_service_description">用于代替手动重复操作：点击由本服务执行，不会读取或修改游戏数据。</string>
+
+    <!-- 识别标定（M1-T1-5） -->
+    <string name="auth_open_calibration">识别标定</string>
+    <string name="calibration_title">识别标定</string>
+    <string name="calibration_subtitle">在目标设备上采集画面样本，在全屏工作台框选界面标志并选归属状态——产物（模板 / 搜索窗口 / 匹配参数）即唯一数据源，框完即落盘。识别运行时只使用产物中的数值，代码不含任何设备绑定参数。</string>
+    <string name="calibration_back">返回授权页</string>
+    <string name="calibration_capture_missing">尚未建立采集会话：请先回到「授权状态」页授予屏幕采集权限，否则无法录制画面样本。</string>
+    <string name="calibration_frames_title">画面样本采集</string>
+    <string name="calibration_record_start">开始录制</string>
+    <string name="calibration_record_stop">停止录制</string>
+    <string name="calibration_frames_count">已存 %1$d 帧</string>
+    <string name="calibration_frames_clear">清空帧池</string>
+    <string name="calibration_frames_hint">录制开启后切到游戏：在各界面停留 2~3 秒即可采到样本（每秒 1 帧，只录目标前台时的画面）。回到本页关闭录制。</string>
+    <string name="calibration_frames_empty">暂无样本帧</string>
+    <string name="calibration_workbench_open">打开标定工作台</string>
+    <string name="calibration_workbench_title">标定工作台</string>
+    <string name="calibration_workbench_done">完成</string>
+    <string name="calibration_workbench_frame_index">%1$d / %2$d 帧</string>
+    <string name="calibration_workbench_frames">样本帧（点选切换）</string>
+    <string name="calibration_workbench_select">框选</string>
+    <string name="calibration_workbench_cancel">✕</string>
+    <string name="calibration_workbench_confirm">✓ 写入</string>
+    <string name="calibration_need_state">请先选择归属状态，再点 ✓ 写入产物。</string>
+    <string name="calibration_workbench_write_hint">浏览模式：左右滑动换帧、点缩略图跳帧；点「框选」进入框选模式：拖动画布建框（框内移动 / 框外新建 / 左上 ✕ 清除重画），上方选归属状态，点 ✓ 写入产物（同名覆盖），✕ 放弃。双指捏合缩放 / 平移画面，尽量只含标志本身与稳定背景。</string>
+    <string name="calibration_annotate_hint">浏览模式：左右滑动大图切换样本帧（缩略图过半即同步）；点「框选」进入框选模式——拖动空白处新建选框，拖动框内整体移动，点选框左上角 × 清除重画，外层白色细线仅作标示；双指捏合缩放 / 平移画面（小标志先放大再框选）。选好归属状态后点 ✓ 写入产物（同名信号覆盖），✕ 放弃本次框选。尽量只含标志本身与稳定背景，避开动态元素。</string>
+    <string name="calibration_annotate_hint_icon">ⓘ</string>
+    <string name="calibration_hint_close">知道了</string>
+    <string name="calibration_selection_none">尚未框选</string>
+    <string name="calibration_zoom_label">画面缩放 ×%1$s（双指调整，可缩回 1 倍）</string>
+    <string name="calibration_preview_loading">画面加载中…</string>
+    <string name="calibration_preview_failed">画面加载失败（样本帧不可读）</string>
+    <string name="calibration_selection_info">选区（帧像素）：%1$d,%2$d → %3$d,%4$d</string>
+    <string name="calibration_signal_state_label">归属状态</string>
+    <string name="calibration_need_selection">请先在画面上框选标志，再确认写入。</string>
+    <string name="calibration_signal_written">已写入产物：%1$s（%2$s，模板 %3$d×%4$d）</string>
+    <string name="calibration_signal_replaced">已覆盖产物中的信号：%1$s（%2$s，模板 %3$d×%4$d）</string>
+    <string name="calibration_write_failed">写入失败：%1$s</string>
+    <string name="calibration_signal_deleted">已删除信号：%1$s</string>
+    <string name="calibration_view">查看</string>
+    <string name="calibration_signal_remove">删除</string>
+    <string name="calibration_signal_item">%1$s → %2$s</string>
+    <string name="calibration_signal_meta">模板 %1$d×%2$d ｜ 窗口 %3$d,%4$d → %5$d,%6$d</string>
+    <string name="calibration_template_title">模板详情：%1$s</string>
+    <string name="calibration_template_meta">归属状态 %1$s ｜ 模板 %2$d×%3$d（%4$d 条）</string>
+    <string name="calibration_template_window">标定帧 %1$d×%2$d ｜ 搜索窗口（帧像素）：%3$d,%4$d → %5$d,%6$d</string>
+    <string name="calibration_param_title">匹配参数（产物级；编辑合法即写入产物）</string>
+    <string name="calibration_param_threshold">命中线</string>
+    <string name="calibration_param_margin">差距线</string>
+    <string name="calibration_param_min_distance">峰值间距</string>
+    <string name="calibration_param_invalid">参数非法：命中线需在 (0,1]，差距线 ≥ 0，峰值间距 ≥ 1</string>
+    <string name="calibration_param_pending">尚无产物：参数将随首个信号一并写入。</string>
+    <string name="calibration_param_applied">参数已写入产物。</string>
+    <string name="calibration_delete">删除整个产物</string>
+    <string name="calibration_artifact_title">标定产物</string>
+    <string name="calibration_artifact_none">当前无标定产物（识别循环以空配置运行）。打开工作台框选并点归属状态即可写入首条信号。</string>
+    <string name="calibration_artifact_present">当前产物：信号 %1$d 个（标定帧 %2$d×%3$d）。</string>
+    <string name="calibration_artifact_broken">产物解析失败：文件损坏或格式不符，请重新标定保存。</string>
+    <string name="calibration_take_effect">写入 / 删除后在下次建立采集会话时生效（停止采集后重新授权）。</string>
+    <string name="calibration_deleted">产物已删除。</string>
+    <string name="calibration_geometry_mismatch">画布几何不一致：本次帧 %1$dx%2$d，产物 %3$dx%4$d。请先删除产物后重标，或在与产物相同方向的画布下建会话。</string>
+    <string name="calibration_error_frame_decode">帧文件解码失败</string>
+    <string name="calibration_error_selection_too_small">选区太小：原图至少需要 %1$d×%2$d 像素</string>
+
+    <!-- 运行方式（M1-T1-7 演练模式） -->
+    <string name="run_mode_label">运行方式</string>
+    <string name="run_mode_dry_run">演练（只识别、不点击）</string>
+    <string name="run_mode_desc">当前版本只识别画面状态、不产生任何点击，用于在目标设备上验证识别能力；识别到的界面状态会实时显示在游戏内的悬浮窗上。自动点击能力将在后续版本开放，演练模式将长期保留用于回归验证。</string>
 </resources>
