@@ -66,9 +66,14 @@ import kotlinx.coroutines.delay
  *
  * @param resumeTick 每次回到前台自增，用于从系统设置页返回后刷新状态。
  * @param onOpenCalibration 进入「识别标定」页（T1-5b）。
+ * @param onOpenPatrolConfig 进入「巡查配置」页（M3-T3-3，FR-03）。
  */
 @Composable
-fun AuthorizationRoute(resumeTick: Int, onOpenCalibration: () -> Unit) {
+fun AuthorizationRoute(
+    resumeTick: Int,
+    onOpenCalibration: () -> Unit,
+    onOpenPatrolConfig: () -> Unit,
+) {
     val context = LocalContext.current
     var captureActive by remember { mutableStateOf(CaptureSessionSignal.isActive) }
     var refreshTick by remember { mutableStateOf(0) }
@@ -160,6 +165,7 @@ fun AuthorizationRoute(resumeTick: Int, onOpenCalibration: () -> Unit) {
             reconcileTick++ // 服务停止后本页状态延迟校正
         },
         onOpenCalibration = onOpenCalibration,
+        onOpenPatrolConfig = onOpenPatrolConfig,
     )
 }
 
@@ -175,6 +181,7 @@ fun AuthorizationScreen(
     onStopResident: () -> Unit,
     onStopCapture: () -> Unit,
     onOpenCalibration: () -> Unit,
+    onOpenPatrolConfig: () -> Unit,
 ) {
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -228,6 +235,12 @@ fun AuthorizationScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(text = stringResource(R.string.auth_open_calibration))
+            }
+            OutlinedButton(
+                onClick = onOpenPatrolConfig,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = stringResource(R.string.auth_open_patrol_config))
             }
         }
     }
@@ -513,6 +526,7 @@ private fun AuthorizationScreenPreview() {
             onStopResident = {},
             onStopCapture = {},
             onOpenCalibration = {},
+            onOpenPatrolConfig = {},
         )
     }
 }

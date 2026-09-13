@@ -118,6 +118,37 @@
     <string name="calibration_error_frame_decode">帧文件解码失败</string>
     <string name="calibration_error_selection_too_small">选区太小：原图至少需要 %1$d×%2$d 像素</string>
 
+    <!-- 巡查配置（M3-T3-3 / FR-03） -->
+    <string name="auth_open_patrol_config">巡查配置</string>
+    <string name="patrol_title">巡查配置</string>
+    <string name="patrol_subtitle">每项 = 一个区服名称 + 一个目标好友名称，巡查时按列表顺序依次执行。这里只校验「名称不得为空」；能不能在界面上唯一找到这个名称，要到巡查开始时才判断（找不到或不止一个就停下，不会猜着点）。</string>
+    <string name="patrol_back">返回授权页</string>
+    <string name="patrol_list_title">巡查列表（%1$d 项）</string>
+    <string name="patrol_empty">尚无巡查项。点「新增巡查项」添加第一项。</string>
+    <string name="patrol_index">%1$d.</string>
+    <string name="patrol_item_friend">目标好友：%1$s</string>
+    <string name="patrol_add">新增巡查项</string>
+    <string name="patrol_edit">编辑</string>
+    <string name="patrol_move_up">上移</string>
+    <string name="patrol_move_down">下移</string>
+    <string name="patrol_delete">删除</string>
+    <string name="patrol_clear">整体清空</string>
+    <string name="patrol_clear_title">清空全部巡查项？</string>
+    <string name="patrol_clear_body">将删除当前全部 %1$d 项巡查配置，此操作不可撤销。</string>
+    <string name="patrol_clear_confirm">清空</string>
+    <string name="patrol_cancel">取消</string>
+    <string name="patrol_dialog_add">新增巡查项</string>
+    <string name="patrol_dialog_edit">编辑巡查项</string>
+    <string name="patrol_field_server">区服名称</string>
+    <string name="patrol_field_friend">目标好友名称</string>
+    <string name="patrol_field_required">区服名称与目标好友名称均不得为空（也不能只剩空格）。</string>
+    <string name="patrol_field_separator">名称里不能出现「|」或换行。</string>
+    <string name="patrol_confirm">保存</string>
+    <string name="patrol_save_failed">保存失败：%1$s</string>
+    <string name="patrol_load_failed">巡查配置解析失败：%1$s</string>
+    <string name="patrol_rebuild">清空重建</string>
+    <string name="patrol_hint">同一区服可以重复添加（同一区服拜访多个好友）。</string>
+
     <!-- 运行方式（M1-T1-7 演练模式；T2-6 开放实点开关） -->
     <string name="run_mode_label">运行方式</string>
     <string name="run_mode_dry_run">演练（只识别、不点击）</string>

@@ -11,6 +11,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.example.mastermechanic.ui.AuthorizationRoute
 import com.example.mastermechanic.ui.CalibrationRoute
+import com.example.mastermechanic.ui.PatrolConfigRoute
 import com.example.mastermechanic.ui.theme.MasterMechanicTheme
 
 class MainActivity : ComponentActivity() {
@@ -28,14 +29,19 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MasterMechanicTheme {
-                // 页面切换：0 = 授权与运行，1 = 识别标定（T1-5b）
+                // 页面切换：0 = 授权与运行，1 = 识别标定（T1-5b），2 = 巡查配置（M3-T3-3）
                 var screen by rememberSaveable { mutableStateOf(0) }
                 when (screen) {
                     0 -> AuthorizationRoute(
                         resumeTick = resumeTick.intValue,
                         onOpenCalibration = { screen = 1 },
+                        onOpenPatrolConfig = { screen = 2 },
                     )
-                    else -> CalibrationRoute(
+                    1 -> CalibrationRoute(
+                        resumeTick = resumeTick.intValue,
+                        onBack = { screen = 0 },
+                    )
+                    else -> PatrolConfigRoute(
                         resumeTick = resumeTick.intValue,
                         onBack = { screen = 0 },
                     )
