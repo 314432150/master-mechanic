@@ -24,15 +24,17 @@ import com.example.mastermechanic.patrol.PatrolRequestSignal
 /**
  * 悬浮窗（FR-07 / ADR-004）：**两个部件、两个窗口**——
  *
- * 1. **状态标签窗**：显示「状态：X」与「动作：Y」（无动作时不显示第二行），**可拖动**、默认横屏底部居中；
- * 2. **手柄窗**：紧凑的**扁半圆**，贴边时一半移出屏幕；按住可拖动（位移超过系统触摸滑动阈值才算拖动），
- *    抬手吸附最近边缘并持久化；单击展开 / 收起菜单；菜单项只**发出请求事件**（M4 消费），
- *    M3 不产生任何游戏点击。
+ * 1. **状态标签窗**：半透明黑底 + 白字，显示「状态：X」与「动作：Y」（无动作时不显示第二行）；
+ *    **可拖动**、默认横屏底部居中；
+ * 2. **手柄窗**：贴边的一条**窄竖条**（半透明琥珀黄 + 朝向屏幕中心的箭头），
+ *    **一开始就贴边、拖不动到屏幕中间**（拖动只沿边缘上下走）；单击展开菜单；
+ *    菜单项只**发出请求事件**（M4 消费），M3 不产生任何游戏点击。
  *
- * 外观（2026-09-14 用户口径）：黑底游戏画面上必须看得清 → **近白底 + 亮蓝描边 + 深色文字**
- * （原先的半透明深色在暗画面上"就是一块更黑的东西"，看不清）。
+ * 外观口径（2026-09-14 用户定稿）：状态标签回到**半透明黑底 + 白字**；
+ * 手柄用**半透明琥珀黄**、更窄（可见约 14dp）；展开菜单参考 vivo 手机游戏魔盒的形态——
+ * 深色半透明圆角面板 + 「图标 + 文案」的功能行。
  *
- * 触摸口径（2026-09-14 修订，见 ADR-004「修订」）：**状态标签也允许拦截自身覆盖范围内的触摸**
+ * 触摸口径（2026-09-14 修订，见 ADR-004「修订」）：状态标签也允许拦截自身覆盖范围内的触摸
  * （因为它要能拖动）；"不拦截游戏操作"由**尺寸紧凑**承接——两个部件都只吞自己那一小块矩形。
  *
  * 可见性由调用方按前台信号驱动（非前台整窗移除、回前台以收起态重建）；本类自行编组到主线程。
@@ -97,12 +99,15 @@ class FloatingWindow(private val context: Context) {
         label = labelView
         panel = panelView
         applyExpandedState()
-        // 挂载前先手工测一次尺寸：把初始位置算好再 addView，避免窗口先在屏幕左上角闪现一帧
-        measureSelf(panelView)
+
+        // 收起态尺寸是**常量**，不靠测量：空文字的 MATCH_PARENT 手柄测出来是 0 宽，
+        // 会把初始位置算成"贴着屏幕外侧"（真机表现：看不到手柄与标签，直到位置被重置）。
+        val panelWidth = dp(HANDLE_WIDTH_DP)
+        val panelHeight = dp(HANDLE_HEIGHT_DP)
         measureSelf(labelView)
         val initial = computeOffsets(
-            panelView.measuredWidth,
-            panelView.measuredHeight,
+            panelWidth,
+            panelHeight,
             labelView.measuredWidth,
             labelView.measuredHeight,
         )
@@ -111,6 +116,8 @@ class FloatingWindow(private val context: Context) {
             windowManager.addView(
                 panelView,
                 panelParams().apply {
+                    width = panelWidth
+                    height = panelHeight
                     x = initial.panelX
                     y = initial.panelY
                 },
@@ -130,13 +137,15 @@ class FloatingWindow(private val context: Context) {
             panel = null
             return
         }
-        applyExpandedState() // 此时 layoutParams 已就绪：把收起态的固定宽度真正应用上
+        // 布局变化（文案变长 / 菜单展开）后自动重新落位：不依赖一次性 post 的时序
+        attachLayoutRefresh(panelView)
+        attachLayoutRefresh(labelView)
         // 重建时以当前值初始化（监听只覆盖后续变化）
         applyStatusText(UiStateSignal.status)
         applyActionText(FloatingActionSignal.action)
         UiStateSignal.addListener(onStateChanged)
         FloatingActionSignal.addListener(onActionChanged)
-        panelView.post { applyPositions() }
+        applyPositions()
         MmLog.i(
             TAG,
             "悬浮窗已挂载（手柄停靠 ${positions.handle.side.token}，状态标签中心 " +
@@ -168,19 +177,19 @@ class FloatingWindow(private val context: Context) {
     private fun buildLabel(): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(8), dp(4), dp(8), dp(4))
-        statusText = textView(12f, TEXT_COLOR).also { addView(it) }
-        actionText = textView(11f, ACTION_COLOR).also {
+        background = labelBackground()
+        statusText = textView(12f, LABEL_TEXT_COLOR).also { addView(it) }
+        actionText = textView(11f, LABEL_ACTION_COLOR).also {
             it.visibility = View.GONE
             addView(it)
         }
-        background = roundedBackground(dp(LABEL_CORNER_DP))
         setOnClickListener { /* 标签不承担动作：点它不做任何事（拖动才是它的交互） */ }
         setOnTouchListener(::onLabelTouch)
     }
 
     private fun buildPanel(): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        handle = textView(14f, TEXT_COLOR).apply {
+        handle = textView(13f, HANDLE_TEXT_COLOR).apply {
             gravity = Gravity.CENTER
             contentDescription = context.getString(R.string.floating_handle_desc)
         }
@@ -199,14 +208,27 @@ class FloatingWindow(private val context: Context) {
     private fun buildMenu(): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         visibility = View.GONE
-        addView(menuItem(R.string.floating_menu_start_patrol) { onStartPatrol() })
+        addView(
+            menuRow(
+                glyph = context.getString(R.string.floating_menu_glyph_patrol),
+                textRes = R.string.floating_menu_start_patrol,
+            ) { onStartPatrol() },
+        )
     }
 
-    private fun menuItem(textRes: Int, onClick: () -> Unit): TextView =
-        textView(12f, TEXT_COLOR).apply {
-            text = context.getString(textRes)
-            gravity = Gravity.CENTER
-            setPadding(dp(12), dp(8), dp(12), dp(8))
+    /** 菜单功能行（参考 vivo 游戏魔盒）：左侧图标 + 文案，整行可点。 */
+    private fun menuRow(glyph: String, textRes: Int, onClick: () -> Unit): LinearLayout =
+        LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            addView(
+                textView(12f, MENU_GLYPH_COLOR).apply {
+                    text = glyph
+                    setPadding(0, 0, dp(8), 0)
+                },
+            )
+            addView(textView(12f, MENU_TEXT_COLOR).apply { text = context.getString(textRes) })
             setOnClickListener { onClick() }
         }
 
@@ -215,67 +237,94 @@ class FloatingWindow(private val context: Context) {
         setTextColor(color)
     }
 
-    /** 常规圆角底（四角都圆）：状态标签与展开态面板用。 */
-    private fun roundedBackground(radiusPx: Int): GradientDrawable = GradientDrawable().apply {
-        cornerRadius = radiusPx.toFloat()
-        setColor(SURFACE_COLOR)
-        setStroke(dp(STROKE_DP), STROKE_COLOR)
+    /** 状态标签底：**半透明黑 + 白字**（2026-09-14 用户口径），描一道极淡白线以便在黑底上看出轮廓。 */
+    private fun labelBackground(): GradientDrawable = GradientDrawable().apply {
+        cornerRadius = dp(LABEL_CORNER_DP).toFloat()
+        setColor(LABEL_FILL_COLOR)
+        setStroke(dp(1), LABEL_STROKE_COLOR)
     }
 
-    /** 贴边手柄底：**贴屏幕边缘的一侧是直角，朝向屏幕中心的一侧是大圆角**（扁半圆）。 */
-    private fun edgeBackground(side: FloatingSide, radiusPx: Int): GradientDrawable = GradientDrawable().apply {
-        val r = radiusPx.toFloat()
+    /** 展开态面板底（参考 vivo 游戏魔盒）：深色半透明圆角面板 + 淡琥珀描边。 */
+    private fun panelBackground(): GradientDrawable = GradientDrawable().apply {
+        cornerRadius = dp(MENU_CORNER_DP).toFloat()
+        setColor(MENU_FILL_COLOR)
+        setStroke(dp(1), MENU_STROKE_COLOR)
+    }
+
+    /**
+     * 贴边手柄底：**贴屏幕边缘的一侧是直角，朝向屏幕中心的一侧是大圆角**；
+     * 半透明琥珀黄填充（2026-09-14 用户口径）。
+     */
+    private fun handleBackground(side: FloatingSide): GradientDrawable = GradientDrawable().apply {
+        val r = dp(HANDLE_CORNER_DP).toFloat()
         // 顺序：topLeft、topRight、bottomRight、bottomLeft
         cornerRadii = when (side) {
             FloatingSide.RIGHT -> floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
             FloatingSide.LEFT -> floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f)
         }
-        setColor(SURFACE_COLOR)
-        setStroke(dp(STROKE_DP), STROKE_COLOR)
+        setColor(HANDLE_FILL_COLOR)
+        setStroke(dp(1), HANDLE_STROKE_COLOR)
     }
 
-    /** 收起 / 展开：形状、尺寸、文案、菜单可见性一次性切齐（T3-7 的扁半圆与收窄就在这里）。 */
+    /**
+     * 收起 / 展开的形态切换：形状、尺寸、文案、箭头朝向、菜单可见性一次切齐。
+     *
+     * 收起态（贴边窄条）：**文字只出现在"露在屏内"的那一半**——手柄一半在屏外，
+     * 箭头必须朝屏幕中心对齐，否则会被切掉半个字。
+     */
     private fun applyExpandedState() {
         val panelView = panel ?: return
         val handleView = handle ?: return
+        val side = positions.handle.side
         if (expanded) {
             handleView.text = context.getString(R.string.floating_handle_text)
-            handleView.setPadding(dp(16), dp(8), dp(16), dp(8))
+            handleView.gravity = Gravity.CENTER
+            handleView.setPadding(dp(14), dp(6), dp(14), dp(6))
             handleView.layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
             )
             panelView.setPadding(dp(PANEL_PADDING_DP), dp(PANEL_PADDING_DP), dp(PANEL_PADDING_DP), dp(PANEL_PADDING_DP))
-            panelView.background = roundedBackground(dp(MENU_CORNER_DP))
-            setPanelWidth(WindowManager.LayoutParams.WRAP_CONTENT)
+            panelView.background = panelBackground()
+            setPanelSize(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT)
         } else {
-            // 收起态：只留一块贴边扁半圆 —— 无文字、固定小尺寸（一半在屏外，可见约 20dp）
-            handleView.text = ""
-            handleView.setPadding(0, 0, 0, 0)
+            handleView.text = context.getString(
+                if (side == FloatingSide.RIGHT) {
+                    R.string.floating_handle_chevron_right
+                } else {
+                    R.string.floating_handle_chevron_left
+                },
+            )
+            handleView.gravity = when (side) {
+                FloatingSide.RIGHT -> Gravity.START or Gravity.CENTER_VERTICAL
+                FloatingSide.LEFT -> Gravity.END or Gravity.CENTER_VERTICAL
+            }
+            handleView.setPadding(dp(HANDLE_GLYPH_PADDING_DP), 0, dp(HANDLE_GLYPH_PADDING_DP), 0)
             handleView.layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(HANDLE_HEIGHT_DP),
+                LinearLayout.LayoutParams.MATCH_PARENT,
             )
             panelView.setPadding(0, 0, 0, 0)
-            panelView.background = edgeBackground(positions.handle.side, dp(HANDLE_CORNER_DP))
-            setPanelWidth(dp(HANDLE_WIDTH_DP))
+            panelView.background = handleBackground(side)
+            setPanelSize(dp(HANDLE_WIDTH_DP), dp(HANDLE_HEIGHT_DP))
         }
         menu?.visibility = if (expanded) View.VISIBLE else View.GONE
     }
 
-    private fun setPanelWidth(width: Int) {
+    private fun setPanelSize(width: Int, height: Int) {
         val panelView = panel ?: return
         val params = panelView.layoutParams as? WindowManager.LayoutParams ?: return
-        if (params.width == width) return
+        if (params.width == width && params.height == height) return
         params.width = width
+        params.height = height
         runCatching { windowManager.updateViewLayout(panelView, params) }
     }
 
-    // ---- 触摸：手柄（拖动 / 单击）----
+    // ---- 触摸：手柄（沿边缘拖动 / 单击展开）----
 
     /**
-     * 手柄窗触摸处理：**抬手时**裁决"拖动还是单击"——
-     * 位移超过系统触摸滑动阈值 = 拖动（跟手移动），未超过 = 单击（展开 / 收起）。
+     * 手柄触摸处理：**抬手时**裁决"拖动还是单击"——
+     * 位移超过系统触摸滑动阈值 = 拖动（**只沿边缘上下走**，不允许离开边缘），未超过 = 单击（展开 / 收起）。
      * 不用"位移是否非零"判断：手指轻微抖动不应让菜单永远展不开。
      */
     private fun onPanelTouch(view: View, event: MotionEvent): Boolean {
@@ -299,13 +348,10 @@ class FloatingWindow(private val context: Context) {
                 }
                 if (dragging) {
                     val screen = FloatingScreen.spec(context)
+                    // 横向**不动**（贴边锁）：只跟手上下走，永远留在边缘
                     place(
                         view,
-                        FloatingLayout.clampInside(
-                            downWindowX + (event.rawX - downRawX).toInt(),
-                            view.width,
-                            screen.width,
-                        ),
+                        downWindowX,
                         FloatingLayout.clampInside(
                             downWindowY + (event.rawY - downRawY).toInt(),
                             view.height,
@@ -328,25 +374,17 @@ class FloatingWindow(private val context: Context) {
         return false
     }
 
-    /** 抬手吸附最近的边缘并持久化（FR-07 贴边 / 位置持久化）。 */
+    /** 抬手：把当前位置的纵向折成比例并持久化（**停靠侧不变**——手柄始终贴边）。 */
     private fun snapHandleAndPersist() {
         val panelView = panel ?: return
         val screen = FloatingScreen.spec(context)
         val params = panelView.layoutParams as WindowManager.LayoutParams
-        positions = positions.copy(
-            handle = FloatingPosition.snap(
-                windowCenterX = params.x + panelView.width / 2f,
-                windowTopY = params.y,
-                screenWidth = screen.width,
-                screenHeight = screen.height,
-            ),
-        )
-        applyExpandedState() // 换边后重画"外侧圆角"
+        positions = positions.copy(handle = positions.handle.withTopY(params.y, screen.height))
         applyPositions()
-        persist(screen, "手柄拖动结束，吸附 ${positions.handle.side.token} 边缘")
+        persist(screen, "手柄沿边缘移动（纵向比例 ${positions.handle.yRatio}）")
     }
 
-    // ---- 触摸：状态标签（拖动）----
+    // ---- 触摸：状态标签（自由拖动）----
 
     private fun onLabelTouch(view: View, event: MotionEvent): Boolean {
         when (event.actionMasked) {
@@ -420,14 +458,13 @@ class FloatingWindow(private val context: Context) {
 
     /** 单击手柄：展开 / 收起菜单（展开本身不执行任何操作）。 */
     private fun toggleExpanded() {
-        val panelView = panel ?: return
         expanded = !expanded
         if (expanded) {
             reasonText?.text = ""
             reasonText?.visibility = View.GONE
         }
         applyExpandedState()
-        panelView.post { applyPositions() }
+        applyPositions()
         MmLog.i(TAG, if (expanded) "悬浮窗菜单已展开（等待用户选择）" else "悬浮窗已收起")
     }
 
@@ -437,7 +474,7 @@ class FloatingWindow(private val context: Context) {
         expanded = false
         reasonText?.visibility = View.GONE
         applyExpandedState()
-        panel?.post { applyPositions() }
+        applyPositions()
         MmLog.i(TAG, "悬浮窗已收起（操作成功结束）")
     }
 
@@ -448,7 +485,7 @@ class FloatingWindow(private val context: Context) {
         view.visibility = View.VISIBLE
         expanded = true
         applyExpandedState()
-        panel?.post { applyPositions() }
+        applyPositions()
     }
 
     /**
@@ -528,14 +565,16 @@ class FloatingWindow(private val context: Context) {
         )
     }
 
-    /** 按当前控件尺寸重新落位（尺寸未就绪时跳过，等下一次触发）。 */
+    /** 重新落位（尺寸未就绪时跳过；布局变化后会被 [attachLayoutRefresh] 再触发一次）。 */
     private fun applyPositions() {
         val panelView = panel ?: return
         val labelView = label ?: return
-        if (panelView.width == 0 || labelView.width == 0) return
+        val panelWidth = panelView.width.takeIf { it > 0 } ?: dp(HANDLE_WIDTH_DP)
+        val panelHeight = panelView.height.takeIf { it > 0 } ?: dp(HANDLE_HEIGHT_DP)
+        if (labelView.width == 0) return
         val offsets = computeOffsets(
-            panelView.width,
-            panelView.height,
+            panelWidth,
+            panelHeight,
             labelView.width,
             labelView.height,
         )
@@ -543,7 +582,19 @@ class FloatingWindow(private val context: Context) {
         place(labelView, offsets.labelX, offsets.labelY)
     }
 
-    /** 挂载前的手工测量（WRAP_CONTENT 窗口的固有尺寸）。 */
+    /**
+     * 尺寸一变就重新落位：比"挂载后 post 一次"可靠——
+     * 首帧布局的时序不确定，只 post 一次可能读到 0 宽而算错位置（真机踩过：窗口贴到屏幕外侧）。
+     */
+    private fun attachLayoutRefresh(view: View) {
+        view.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+                applyPositions()
+            }
+        }
+    }
+
+    /** 挂载前的手工测量（标签是 WRAP_CONTENT，宽度内容相关）。 */
     private fun measureSelf(view: View) {
         val spec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         view.measure(spec, spec)
@@ -551,6 +602,7 @@ class FloatingWindow(private val context: Context) {
 
     private fun place(view: View, x: Int, y: Int) {
         val params = view.layoutParams as WindowManager.LayoutParams
+        if (params.x == x && params.y == y) return
         params.x = x
         params.y = y
         runCatching { windowManager.updateViewLayout(view, params) }
@@ -603,28 +655,35 @@ class FloatingWindow(private val context: Context) {
     private companion object {
         const val TAG = "MM-Floating"
 
-        /**
-         * 近白衬底 + 亮蓝描边 + 深色文字（2026-09-14 用户口径）：
-         * 游戏画面多为深色，原先的"半透明黑"在黑底上等于隐形；亮色才看得清。
-         */
-        const val SURFACE_COLOR = 0xF0FFFFFF.toInt()
-        const val STROKE_COLOR = 0xFF1E88E5.toInt()
-        const val TEXT_COLOR = 0xFF1B1B1B.toInt()
+        /** 状态标签：半透明黑底 + 白字（2026-09-14 用户口径），描一道极淡白线便于在黑底上看轮廓。 */
+        const val LABEL_FILL_COLOR = 0xB3000000.toInt()
+        const val LABEL_STROKE_COLOR = 0x40FFFFFF.toInt()
+        const val LABEL_TEXT_COLOR = 0xFFFFFFFF.toInt()
+        const val LABEL_ACTION_COLOR = 0xCCFFFFFF.toInt()
 
-        /** 动作文字（深蓝，与状态文字区分）。 */
-        const val ACTION_COLOR = 0xFF0D47A1.toInt()
+        /** 手柄：半透明琥珀黄 + 深色箭头（2026-09-14 用户口径）。 */
+        const val HANDLE_FILL_COLOR = 0xE6FFC107.toInt()
+        const val HANDLE_STROKE_COLOR = 0xFFFFA000.toInt()
+        const val HANDLE_TEXT_COLOR = 0xFF3E2723.toInt()
 
-        /** 失败原因（浅底上用深红）。 */
-        const val REASON_COLOR = 0xFFC62828.toInt()
+        /** 展开菜单面板（参考 vivo 游戏魔盒）：深色半透明 + 淡琥珀描边 + 白字。 */
+        const val MENU_FILL_COLOR = 0xE61C1C1C.toInt()
+        const val MENU_STROKE_COLOR = 0x80FFC107.toInt()
+        const val MENU_TEXT_COLOR = 0xFFFFFFFF.toInt()
+        const val MENU_GLYPH_COLOR = 0xFFFFC107.toInt()
 
-        const val STROKE_DP = 2
+        /** 失败原因（深底浅底通用：亮红）。 */
+        const val REASON_COLOR = 0xFFFF8A80.toInt()
 
-        /** 收起态手柄尺寸（dp）：一半在屏外，可见约 20dp —— 贴边的扁半圆。 */
-        const val HANDLE_WIDTH_DP = 40
-        const val HANDLE_HEIGHT_DP = 36
-        const val HANDLE_CORNER_DP = 18
+        /** 收起态手柄尺寸（dp）：**窄竖条**，一半在屏外 → 可见约 14dp。 */
+        const val HANDLE_WIDTH_DP = 28
+        const val HANDLE_HEIGHT_DP = 64
+        const val HANDLE_CORNER_DP = 14
 
-        /** 展开态面板（四角圆角 + 内边距）。 */
+        /** 收起态箭头与可见侧边缘的留白（dp）。 */
+        const val HANDLE_GLYPH_PADDING_DP = 2
+
+        /** 展开态面板（圆角 + 内边距）。 */
         const val MENU_CORNER_DP = 14
         const val PANEL_PADDING_DP = 4
 

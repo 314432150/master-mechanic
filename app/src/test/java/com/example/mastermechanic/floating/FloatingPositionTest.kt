@@ -56,25 +56,22 @@ class FloatingPositionTest {
     }
 
     @Test
-    fun snapPicksNearestEdgeByWindowCenter() {
-        // 中心落在左半屏 → 左；右半屏 → 右（含正好中线取左）
-        assertEquals(FloatingSide.LEFT, FloatingPosition.snap(700f, 100, screenWidth, screenHeight).side)
-        assertEquals(FloatingSide.LEFT, FloatingPosition.snap(720f, 100, screenWidth, screenHeight).side)
-        assertEquals(FloatingSide.RIGHT, FloatingPosition.snap(730f, 100, screenWidth, screenHeight).side)
-        assertEquals(FloatingSide.RIGHT, FloatingPosition.snap(1430f, 100, screenWidth, screenHeight).side)
+    fun edgeDragOnlyUpdatesVerticalRatioAndKeepsSide() {
+        // 2026-09-14 用户口径：手柄**始终贴边**，拖动只沿边缘上下走，停靠侧不变
+        val left = FloatingPosition(FloatingSide.LEFT, 0.2)
+        val moved = left.withTopY(1584, screenHeight)
+        assertEquals(0.5, moved.yRatio, 1e-9)
+        assertEquals(FloatingSide.LEFT, moved.side)
+        // 拖出屏幕（顶部为负 / 底部越界）→ 夹到 0..1
+        assertEquals(0.0, left.withTopY(-50, screenHeight).yRatio, 1e-9)
+        assertEquals(1.0, left.withTopY(screenHeight + 500, screenHeight).yRatio, 1e-9)
     }
 
     @Test
-    fun snapConvertsTopYToRatioAndClamps() {
-        assertEquals(0.5, FloatingPosition.snap(2000f, 1584, screenWidth, screenHeight).yRatio, 1e-9)
-        assertEquals(0.0, FloatingPosition.snap(2000f, -50, screenWidth, screenHeight).yRatio, 1e-9)
-        assertEquals(1.0, FloatingPosition.snap(2000f, screenHeight + 500, screenWidth, screenHeight).yRatio, 1e-9)
-    }
-
-    @Test
-    fun snapRejectsInvalidScreenSize() {
-        assertThrows(IllegalArgumentException::class.java) { FloatingPosition.snap(10f, 10, 0, 100) }
-        assertThrows(IllegalArgumentException::class.java) { FloatingPosition.snap(10f, 10, 100, 0) }
+    fun invalidScreenSizeIsRejected() {
+        assertThrows(IllegalArgumentException::class.java) {
+            FloatingPosition(FloatingSide.RIGHT, 0.5).withTopY(10, 0)
+        }
         assertThrows(IllegalArgumentException::class.java) {
             FloatingLayout.snapLabelCenter(0, 0, 10, 10, 0, 100)
         }

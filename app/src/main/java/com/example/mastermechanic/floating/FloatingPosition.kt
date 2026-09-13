@@ -20,8 +20,9 @@ enum class FloatingSide(val token: String) {
  * 纵向存**比例**而不是像素：FR-07 要求位置持久化且"始终可被找回"——换分辨率 / 旋转后按比例还原
  * 仍落在相近的相对位置，再 clamp 回屏内即可；若存像素，换分辨率后会被 clamp 到底部（相对位置丢失）。
  *
- * 贴边口径（2026-09-14 用户确认）：吸附左右边缘，**一半移出屏幕**（可见约 20dp）→ 视觉上是贴边的扁半圆，
- * 占据尽量小的面积。
+ * 贴边口径（2026-09-14 用户口径修订）：手柄**始终贴在左 / 右边缘**、**一半移出屏幕**
+ * （窄竖条，可见约 14dp），拖动只沿边缘上下走、**不允许被拖到屏幕中间**；
+ * 停靠侧由重置位置决定，不由拖动切换。
  */
 data class FloatingPosition(
     val side: FloatingSide,
@@ -32,9 +33,20 @@ data class FloatingPosition(
         require(yRatio in 0.0..1.0) { "纵向位置比例必须在 0..1：$yRatio" }
     }
 
+    /**
+     * 贴边拖动结束：**只更新纵向比例**（[side] 保持不变）。
+     *
+     * 2026-09-14 用户口径：手柄**始终贴边、不允许被拖到屏幕中间**——所以拖动只沿边缘上下走，
+     * 换边不由拖动承担（要换边就重置位置）。纵向按当前屏高折算比例，供持久化与跨分辨率还原。
+     */
+    fun withTopY(windowTopY: Int, screenHeight: Int): FloatingPosition {
+        require(screenHeight > 0) { "屏幕高度必须为正：$screenHeight" }
+        return copy(yRatio = (windowTopY.toDouble() / screenHeight).coerceIn(0.0, 1.0))
+    }
+
     companion object {
 
-        /** 贴边时手柄露出的宽度比例（2026-09-14 用户定稿：一半在屏外，呈扁半圆）。 */
+        /** 贴边时手柄露出的宽度比例（2026-09-14 用户定稿：一半在屏外）。 */
         const val REVEAL_RATIO = 0.5
 
         /**
@@ -42,21 +54,6 @@ data class FloatingPosition(
          * 两个都是**逻辑值**（不是设备绑定常量：不写任何具体分辨率 / 密度 / 像素坐标，红线 4）。
          */
         val DEFAULT = FloatingPosition(FloatingSide.RIGHT, 0.08)
-
-        /**
-         * 拖动结束 → 吸附**最近的**屏幕边缘（FR-07）：按手柄**中心**落在左半屏还是右半屏决定；
-         * 纵向按当前屏高折算比例（供持久化与跨分辨率还原）。
-         */
-        fun snap(
-            windowCenterX: Float,
-            windowTopY: Int,
-            screenWidth: Int,
-            screenHeight: Int,
-        ): FloatingPosition {
-            require(screenWidth > 0 && screenHeight > 0) { "屏幕尺寸必须为正：${screenWidth}x$screenHeight" }
-            val side = if (windowCenterX * 2f <= screenWidth) FloatingSide.LEFT else FloatingSide.RIGHT
-            return FloatingPosition(side, (windowTopY.toDouble() / screenHeight).coerceIn(0.0, 1.0))
-        }
     }
 }
 

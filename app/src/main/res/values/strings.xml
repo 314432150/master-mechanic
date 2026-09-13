@@ -47,8 +47,11 @@
     <string name="floating_status_text">状态：%1$s</string>
     <string name="floating_action_text">动作：%1$s</string>
     <string name="floating_handle_text">≡</string>
-    <string name="floating_handle_desc">悬浮窗菜单（按住可拖动）</string>
+    <string name="floating_handle_desc">悬浮窗手柄（单击展开菜单，按住沿边缘上下移动）</string>
+    <string name="floating_handle_chevron_right">‹</string>
+    <string name="floating_handle_chevron_left">›</string>
     <string name="floating_menu_start_patrol">开始巡查</string>
+    <string name="floating_menu_glyph_patrol">▶</string>
     <string name="floating_reason_no_session">尚未建立采集会话：请先到「授权状态」页授予屏幕采集权限。</string>
     <string name="floating_reason_config_empty">巡查列表为空：请先到「巡查配置」页添加至少一项。</string>
     <string name="floating_reason_config_broken">巡查配置读取失败：%1$s</string>
