@@ -30,7 +30,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,8 +45,6 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.mastermechanic.R
-import com.example.mastermechanic.action.ClickDispatch
-import com.example.mastermechanic.action.ClickMode
 import com.example.mastermechanic.auth.AuthItem
 import com.example.mastermechanic.auth.AuthState
 import com.example.mastermechanic.auth.AuthStatus
@@ -66,9 +63,16 @@ import kotlinx.coroutines.delay
  *
  * @param resumeTick 每次回到前台自增，用于从系统设置页返回后刷新状态。
  * @param onOpenCalibration 进入「识别标定」页（T1-5b）。
+ * @param onOpenServerList 进入「服务器清单」页（M3-T3-9，FR-10）。
+ * @param onOpenFriendList 进入「好友清单」页（M3-T3-8，FR-07「拜访」三级列表的数据源）。
  */
 @Composable
-fun AuthorizationRoute(resumeTick: Int, onOpenCalibration: () -> Unit) {
+fun AuthorizationRoute(
+    resumeTick: Int,
+    onOpenCalibration: () -> Unit,
+    onOpenServerList: () -> Unit,
+    onOpenFriendList: () -> Unit,
+) {
     val context = LocalContext.current
     var captureActive by remember { mutableStateOf(CaptureSessionSignal.isActive) }
     var refreshTick by remember { mutableStateOf(0) }
@@ -160,6 +164,8 @@ fun AuthorizationRoute(resumeTick: Int, onOpenCalibration: () -> Unit) {
             reconcileTick++ // 服务停止后本页状态延迟校正
         },
         onOpenCalibration = onOpenCalibration,
+        onOpenServerList = onOpenServerList,
+        onOpenFriendList = onOpenFriendList,
     )
 }
 
@@ -175,6 +181,8 @@ fun AuthorizationScreen(
     onStopResident: () -> Unit,
     onStopCapture: () -> Unit,
     onOpenCalibration: () -> Unit,
+    onOpenServerList: () -> Unit,
+    onOpenFriendList: () -> Unit,
 ) {
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -222,12 +230,23 @@ fun AuthorizationScreen(
                 onStart = onStartResident,
                 onStop = onStopResident,
             )
-            RunModeCard()
             OutlinedButton(
                 onClick = onOpenCalibration,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(text = stringResource(R.string.auth_open_calibration))
+            }
+            OutlinedButton(
+                onClick = onOpenServerList,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = stringResource(R.string.auth_open_server_list))
+            }
+            OutlinedButton(
+                onClick = onOpenFriendList,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = stringResource(R.string.auth_open_friend_list))
             }
         }
     }
@@ -341,100 +360,6 @@ private fun ResidentCard(
     }
 }
 
-/**
- * 运行方式卡片（T1-7 引入；T2-6 开放实点开关，对应 B5）：展示当前模式并允许用户切换。
- *
- * **开启实点必须二次确认**（默认拒绝）：实点会让程序真的点击游戏界面，误触代价不可逆。
- * **三条安全边界**（默认一律回到演练，实点只能由用户在本次会话内显式开启）：
- * 进程启动 = 演练；无障碍服务断开 / 被中断（[ClickDispatch.uninstall]）= 回演练；
- * 采集会话（重）建立（[com.example.mastermechanic.service.CaptureService]）= 回演练。
- */
-@Composable
-private fun RunModeCard() {
-    val mode by ClickDispatch.modeFlow.collectAsState()
-    var confirming by remember { mutableStateOf(false) }
-    val live = mode == ClickMode.LIVE
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(R.string.run_mode_label),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    text = stringResource(
-                        if (live) R.string.run_mode_live else R.string.run_mode_dry_run,
-                    ),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (live) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                )
-            }
-            Text(
-                text = stringResource(
-                    if (live) R.string.run_mode_live_desc else R.string.run_mode_drill_desc,
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(R.string.run_mode_live_switch),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Switch(
-                    checked = live,
-                    onCheckedChange = { checked ->
-                        if (checked) {
-                            confirming = true // 开启先确认；取消 = 保持演练（默认拒绝）
-                        } else {
-                            ClickDispatch.enableDrill()
-                        }
-                    },
-                )
-            }
-        }
-    }
-
-    if (confirming) {
-        AlertDialog(
-            onDismissRequest = { confirming = false },
-            title = { Text(stringResource(R.string.run_mode_live_confirm_title)) },
-            text = { Text(stringResource(R.string.run_mode_live_confirm_body)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        ClickDispatch.enableLive()
-                        confirming = false
-                    },
-                ) {
-                    Text(stringResource(R.string.run_mode_confirm_ok))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirming = false }) {
-                    Text(stringResource(R.string.run_mode_confirm_cancel))
-                }
-            },
-        )
-    }
-}
-
 @Composable
 private fun SummaryText(statuses: List<AuthStatus>) {
     if (AuthorizationSummary.isAllReady(statuses)) {
@@ -513,6 +438,8 @@ private fun AuthorizationScreenPreview() {
             onStopResident = {},
             onStopCapture = {},
             onOpenCalibration = {},
+            onOpenServerList = {},
+            onOpenFriendList = {},
         )
     }
 }

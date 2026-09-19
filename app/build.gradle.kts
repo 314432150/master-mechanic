@@ -33,6 +33,14 @@ android {
     buildFeatures {
         compose = true
     }
+    /**
+     * JVM 单测里 `android.*` 的桩方法**返回默认值而不抛异常**：纯逻辑会顺手写一行日志
+     * （[com.example.mastermechanic.log.MmLog] 内部走 `android.util.Log`），那行日志不该把
+     * 一个纯逻辑单测打挂（2026-09-16 加：PatrolRequestSignalTest 就是这么挂的）。
+     */
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 /**

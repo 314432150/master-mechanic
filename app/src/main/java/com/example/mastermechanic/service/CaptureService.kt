@@ -264,9 +264,12 @@ class CaptureService : Service() {
         detectTimingStats.reset()
         lastAppliedIntervalMs = ACTIVE_INTERVAL_MS
         lastStatsAt = SystemClock.elapsedRealtime()
-        // B5 / T2-6：会话（重）建立即回到演练——实点必须由用户在**本次会话内**显式开启，
-        // 避免切走 / 重新授权之后仍在实点状态（落实计划口径「每次会话开始前由用户明确指示『这次实点』」）。
-        ClickDispatch.enableDrill()
+        // B5 / T2-6 的"边界 c"（会话建立 → 回演练）于 2026-09-14 **取消**（用户口径：直接不重置，不加开关）：
+        // 该边界与真实授权路径打架——授予采集权限会把用户带到游戏，用户切不回来开实点，
+        // 于是"先建会话、再开实点"的顺序根本做不到。
+        // 现在：**会话（重）建立不改变运行方式**；运行方式保留到用户下次手动切换。
+        // 仍然保留的两条边界：进程启动 = 演练；无障碍服务断开 / 被中断 = 回演练。
+        MmLog.i(TAG, "建立会话：保留当前运行方式（${ClickDispatch.mode.label}）")
         CaptureSessionSignal.update(CaptureSessionStatus.ACTIVE, SOURCE_USER_CREATED)
     }
 

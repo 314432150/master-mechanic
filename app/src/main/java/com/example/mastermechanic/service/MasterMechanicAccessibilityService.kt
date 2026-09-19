@@ -11,6 +11,7 @@ import com.example.mastermechanic.floating.FloatingWindow
 import com.example.mastermechanic.foreground.ForegroundEvaluator
 import com.example.mastermechanic.foreground.ForegroundSignal
 import com.example.mastermechanic.foreground.ForegroundStatus
+import com.example.mastermechanic.notify.FloatingNotifier
 
 /**
  * 无障碍服务：点击注入（ADR-002）、悬浮窗（ADR-004）、前台判定（ADR-005）的共同承载者。
@@ -45,6 +46,8 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
             clock = SystemClock::elapsedRealtime,
             audit = ClickAuditLog::write,
         )
+        // 菜单提示的浮窗只能从**服务上下文**取 WindowManager（token 才有效）
+        FloatingNotifier.bindWindow(this)
         refreshForeground("服务已连接")
         ForegroundSignal.addListener(onForegroundChanged)
         onForegroundChanged(ForegroundSignal.status) // 初始同步（监听只覆盖后续变化）
@@ -63,6 +66,7 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
         ClickDispatch.uninstall()
         ForegroundSignal.removeListener(onForegroundChanged)
         floatingWindow.hide()
+        FloatingNotifier.unbindWindow()
         ForegroundSignal.reset("服务被中断")
     }
 
@@ -71,6 +75,7 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
         ClickDispatch.uninstall()
         ForegroundSignal.removeListener(onForegroundChanged)
         floatingWindow.hide()
+        FloatingNotifier.unbindWindow()
         ForegroundSignal.reset("服务已断开")
         return super.onUnbind(intent)
     }
@@ -80,6 +85,7 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
         ClickDispatch.uninstall()
         ForegroundSignal.removeListener(onForegroundChanged)
         floatingWindow.hide()
+        FloatingNotifier.unbindWindow()
         ForegroundSignal.reset("服务已销毁")
         super.onDestroy()
     }
