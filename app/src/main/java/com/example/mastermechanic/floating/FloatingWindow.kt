@@ -9,7 +9,13 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.StateListDrawable
+import android.text.TextUtils
 import android.view.Gravity
+import android.widget.ScrollView
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -19,10 +25,14 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.example.mastermechanic.R
 import com.example.mastermechanic.capture.CaptureSessionSignal
-import com.example.mastermechanic.decision.UiState
-import com.example.mastermechanic.decision.UiStateSignal
 import com.example.mastermechanic.log.MmLog
-import com.example.mastermechanic.patrol.PatrolConfigStore
+import com.example.mastermechanic.friends.FriendList
+import com.example.mastermechanic.friends.FriendListStore
+import com.example.mastermechanic.preset.ServerChoice
+import com.example.mastermechanic.preset.VisitPreset
+import com.example.mastermechanic.preset.VisitPresetStore
+import com.example.mastermechanic.servers.ServerList
+import com.example.mastermechanic.servers.ServerListStore
 import com.example.mastermechanic.patrol.PatrolRequestSignal
 
 /**
@@ -56,37 +66,27 @@ class FloatingWindow(private val context: Context) {
     /** 拖动阈值：在目标设备上运行时读取（FR-07；红线 4：不写死常量）。 */
     private val touchSlop: Float = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
 
-    // ---- 状态标签窗（可拖动）----
-    private var label: LinearLayout? = null
-    private var statusText: TextView? = null
-    private var actionText: TextView? = null
-
     // ---- 手柄窗（可触摸）----
     private var panel: FrameLayout? = null
     private var menu: LinearLayout? = null
     private var reasonText: TextView? = null
 
-    private var positions: FloatingPositions = FloatingPositions.DEFAULT
+    /** 手柄位置 = 布局常量（2026-09-17 用户口径"取消状态标签"后，唯一剩下的位置）。 */
+    private val positions: FloatingPosition = FloatingPosition.DEFAULT
     private var expanded = false
+
+    /** 菜单层级 / 原因 / 待确认好友 —— 判定全在纯逻辑 [FloatingMenu] 里，这里只是持有它。 */
+    private var menuState = FloatingMenu.State()
+
+    /** 菜单里可选的服务器 / 好友（展开时读一次清单；名字只能来自它们 —— 引用口径）。 */
+    private var serverNames: List<String> = emptyList()
+    private var friendNames: List<String> = emptyList()
+
+    /** 一键拜访的预设（展开时读一次）：一级「拜访」点一次就按它执行。 */
+    private var visitPreset: VisitPreset = VisitPreset.EMPTY
 
     /** 菜单窗是否已挂到 WindowManager（展开 = 挂上，收起 = 摘掉）。 */
     private var menuAttached = false
-
-    private var dragging = false
-    private var downRawX = 0f
-    private var downRawY = 0f
-    private var downWindowX = 0
-    private var downWindowY = 0
-
-    /** 识别状态更新（可能来自采集帧线程）：编组回主线程后更新标签。 */
-    private val onStateChanged: (UiState) -> Unit = { state ->
-        mainHandler.post { applyStatusText(state) }
-    }
-
-    /** 流程层写入的当前动作（M4）：无动作时不显示第二行。 */
-    private val onActionChanged: (String?) -> Unit = { action ->
-        mainHandler.post { applyActionText(action) }
-    }
 
     /** 屏幕尺寸 / 方向变化 → 重新落位（转屏后窗口尺寸可能不变，位置却已失效）。 */
     private val displayListener = object : DisplayManager.DisplayListener {
@@ -104,39 +104,25 @@ class FloatingWindow(private val context: Context) {
     /** 上一次落位日志的内容（内容不变就不重复刷屏）。 */
     private var lastPlacementTrace: String? = null
 
-    /** 挂载两个窗口（收起态）；重复调用安全。 */
+    /** 挂载手柄窗与菜单窗（收起态）；重复调用安全。 */
     fun show() {
         if (panel != null) return
-        val screen = FloatingScreen.spec(context)
-        val loaded = FloatingPositionStore.loadOrRecover(
-            FloatingPositionStore.positionFile(context),
-            screen.width,
-            screen.height,
-        )
-        loaded.recoveredReason?.let { MmLog.w(TAG, "悬浮窗位置：$it") }
-        positions = loaded.positions
         expanded = false
-        dragging = false
 
-        val labelView = buildLabel()
         val panelView = buildPanel()
         val menuView = buildMenu()
-        // 先登记字段（applyExpandedState / applyPositions 都依赖它们），再定形状与尺寸
-        label = labelView
         panel = panelView
         menu = menuView
+        renderMenu()
         applyExpandedState()
 
         // 手柄窗尺寸是**常量**（可见条 + 透明触摸扩展），不靠测量：空文字 + MATCH_PARENT 的手柄
-        // 曾被测成 0 宽，把初始位置算成"贴着屏幕外侧"（真机表现：看不到手柄与标签，直到位置被重置）。
+        // 曾被测成 0 宽，把初始位置算成"贴着屏幕外侧"（真机表现：看不到手柄，直到位置被重置）。
         val panelWidth = handleWindowWidth()
         val panelHeight = handleWindowHeight()
-        measureSelf(labelView)
         val initial = computeOffsets(
             panelWidth,
             panelHeight,
-            labelView.measuredWidth,
-            labelView.measuredHeight,
             menuWidth = 0, // 挂载时一定是收起态：菜单窗还没挂
             menuHeight = 0,
         )
@@ -152,77 +138,40 @@ class FloatingWindow(private val context: Context) {
                 },
             )
             panelAdded = true
-            windowManager.addView(
-                labelView,
-                labelParams().apply {
-                    x = initial.labelX
-                    y = initial.labelY
-                },
-            )
         } catch (e: Exception) {
             MmLog.w(TAG, "悬浮窗挂载失败", e)
             if (panelAdded) runCatching { windowManager.removeView(panelView) }
-            label = null
             panel = null
             return
         }
-        // 布局变化（文案变长 / 菜单展开）后自动重新落位：不依赖一次性 post 的时序
+        // 布局变化（菜单展开 / 文案变长）后自动重新落位：不依赖一次性 post 的时序
         attachLayoutRefresh(panelView)
-        attachLayoutRefresh(labelView)
-        // 屏幕尺寸 / 方向变化后也要重新落位：转屏时窗口尺寸可能不变、位置却已失效
-        // （真机踩过：挂载瞬间用的是转屏前的尺寸 → 两个窗口一起跑到屏幕外，只能靠"重置位置"才回来）
         attachDisplayRefresh()
-        // 重建时以当前值初始化（监听只覆盖后续变化）
-        applyStatusText(UiStateSignal.status)
-        applyActionText(FloatingActionSignal.action)
-        UiStateSignal.addListener(onStateChanged)
-        FloatingActionSignal.addListener(onActionChanged)
         applyPositions()
         MmLog.i(
             TAG,
-            "悬浮窗已挂载（手柄停靠 ${positions.handle.side.token}、纵向比例 ${positions.handle.yRatio}；" +
-                "状态标签中心 ${positions.label.xRatio}x${positions.label.yRatio}）",
+            "悬浮窗已挂载（手柄停靠 ${positions.side.token}、纵向比例 ${positions.yRatio}）",
         )
     }
 
     /** 整窗移除：不可见且不占任何触摸；回前台以**收起态**重建（FR-07）。重复调用安全。 */
     fun hide() {
         val panelView = panel ?: return
-        UiStateSignal.removeListener(onStateChanged)
-        FloatingActionSignal.removeListener(onActionChanged)
         detachDisplayRefresh()
         lastPlacementTrace = null
         if (menuAttached) {
             menu?.let { view -> runCatching { windowManager.removeView(view) } }
             menuAttached = false
         }
-        label?.let { view -> runCatching { windowManager.removeView(view) } }
         runCatching { windowManager.removeView(panelView) }
         MmLog.i(TAG, "悬浮窗已移除")
-        label = null
-        statusText = null
-        actionText = null
         panel = null
         menu = null
         reasonText = null
         expanded = false
-        dragging = false
     }
 
     // ---- 视图构建 ----
-
-    private fun buildLabel(): LinearLayout = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(8), dp(4), dp(8), dp(4))
-        background = labelBackground()
-        statusText = textView(12f, LABEL_TEXT_COLOR).also { addView(it) }
-        actionText = textView(11f, LABEL_ACTION_COLOR).also {
-            it.visibility = View.GONE
-            addView(it)
-        }
-        setOnClickListener { /* 标签不承担动作：点它不做任何事（拖动才是它的交互） */ }
-        setOnTouchListener(::onLabelTouch)
-    }
 
     /**
      * 手柄窗 = **透明触摸区（整窗）+ 贴边可见窄条（子视图）**，形态永不变化。
@@ -265,35 +214,458 @@ class FloatingWindow(private val context: Context) {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(PANEL_PADDING_DP), dp(PANEL_PADDING_DP), dp(PANEL_PADDING_DP), dp(PANEL_PADDING_DP))
         background = panelBackground()
-        addView(
-            menuRow(
-                glyph = context.getString(R.string.floating_menu_glyph_patrol),
-                textRes = R.string.floating_menu_start_patrol,
-            ) { onStartPatrol() },
-        )
-        reasonText = textView(11f, REASON_COLOR).also {
-            it.visibility = View.GONE
-            it.maxWidth = dp(REASON_MAX_WIDTH_DP)
-            it.setPadding(dp(6), dp(2), dp(6), dp(2))
-            addView(it)
-        }
+        // 内容由 [renderMenu] 按菜单层级填（M3-T3-8：四组 + 两级列表，**原地替换**，不开第二个窗口 ——
+        // 面板吞掉的游戏触摸区域因此恒定）。
         // 点菜单面板之外的任何地方 → 收起（FLAG_WATCH_OUTSIDE_TOUCH 送来 ACTION_OUTSIDE）
         setOnTouchListener(::onMenuTouch)
     }
 
-    /** 菜单功能行（参考 vivo 游戏魔盒）：左侧图标 + 文案，整行可点。 */
+    // ---- 菜单内容（M3-T3-8：四组 + 两级列表，**原地替换**）----
+
+    /**
+     * 按 [menuState] 重建菜单内容。
+     *
+     * 层级与"点了会不会收起"由纯逻辑 [FloatingMenu] 判定（已进 JVM 单测），这里只管画：
+     * ROOT = 四组；PICK_SERVER / PICK_FRIEND = 面包屑 + 一个快捷项 + 列表。
+     * 内容变化会改变菜单尺寸 → 依赖 [attachLayoutRefresh] 重新落位。
+     */
+    private fun renderMenu() {
+        val container = menu ?: return
+        container.removeAllViews()
+        when (menuState.level) {
+            FloatingMenu.Level.ROOT -> renderRoot(container)
+            FloatingMenu.Level.PICK_SERVER -> renderPickServer(container)
+            FloatingMenu.Level.CONFIG -> renderConfig(container)
+            FloatingMenu.Level.CONFIG_SERVER -> renderConfigServerPick(container)
+            FloatingMenu.Level.CONFIG_FRIEND -> renderConfigFriendPick(container)
+        }
+        // 原因条：失败 / 当前不可用**就挂在这儿**（不另开 Toast —— 玩家在游戏里不会去看系统通知）
+        reasonText = textView(11f, REASON_COLOR).also {
+            it.maxWidth = dp(REASON_MAX_WIDTH_DP)
+            it.setPadding(dp(6), dp(2), dp(6), dp(2))
+            it.text = menuState.reason.orEmpty()
+            it.visibility = if (menuState.reason == null) View.GONE else View.VISIBLE
+            container.addView(it)
+        }
+        // 内容换完**立刻按新内容量一次**（2026-09-19 修「原因条不显示」）：
+        // [applyPositions] 读的是 `measuredWidth/measuredHeight`（见 [viewSize]），这里不重新量的话，
+        // 它拿到的还是**上一版内容**的尺寸 → 窗口高度不跟着长 → 新加的原因条被裁在窗口外，
+        // 用户看到的是"点了保存毫无反应"（真机 logcat 里 `fail` 明明打了一串）。
+        // 放在本方法内而不是各调用点，是让"内容一变就重新量"成为 renderMenu 的固有语义，避免再漏。
+        measureSelf(container)
+    }
+
+    /**
+     * 根层五项，顺序 = 换号 / 只拜访 / 换号拜访 / 拜访规则 / 停止
+     * （高频在上，误触代价最大的「停止」放最底）。
+     *
+     * 「换号拜访」点一次就执行整条流程（换号 + 拜访），目标来自**预设** ——
+     * 用户最高频的场景是"在同一个好友的农场里轮流换不同服务器的小号来看他"，
+     * 每点一次都先选服务器再选好友太费事（2026-09-16 用户口径）。
+     *
+     * 两个拜访项的命名（2026-09-19 用户口径）：「只拜访」= 不换号、在当前区服直接去；
+     * 「换号拜访」= 整条走完。用「只」和「换号」作对照，且与 Toast 文案（[PatrolRequestSignal.Kind.briefText]）一致。
+     */
+    private fun renderRoot(container: LinearLayout) {
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_switch),
+                R.string.floating_menu_switch,
+            ) { openGroup(FloatingMenu.Group.SWITCH) },
+        )
+        // 只拜访：跳过换号，在当前区服直接去见好友
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_visit),
+                if (visitPreset.friendName.isNotEmpty()) {
+                    context.getString(R.string.floating_menu_visit, visitPreset.friendName)
+                } else {
+                    context.getString(R.string.floating_menu_visit_unset)
+                },
+            ) { onVisitOnly() },
+        )
+        // 换号拜访：整条走完
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_switch_visit),
+                if (visitPreset.isReady) {
+                    context.getString(R.string.floating_menu_switch_visit, visitPreset.friendName)
+                } else {
+                    context.getString(R.string.floating_menu_switch_visit_unset)
+                },
+            ) { onVisitPreset() },
+        )
+        // 设置：**在悬浮窗里就能改预设**（2026-09-16 用户口径：不能逼用户切回 App 去配）
+        // 进设置页时以**当前预设**为草稿（不是空面板）
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_setting),
+                R.string.floating_menu_setting,
+            ) {
+                menuState = FloatingMenu.openConfig(menuState, visitPreset)
+                rerender()
+            },
+        )
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_stop),
+                R.string.floating_menu_stop,
+            ) { onStop() },
+        )
+    }
+
+    /** 换号 → 选服务器：首行「下一个」（点一下立刻换下一个），下面才是服务器清单。 */
+    private fun renderPickServer(container: LinearLayout) {
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_back),
+                R.string.floating_menu_switch,
+            ) { backToRoot() },
+        )
+        // 与下面的服务器名**同级、同一套行样式**（不带图标）—— 见 renderConfigServerPick 里的说明
+        container.addView(
+            pickRow(context.getString(R.string.floating_menu_switch_next)) { onSwitchNext() },
+        )
+        if (serverNames.isEmpty()) {
+            container.addView(noteRow(context.getString(R.string.floating_menu_no_server)))
+            return
+        }
+        container.addView(
+            boundedScroll(
+                rows = serverNames.map { name ->
+                    pickRow(name) { sendRequest(PatrolRequestSignal.Kind.SWITCH_SERVER, serverName = name) }
+                },
+                rowCount = serverNames.size,
+            ),
+        )
+    }
+
+    /**
+     * 设置页：**在悬浮窗里直接配**（2026-09-16 用户口径 —— 不能逼用户每次切回 App 去配）。
+     *
+     * 改的是**草稿**：点「保存并返回」才落盘，直接返回什么都不变。
+     */
+    private fun renderConfig(container: LinearLayout) {
+        val draft = menuState.draft ?: return
+        container.addView(
+            menuRow(context.getString(R.string.floating_menu_glyph_back), R.string.floating_menu_setting) {
+                menuState = FloatingMenu.back(menuState)
+                rerender()
+            },
+        )
+        // 「服务器」**只占一行**：点它进三级菜单（下一个 / 服务器清单）——
+        // 之前这里并排放了两行、文案还一模一样（一行切策略、一行选具体），
+        // 用户看到的是"出现了两个「服务器：（点这里选一个）」"（2026-09-16 bug）
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_switch),
+                when {
+                    draft.serverChoice == ServerChoice.NEXT ->
+                        context.getString(R.string.floating_menu_config_server_next)
+                    draft.serverName.isEmpty() ->
+                        context.getString(R.string.floating_menu_config_server_unset)
+                    else -> context.getString(R.string.floating_menu_config_server_fixed, draft.serverName)
+                },
+            ) {
+                menuState = FloatingMenu.openConfigPick(menuState, FloatingMenu.Level.CONFIG_SERVER)
+                rerender()
+            },
+        )
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_visit),
+                if (draft.friendName.isEmpty()) {
+                    context.getString(R.string.floating_menu_config_friend_unset)
+                } else {
+                    context.getString(R.string.floating_menu_config_friend, draft.friendName)
+                },
+            ) {
+                menuState = FloatingMenu.openConfigPick(menuState, FloatingMenu.Level.CONFIG_FRIEND)
+                rerender()
+            },
+        )
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_setting),
+                R.string.floating_menu_config_save,
+            ) { saveConfig() },
+        )
+    }
+
+    /** 设置页 → 选服务器（三级菜单）：首行「顺序轮换」，下面是服务器清单。 */
+    private fun renderConfigServerPick(container: LinearLayout) {
+        container.addView(
+            menuRow(context.getString(R.string.floating_menu_glyph_back), R.string.floating_menu_switch) {
+                menuState = FloatingMenu.openConfigPick(menuState, FloatingMenu.Level.CONFIG)
+                rerender()
+            },
+        )
+        // 「顺序轮换」与下面的服务器名**同级、同一套行样式**：它不该带图标 ——
+        // 功能行才有图标槽，列表行没有；带图标会让它比服务器名多出一段、看起来像多了一层缩进
+        //（2026-09-16 用户口径）。当前策略就是"顺序轮换"时，它自己也带勾。
+        //
+        // 这里用 `floating_menu_config_server_auto`（"顺序轮换"）而**不是** `floating_menu_switch_next`
+        // （"下一个"）：本行是**策略选择**（把预设切回 NEXT），"点一下立刻换下一个"是换号那一层的动作
+        //（2026-09-19 用户口径：策略名与动作名分开取词）。
+        container.addView(
+            pickRow(
+                context.getString(R.string.floating_menu_config_server_auto),
+                selected = menuState.draft?.serverChoice == ServerChoice.NEXT,
+            ) {
+                menuState = FloatingMenu.draftNextServer(menuState)
+                rerender()
+            },
+        )
+        if (serverNames.isEmpty()) {
+            container.addView(noteRow(context.getString(R.string.floating_menu_no_server)))
+            return
+        }
+        // 当前草稿里选中的那个 → 加勾号高亮
+        val selectedServer = menuState.draft?.serverName
+        container.addView(
+            boundedScroll(
+                rows = serverNames.map { name ->
+                    pickRow(name, selected = name == selectedServer) {
+                        menuState = FloatingMenu.draftServer(menuState, name)
+                        rerender()
+                    }
+                },
+                rowCount = serverNames.size,
+            ),
+        )
+    }
+
+    /** 设置页 → 从好友清单里挑一个（挑完回设置页）。 */
+    private fun renderConfigFriendPick(container: LinearLayout) {
+        container.addView(
+            menuRow(context.getString(R.string.floating_menu_glyph_back), R.string.floating_menu_visit_title) {
+                menuState = FloatingMenu.openConfigPick(menuState, FloatingMenu.Level.CONFIG)
+                rerender()
+            },
+        )
+        if (friendNames.isEmpty()) {
+            container.addView(noteRow(context.getString(R.string.floating_menu_no_friend)))
+            return
+        }
+        // 当前草稿里选中的那个 → 加勾号高亮
+        val selectedFriend = menuState.draft?.friendName
+        container.addView(
+            boundedScroll(
+                rows = friendNames.map { name ->
+                    pickRow(name, selected = name == selectedFriend) {
+                        menuState = FloatingMenu.draftFriend(menuState, name)
+                        rerender()
+                    }
+                },
+                rowCount = friendNames.size,
+            ),
+        )
+    }
+
+    /**
+     * 保存设置：写盘（临时文件 + rename）。**成功才收起**；失败保持展开并说明原因，
+     * 草稿不丢（用户可以直接再试一次，不用重新选一遍）。
+     * 写完顺手刷新内存里的预设 —— 一级「拜访」那一行的文案立刻跟着变。
+     */
+    private fun saveConfig() {
+        val draft = menuState.draft ?: return
+        // 非空验证（2026-09-19 用户口径）：好友必填；「指定区服」策略下区服名也必填。
+        // 「顺序轮换」是**合法策略**（不是"没选"），所以服务器这一项在 NEXT 下不需要选。
+        if (!draft.isReady) {
+            fail(context.getString(R.string.floating_menu_config_incomplete))
+            return
+        }
+        val failure = runCatching { VisitPresetStore.save(context, draft) }.exceptionOrNull()
+        if (failure != null) {
+            fail(
+                context.getString(
+                    R.string.floating_menu_config_save_failed,
+                    failure.message ?: failure.javaClass.simpleName,
+                ),
+            )
+            return
+        }
+        visitPreset = draft
+        MmLog.i(
+            TAG,
+            "一键拜访预设已保存：${draft.serverChoice}/${draft.serverName}/${draft.friendName}",
+        )
+        // 保存成功 → **回到上级菜单**（不是收起面板）：用户刚配完，最可能接着点「拜访」执行一次
+        // 提示里**服务器与好友都写出来**（2026-09-19 用户口径：只报好友看不出服务器配成什么了）
+        menuState = FloatingMenu.configSaved(
+            menuState,
+            context.getString(
+                R.string.floating_menu_config_saved,
+                serverSummary(draft),
+                draft.friendName,
+            ),
+        )
+        rerender()
+    }
+
+    /** 服务器摘要（保存提示用）：「顺序轮换」或具体区服名。 */
+    private fun serverSummary(preset: VisitPreset): String =
+        when (preset.serverChoice) {
+            ServerChoice.NEXT -> context.getString(R.string.floating_menu_config_server_auto)
+            ServerChoice.FIXED -> preset.serverName
+        }
+
+    /** 进下一级 / 回根：只改状态再重画（同一扇窗，原地替换）。 */
+    private fun openGroup(group: FloatingMenu.Group) {
+        menuState = FloatingMenu.openGroup(menuState, group)
+        rerender()
+    }
+
+    private fun backToRoot() {
+        menuState = FloatingMenu.back(menuState)
+        rerender()
+    }
+
+    /**
+     * 只改内容的重新渲染（层级切换走这里）。
+     *
+     * **换完内容先同步量一次，再算落位**（2026-09-16 用户口径「层级切换时闪烁」）：
+     * 新内容的尺寸和旧内容不一样，若不先量，窗口会先按**旧尺寸**显示一帧、
+     * 等 [applyPositions] 把新尺寸与新位置写进去后才跳到正确位置 —— 那就是肉眼看到的闪烁。
+     * 先 `measureSelf` 把尺寸算出来，尺寸与位置就在同一次 `updateViewLayout` 里一起生效。
+     */
+    private fun rerender() {
+        // 测量已在 renderMenu 内部完成（"内容一变就重新量"，见那里的说明）—— 这里只负责落位
+        renderMenu()
+        applyPositions()
+    }
+
+    /**
+     * 把列表包进**限高**的 ScrollView：横屏可用高只有约 360dp，菜单不能顶满屏。
+     * 高度按「行数 × 行高」取用、超过上限才限住 —— 行数与上限都走纯逻辑 [FloatingMenu]（已有单测）。
+     */
+    private fun boundedScroll(rows: List<View>, rowCount: Int): ScrollView {
+        val list = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            rows.forEach { addView(it) }
+        }
+        val density = context.resources.displayMetrics.density
+        val screenHeightDp = (FloatingScreen.spec(context).height / density).toInt()
+        // 除列表以外的固定高度（面板内边距 + 面包屑 + 快捷行 + 原因条）保守按 **150dp** 估算 ——
+        // 刻意取大：宁可列表少显示一行，也不让菜单顶破屏幕。
+        val maxDp = FloatingMenu.listMaxHeight(screenHeightDp, 150)
+        val heightDp = FloatingMenu.listHeight(rowCount, FloatingMenu.PICK_ROW_HEIGHT_DP, maxDp)
+        return ScrollView(context).apply {
+            isFillViewport = false
+            addView(list)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(heightDp),
+            )
+        }
+    }
+
+    /** 纯说明行（不可点）：清单为空、待确认提示等。 */
+    private fun noteRow(text: String): TextView = textView(12f, MENU_TEXT_COLOR).apply {
+        this.text = text
+        setPadding(dp(10), dp(6), dp(10), dp(6))
+    }
+
+    /**
+     * 三级列表里的一行（服务器 / 好友名）：整行可点。
+     *
+     * [selected] = 这一项就是**当前选中的那个**：琥珀色 + 前置勾号（2026-09-16 用户口径
+     * 「被选中的服务器和好友应该增加高亮选中标记」）—— 面板窄、行又密，靠颜色 + 勾号才一眼看得出。
+     *
+     * 与上级功能行逐项对齐：左内边距留出图标槽位那一段，文字落在同一条竖线上。
+     */
+    private fun pickRow(
+        name: String,
+        selected: Boolean = false,
+        onClick: () -> Unit,
+    ): TextView = textView(12f, if (selected) MENU_GLYPH_COLOR else MENU_TEXT_COLOR).apply {
+        text = if (selected) "✓ $name" else name
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+        gravity = Gravity.CENTER_VERTICAL
+        // 左内边距 = 功能行的（8 + 图标槽 18 + 图标后间距 6）→ 文字起点对齐
+        setPadding(dp(8 + MENU_GLYPH_SLOT_DP + 6), dp(2), dp(8), dp(2))
+        // 行高比功能行高一档（2026-09-16 用户口径「列表太紧凑」）：文字在行内垂直居中
+        minHeight = dp(FloatingMenu.PICK_ROW_HEIGHT_DP)
+        // 点按反馈与功能行同一套
+        background = tapFeedbackBackground()
+        isClickable = true
+        setOnClickListener { onClick() }
+    }
+
+    /**
+     * 展开时读一次两份清单：菜单里能选的目标**只能来自清单**（引用口径 —— 手打名字是
+     * "名字对不上 → 定位失败"的唯一来源）。读失败只是"这一层没得选"，不影响其它组。
+     * 文件是 KB 级、且只在用户点开菜单时读一次。
+     */
+    private fun loadMenuOptions() {
+        serverNames = runCatching {
+            (ServerListStore.load(context) ?: ServerList.EMPTY).entries.map { it.serverName }
+        }.getOrElse {
+            MmLog.w(TAG, "服务器清单读取失败：菜单里不给选（其它组不受影响）", it)
+            emptyList()
+        }
+        friendNames = runCatching {
+            (FriendListStore.load(context) ?: FriendList.EMPTY).entries.map { it.name }
+        }.getOrElse {
+            MmLog.w(TAG, "好友清单读取失败：设置页里不给选（其它项不受影响）", it)
+            emptyList()
+        }
+        visitPreset = runCatching {
+            VisitPresetStore.load(context) ?: VisitPreset.EMPTY
+        }.getOrElse {
+            MmLog.w(TAG, "预设读取失败：一级「拜访」会提示去设置（其它项不受影响）", it)
+            VisitPreset.EMPTY
+        }
+    }
+
+    /**
+     * 菜单功能行（参考 vivo 游戏魔盒）：左侧图标 + 文案，整行可点。
+     *
+     * 图标占一个**固定宽度**的槽位：不同字形的自然宽度差得很远（`☺` 甚至会被渲染成双宽的 emoji），
+     * 不固定就会出现"每一行的文字起点都不一样"（2026-09-16 用户报「拜访的文字左边距更宽、没和其他
+     * 菜单左对齐」）。槽位固定 18dp + 居中对齐后，所有行的文字起点一律相同。
+     */
+    /**
+     * 菜单行的**点按反馈**：按下的那一行整行变亮（2026-09-16 用户口径
+     * 「点击时改对应菜单背景色高亮」）。
+     *
+     * 试过系统水波纹（`RippleDrawable`）—— 在悬浮窗里它按**窗口边界**铺开，整块面板一起亮，
+     * 根本分不清点的是哪一行（用户原话「无法区分」）。
+     * `StateListDrawable` + `state_pressed` 的高亮范围**就是这一行自己的 bounds**：
+     * 按下变亮、抬手恢复，既不越界也不会影响别的行。
+     */
+    private fun tapFeedbackBackground(): Drawable = StateListDrawable().apply {
+        addState(intArrayOf(android.R.attr.state_pressed), ColorDrawable(MENU_PRESSED_COLOR))
+        addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
+    }
+
+    /** 文案来自资源 id 的重载（绝大多数行）。 */
     private fun menuRow(glyph: String, textRes: Int, onClick: () -> Unit): LinearLayout =
+        menuRow(glyph, context.getString(textRes), onClick)
+
+    /** 文案已经是字符串的重载（一级「拜访」要显示预设里的好友名，写不成固定资源）。 */
+    private fun menuRow(glyph: String, text: CharSequence, onClick: () -> Unit): LinearLayout =
         LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(6), dp(10), dp(6))
+            // 上下间距 2 → 5dp（2026-09-17 用户口径「适当增加 1、2 级菜单项的上下间距」）：
+            // 功能行挨得太紧时，一眼扫过去分不清是"五项"还是"三块"。列表行保持自己的 28dp 行高。
+            setPadding(dp(8), dp(5), dp(8), dp(5))
+            background = tapFeedbackBackground()
             addView(
                 textView(12f, MENU_GLYPH_COLOR).apply {
-                    text = glyph
-                    setPadding(0, 0, dp(8), 0)
+                    // 必须写 this.text：外层的参数也叫 text，不写就会被解析成"给参数赋值"
+                    this.text = glyph
+                    gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(
+                        dp(MENU_GLYPH_SLOT_DP),
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                    )
+                    setPadding(0, 0, dp(6), 0)
                 },
             )
-            addView(textView(12f, MENU_TEXT_COLOR).apply { text = context.getString(textRes) })
+            addView(textView(12f, MENU_TEXT_COLOR).apply { this.text = text })
             setOnClickListener { onClick() }
         }
 
@@ -398,7 +770,7 @@ class FloatingWindow(private val context: Context) {
         val screen = FloatingScreen.spec(context)
         val (menuWidth, menuHeight) = viewSize(menuView)
         val x = FloatingLayout.menuX(
-            positions.handle.side,
+            positions.side,
             menuWidth,
             screen.width,
             dp(HANDLE_VISUAL_WIDTH_DP), // 避让的是**可见条**（窗口其余部分是透明触摸区）
@@ -414,10 +786,15 @@ class FloatingWindow(private val context: Context) {
         return x to y
     }
 
-    /** 视图尺寸：优先真实布局尺寸，未布局时退回测量值。 */
+    /**
+     * 视图尺寸：优先**测量值**（`measureSelf` 刚量过 = 最新内容），量不到才退回已布局尺寸。
+     *
+     * 顺序不能反：菜单窗换过内容后、系统重排之前，`view.width` 还是**旧尺寸**，
+     * 用它算落位就会算出错位的位置（层级切换闪烁的一半原因）。
+     */
     private fun viewSize(view: View): Pair<Int, Int> =
-        (if (view.width > 0) view.width else view.measuredWidth) to
-            (if (view.height > 0) view.height else view.measuredHeight)
+        (if (view.measuredWidth > 0) view.measuredWidth else view.width) to
+            (if (view.measuredHeight > 0) view.measuredHeight else view.height)
 
     /**
      * 菜单窗触摸：只关心 [MotionEvent.ACTION_OUTSIDE]——**点菜单面板之外任何地方即收起**
@@ -445,146 +822,149 @@ class FloatingWindow(private val context: Context) {
             rawY >= location[1] - slop && rawY <= location[1] + panelView.height + slop
     }
 
-    // ---- 触摸：状态标签（自由拖动）----
-    //
-    // 手柄一侧**不再有任何拖动逻辑**（2026-09-14 用户口径）：位置固定贴在右侧边缘上方三分之一处，
-    // 触摸只由 `setOnClickListener { toggleExpanded() }` 承担（单击展开 / 收起菜单）。
-
-    private fun onLabelTouch(view: View, event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                downRawX = event.rawX
-                downRawY = event.rawY
-                val params = view.layoutParams as WindowManager.LayoutParams
-                downWindowX = params.x
-                downWindowY = params.y
-                dragging = false
-                return true
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (!dragging) {
-                    dragging = FloatingGesture.isDrag(
-                        event.rawX - downRawX,
-                        event.rawY - downRawY,
-                        touchSlop,
-                    )
-                }
-                if (dragging) {
-                    val screen = FloatingScreen.spec(context)
-                    place(
-                        view,
-                        FloatingLayout.clampInside(
-                            downWindowX + (event.rawX - downRawX).toInt(),
-                            view.width,
-                            screen.width,
-                        ),
-                        FloatingLayout.clampInside(
-                            downWindowY + (event.rawY - downRawY).toInt(),
-                            view.height,
-                            screen.height,
-                        ),
-                    )
-                }
-                return true
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (dragging) {
-                    val screen = FloatingScreen.spec(context)
-                    val params = view.layoutParams as WindowManager.LayoutParams
-                    positions = positions.copy(
-                        label = FloatingLayout.snapLabelCenter(
-                            windowX = params.x,
-                            windowY = params.y,
-                            labelWidth = view.width,
-                            labelHeight = view.height,
-                            screenWidth = screen.width,
-                            screenHeight = screen.height,
-                        ),
-                    )
-                    applyPositions()
-                    persist(screen, "状态标签拖动结束（中心 ${positions.label.xRatio}x${positions.label.yRatio}）")
-                } else {
-                    view.performClick()
-                }
-                dragging = false
-                return true
-            }
-        }
-        return false
-    }
-
-    private fun persist(screen: ScreenSpec, reason: String) {
-        FloatingPositionStore.save(context, positions, screen.width, screen.height)
-        MmLog.i(TAG, "悬浮窗位置已持久化：$reason")
-    }
-
     // ---- 菜单 ----
 
     /** 单击手柄：展开 / 收起菜单（展开本身不执行任何操作）。 */
     private fun toggleExpanded() {
         expanded = !expanded
         if (expanded) {
-            reasonText?.text = ""
-            reasonText?.visibility = View.GONE
+            // 每次展开都**回到根**并重读两份清单：不记住"上次停在选服务器那层"（避免误点上次的目标）
+            menuState = FloatingMenu.State()
+            loadMenuOptions()
+            renderMenu()
+        } else {
+            menuState = FloatingMenu.collapsed()
         }
         applyExpandedState()
         applyPositions()
         MmLog.i(TAG, if (expanded) "悬浮窗菜单已展开（等待用户选择）" else "悬浮窗已收起")
     }
 
-    /** 收起（操作成功结束后立即收起，FR-07 收起时机）。 */
+    /** 收起（操作成功结束后立即收起，FR-07 收起时机）：**层级栈一并清空**。 */
     private fun collapse() {
         if (!expanded) return
         expanded = false
+        menuState = FloatingMenu.collapsed()
         reasonText?.visibility = View.GONE
         applyExpandedState()
         applyPositions()
         MmLog.i(TAG, "悬浮窗已收起（操作成功结束）")
     }
 
-    /** 保持展开并显示原因（失败时不静默，FR-07 收起时机 / §1.3）。 */
-    private fun showReason(reason: String) {
-        val view = reasonText ?: return
-        view.text = reason
-        view.visibility = View.VISIBLE
+    /**
+     * 失败 / 当前不可用：**停在当前层级**并显示原因（FR-07 收起时机 / §1.3）——
+     * 不收起、不隐藏、不静默（用户口径：「停止」在没有进行中的巡查时也要照常说出来）。
+     */
+    private fun fail(reason: String) {
+        menuState = FloatingMenu.fail(menuState, reason)
+        renderMenu()
         expanded = true
         applyExpandedState()
         applyPositions()
+        MmLog.w(TAG, "菜单保持展开并说明原因：$reason")
+    }
+
+    /** 执行前的统一前置检查（采集会话 + 跑号清单可读）；不满足 → 说明原因并返回 false。 */
+    private fun ensureReady(): Boolean {
+        val reason = startBlockReason() ?: return true
+        MmLog.w(TAG, "菜单动作被拒绝：$reason")
+        fail(reason)
+        return false
     }
 
     /**
-     * 菜单「开始巡查」：先检查前置条件——
-     * ① 采集会话已建立；② 巡查配置非空且可读。
-     * 任一不满足 → **保持展开并显示原因**；都满足 → 发出「用户请求开始巡查」事件（M4 消费）并收起。
+     * 发一次用户请求：**成功才收起**（FR-07 收起时机）。
+     * M3 全程只发事件、**不产生任何游戏点击**（红线 2）。
+     *
+     * @param keepExpanded 「停止」这类"发出去了但当前没有可停的流程"的情形：不收起，由调用方补原因说明。
      */
-    private fun onStartPatrol() {
-        val reason = startBlockReason()
-        if (reason != null) {
-            MmLog.w(TAG, "开始巡查被拒绝：$reason")
-            showReason(reason)
-            return
-        }
-        val count = PatrolRequestSignal.request(SystemClock.elapsedRealtime())
-        MmLog.i(TAG, "已发出「用户请求开始巡查」（第 $count 次）；本版本不执行流程、不产生点击")
-        collapse()
+    private fun sendRequest(
+        kind: PatrolRequestSignal.Kind,
+        serverName: String? = null,
+        friendName: String? = null,
+        keepExpanded: Boolean = false,
+    ) {
+        val count = PatrolRequestSignal.request(
+            PatrolRequestSignal.Request(
+                kind = kind,
+                nowMs = SystemClock.elapsedRealtime(),
+                serverName = serverName,
+                friendName = friendName,
+            ),
+        )
+        MmLog.i(TAG, "已发出「${kind.logText}」（第 $count 次）；本版本不执行流程、不产生点击")
+        if (!keepExpanded) collapse()
     }
 
+    /**
+     * 一键拜访（**一级直接执行**）：按预设的"服务器策略 + 好友"走完整条流程。
+     *
+     * 这是用户最高频的路径 —— 预设没配好时**不静默**，直接说明去配（并保持展开）。
+     */
+    private fun onVisitPreset() {
+        if (!ensureReady()) return
+        val preset = visitPreset
+        if (!preset.isReady) {
+            fail(context.getString(R.string.floating_reason_preset_unset))
+            return
+        }
+        sendRequest(
+            kind = PatrolRequestSignal.Kind.VISIT_PRESET,
+            // 只有"固定区服"才带区服名；为空 = 按清单换下一个（消费方据此区分两种策略）
+            serverName = preset.serverName.takeIf { preset.serverChoice == ServerChoice.FIXED },
+            friendName = preset.friendName,
+        )
+    }
+
+    /**
+     * 只拜访：**跳过全部换号步骤**，在当前所在的区服直接进好友农场拜访预设里的好友
+     * （FR-04「只拜访」区间：第 7 步 → 第 10 步）。
+     *
+     * 它只需要"拜访谁"，**不需要服务器** —— 所以校验只看好友（比 [onVisitPreset] 松一档）。
+     */
+    private fun onVisitOnly() {
+        if (!ensureReady()) return
+        if (visitPreset.friendName.isEmpty()) {
+            fail(context.getString(R.string.floating_reason_preset_unset))
+            return
+        }
+        sendRequest(
+            kind = PatrolRequestSignal.Kind.VISIT_ONLY,
+            friendName = visitPreset.friendName,
+        )
+    }
+
+    /** 换号：按清单顺序换下一个（不指定目标）。 */
+    private fun onSwitchNext() {
+        if (!ensureReady()) return
+        sendRequest(PatrolRequestSignal.Kind.SWITCH_NEXT)
+    }
+
+    /**
+     * 停止：M3 **没有进行中的流程可停**（巡查主流程属 M4）。
+     * 按用户口径：照常发出请求、**照常显示这一组**，点了**保持展开**并说明"当前没有进行中的巡查" ——
+     * 不隐藏、不静默、不制造"点了没反应"的哑按钮。
+     */
+    private fun onStop() {
+        if (!ensureReady()) return
+        sendRequest(PatrolRequestSignal.Kind.STOP, keepExpanded = true)
+        fail(context.getString(R.string.floating_menu_nothing_running))
+    }
+
+    /** 执行前的前置检查：采集会话在 + 预设文件可读（内容是否配好由各动作自己判定）。 */
     private fun startBlockReason(): String? {
         if (!CaptureSessionSignal.isActive) {
             return context.getString(R.string.floating_reason_no_session)
         }
-        val config = try {
-            PatrolConfigStore.load(context)
+        return try {
+            VisitPresetStore.load(context)
+            null
         } catch (e: IllegalArgumentException) {
-            return context.getString(
-                R.string.floating_reason_config_broken,
+            context.getString(
+                R.string.floating_reason_preset_broken,
                 e.message ?: e.javaClass.simpleName,
             )
         }
-        if (config == null || config.isEmpty) {
-            return context.getString(R.string.floating_reason_config_empty)
-        }
-        return null
     }
 
     // ---- 定位 ----
@@ -593,8 +973,6 @@ class FloatingWindow(private val context: Context) {
     private data class Offsets(
         val panelX: Int,
         val panelY: Int,
-        val labelX: Int,
-        val labelY: Int,
         val menuX: Int?,
         val menuY: Int?,
     )
@@ -602,19 +980,16 @@ class FloatingWindow(private val context: Context) {
     private fun computeOffsets(
         panelWidth: Int,
         panelHeight: Int,
-        labelWidth: Int,
-        labelHeight: Int,
         menuWidth: Int,
         menuHeight: Int,
     ): Offsets {
         val screen = FloatingScreen.spec(context)
-        val side = positions.handle.side
-        val panelY = FloatingLayout.y(positions.handle.yRatio, panelHeight, screen.height)
+        val side = positions.side
+        val panelY = FloatingLayout.y(positions.yRatio, panelHeight, screen.height)
         // 手柄**永远贴边**（不再有"展开态临时进屏"：菜单已独立成窗，手柄不需要让位）
         // 注意传入的是**可见条宽度**：窗口里剩下的部分是透明触摸区，菜单只需避开看得见的那一条
         val handleVisualWidth = dp(HANDLE_VISUAL_WIDTH_DP)
         val panelX = FloatingLayout.handleX(side, panelWidth, screen.width, handleVisualWidth)
-        val margin = dp(LABEL_MARGIN_DP)
         val menuX = if (menuWidth > 0) {
             FloatingLayout.menuX(side, menuWidth, screen.width, handleVisualWidth, dp(MENU_MARGIN_DP))
         } else {
@@ -628,18 +1003,6 @@ class FloatingWindow(private val context: Context) {
         return Offsets(
             panelX = panelX,
             panelY = panelY,
-            labelX = FloatingLayout.labelXByCenter(
-                positions.label.xRatio,
-                labelWidth,
-                screen.width,
-                margin,
-            ),
-            labelY = FloatingLayout.labelYByCenter(
-                positions.label.yRatio,
-                labelHeight,
-                screen.height,
-                margin,
-            ),
             menuX = menuX,
             menuY = menuY,
         )
@@ -648,24 +1011,32 @@ class FloatingWindow(private val context: Context) {
     /** 重新落位（尺寸未就绪时跳过；布局 / 屏幕变化后会被再次触发）。 */
     private fun applyPositions() {
         val panelView = panel ?: return
-        val labelView = label ?: return
         val panelWidth = panelView.width.takeIf { it > 0 } ?: handleWindowWidth()
         val panelHeight = panelView.height.takeIf { it > 0 } ?: handleWindowHeight()
-        if (labelView.width == 0) return
         val menuView = menu?.takeIf { expanded && menuAttached }
         val (menuWidth, menuHeight) = menuView?.let { viewSize(it) } ?: (0 to 0)
         val offset = computeOffsets(
             panelWidth,
             panelHeight,
-            labelView.width,
-            labelView.height,
             menuWidth,
             menuHeight,
         )
         place(panelView, offset.panelX, offset.panelY)
-        place(labelView, offset.labelX, offset.labelY)
         if (menuView != null && offset.menuX != null && offset.menuY != null) {
-            place(menuView, offset.menuX, offset.menuY)
+            // 菜单窗**尺寸与位置一次提交**（2026-09-16 修「层级切换闪烁」）：
+            // 菜单窗按 WRAP_CONTENT 挂载，内容一换尺寸就变；只改位置的话，系统会先用**旧尺寸**
+            // 排一帧、下一帧才按新尺寸重排，而位置已经按新尺寸算过了 → 那一帧就是肉眼看到的闪。
+            // 把量好的尺寸显式写进参数、与 x/y 在同一次 updateViewLayout 里生效，中间就没有错位帧。
+            val menuParams = menuView.layoutParams as WindowManager.LayoutParams
+            if (menuParams.width != menuWidth || menuParams.height != menuHeight) {
+                menuParams.width = menuWidth
+                menuParams.height = menuHeight
+                menuParams.x = offset.menuX
+                menuParams.y = offset.menuY
+                runCatching { windowManager.updateViewLayout(menuView, menuParams) }
+            } else {
+                place(menuView, offset.menuX, offset.menuY)
+            }
         }
         // 取证 / 排障用途：把"用了多大的屏、把各窗口放到了哪"记进日志——
         // 悬浮窗看不见或位置不对时，一行日志就能判断是尺寸错了还是位置值错了（真机排障踩过坑）。
@@ -676,8 +1047,7 @@ class FloatingWindow(private val context: Context) {
             ""
         }
         val trace = "屏 ${screen.width}x${screen.height} ｜ 手柄 (${offset.panelX},${offset.panelY})" +
-            " ${panelWidth}x$panelHeight ｜ 标签 (${offset.labelX},${offset.labelY})" +
-            " ${labelView.width}x${labelView.height}$menuTrace"
+            " ${panelWidth}x$panelHeight$menuTrace"
         if (trace != lastPlacementTrace) {
             lastPlacementTrace = trace
             MmLog.i(TAG, "悬浮窗落位: $trace")
@@ -728,20 +1098,6 @@ class FloatingWindow(private val context: Context) {
         params.x = x
         params.y = y
         runCatching { windowManager.updateViewLayout(view, params) }
-    }
-
-    private fun applyStatusText(state: UiState) {
-        statusText?.text = context.getString(R.string.floating_status_text, state.label)
-    }
-
-    private fun applyActionText(action: String?) {
-        val view = actionText ?: return
-        if (action == null) {
-            view.visibility = View.GONE
-        } else {
-            view.text = context.getString(R.string.floating_action_text, action)
-            view.visibility = View.VISIBLE
-        }
     }
 
     private fun panelParams() = WindowManager.LayoutParams(
@@ -800,9 +1156,15 @@ class FloatingWindow(private val context: Context) {
         const val LABEL_TEXT_COLOR = 0xFFFFFFFF.toInt()
         const val LABEL_ACTION_COLOR = 0xCCFFFFFF.toInt()
 
-        /** 手柄：半透明琥珀黄（2026-09-14 用户口径：再透一些）；收起态不写字，只用形状。 */
-        const val HANDLE_FILL_COLOR = 0xB3FFC107.toInt()
-        const val HANDLE_STROKE_COLOR = 0xFFFFA000.toInt()
+        /**
+         * 手柄：半透明琥珀黄，**再透一档**（2026-09-16 用户口径「增加悬浮窗手柄透明度」）。
+         *
+         * 沿革：不透明 → 70%（0xB3）→ **35%（0x59）**。手柄贴在游戏画面右缘，越透越不挡视野；
+         * 但**完全看不见就等于找不到入口**，所以描边留一半不透明度（0x80）兜住轮廓。
+         * 收起态不写字，只用形状。
+         */
+        const val HANDLE_FILL_COLOR = 0x59FFC107.toInt()
+        const val HANDLE_STROKE_COLOR = 0x80FFA000.toInt()
         const val HANDLE_TEXT_COLOR = 0xFF3E2723.toInt()
 
         /** 展开菜单面板（参考 vivo 游戏魔盒）：深色半透明 + 淡琥珀描边 + 白字。 */
@@ -831,6 +1193,16 @@ class FloatingWindow(private val context: Context) {
 
         /** 菜单面板（独立窗口：圆角 + 内边距 + 与屏幕 / 手柄的间距）。 */
         const val MENU_CORNER_DP = 14
+        /** 菜单图标槽位宽度（dp）：固定住才能让每行文字左对齐（见 [menuRow]）。 */
+        const val MENU_GLYPH_SLOT_DP = 18
+
+        /**
+         * 菜单行**按下**时的高亮底色（20% 白）：面板是深色的，亮一点才看得出来。
+         *
+         * 只是"这一行变亮"，不用水波纹 —— 水波纹在悬浮窗里会按窗口边界铺开，整块面板一起亮，
+         * 分不清点的是哪一行（2026-09-16 用户口径）。
+         */
+        const val MENU_PRESSED_COLOR = 0x33FFFFFF
         const val PANEL_PADDING_DP = 4
         const val MENU_MARGIN_DP = 8
 

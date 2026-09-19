@@ -19,3 +19,6 @@ _tmp_check/
 
 # AI 协作记忆（会话恢复用，非项目产物，不入库）
 .codebuddy/
+
+# Kotlin 编译缓存（构建产物，不入库）
+.kotlin/

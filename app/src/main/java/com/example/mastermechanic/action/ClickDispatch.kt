@@ -11,7 +11,9 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * - 服务未安装（无障碍不可用 / 授权被撤销）→ 返回「无障碍服务不可用」，调用方按"点不了"处理
  *   （ADR-002：服务不可用 = 不能点击，整体按"不可用即停"）；
- * - 模式（演练 / 实点）默认**演练**，只能由用户显式开启实点（B5）；本层不做任何"自动升级为实点"。
+ * - 模式（演练 / 实点）默认**实点**（2026-09-17 用户口径「默认允许真实点击」）；
+ *   UI 不再有切换入口（旧的「运行方式」卡已撤掉），下面两个 API
+ *   （[enableLive] / [enableDrill]）仅作回归用，**当前没有任何调用方**。
  *
  * 跨线程：调用方在帧线程、服务在主线程，故共享状态用 @Volatile（写入都是整引用替换）。
  */
@@ -20,7 +22,7 @@ object ClickDispatch {
     @Volatile
     private var forwarder: ClickForwarder? = null
 
-    private val modeState = MutableStateFlow(ClickMode.DRILL)
+    private val modeState = MutableStateFlow(ClickMode.LIVE)
 
     /**
      * 模式流（T2-6 / B5）：授权页开关据此实时反映当前模式。

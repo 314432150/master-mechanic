@@ -17,8 +17,8 @@ class ServerListStoreTest {
 
     private fun tempDir(): File = Files.createTempDirectory("mm-server-list").toFile()
 
-    private val a = ServerEntry("392区", "阿明", "Lv.50")
-    private val b = ServerEntry("418区") // 可选字段留空
+    private val a = ServerEntry(ServerPlatform.WECHAT, "392", "微信392区", "阿明", "Lv.50")
+    private val b = ServerEntry(serverName = "418区") // 平台 / 区号 / 角色名 / 等级留空
 
     @Test
     fun saveThenLoadRoundTrip() {
@@ -38,7 +38,7 @@ class ServerListStoreTest {
         val file = File(tempDir(), "servers/list.txt")
         file.parentFile?.mkdirs()
         // ① 格式标记不符（别的文件 / 被改过）——行内容本身合法，才能走到格式标记这一层
-        file.writeText("format=mm-patrol\nversion=1\nitem=392区|阿明|Lv.50\n", Charsets.UTF_8)
+        file.writeText("format=mm-patrol\nversion=2\nitem=wechat|392|微信392区|阿明|Lv.50\n", Charsets.UTF_8)
         val e1 = assertThrows(IllegalArgumentException::class.java) { ServerListStore.load(file) }
         assertTrue(e1.message!!.contains("格式标记不符"))
         // ② 结构都不成立（随手写的内容）

@@ -44,25 +44,60 @@
     <string name="capture_notification_text">用于识别游戏画面；点击打开应用</string>
 
     <!-- 悬浮窗壳（M0-T0-5）与状态展示（M1-T1-7）；交互与位置（M3-T3-4 / T3-5） -->
-    <string name="floating_status_text">状态：%1$s</string>
-    <string name="floating_action_text">动作：%1$s</string>
+    <!-- 旧的 floating_status_text / floating_action_text 已按用户口径 2026-09-17 移除：
+         标签不再显示识别状态，只显示最近一次触发的请求（直接走 PatrolRequestSignal.logText）。 -->
     <string name="floating_handle_desc">悬浮窗手柄（单击展开菜单，位置固定不可拖动）</string>
-    <string name="floating_menu_start_patrol">开始巡查</string>
+    <string name="floating_menu_start_patrol">开始跑号</string>
+
+    <!-- 悬浮窗二级菜单（M3-T3-8，FR-07）：四组 + 两级列表 -->
+    <!-- 一键拜访（2026-09-16 用户口径：移除巡查，改由预设驱动、一级直接执行） -->
+    <string name="floating_menu_switch_visit">换号拜访「%1$s」</string>
+    <string name="floating_menu_switch_visit_unset">换号拜访（未配置）</string>
+    <string name="floating_menu_visit">只拜访「%1$s」</string>
+    <string name="floating_menu_visit_unset">只拜访（未配置好友）</string>
+    <string name="floating_menu_glyph_switch_visit">★</string>
+    <string name="floating_reason_preset_unset">还没配置「一键拜访」：点菜单里的「拜访规则」选好服务器和好友。</string>
+    <!-- 悬浮窗内的「一键拜访设置」（2026-09-16 用户口径：配置必须能在悬浮窗里做，不能逼用户切回 App） -->
+    <string name="floating_menu_setting">拜访规则</string>
+    <string name="floating_menu_glyph_setting">⚙</string>
+    <string name="floating_menu_config_server_next">服务器：顺序轮换</string>
+    <string name="floating_menu_config_server_fixed">服务器：%1$s</string>
+    <string name="floating_menu_config_server_unset">服务器：点这里选一个</string>
+    <string name="floating_menu_config_friend">好友：%1$s</string>
+    <string name="floating_menu_config_friend_unset">好友：点这里选一个</string>
+    <string name="floating_menu_config_save">保存</string>
+    <string name="floating_menu_config_server_auto">顺序轮换</string>
+    <string name="floating_menu_config_saved">已保存：%1$s → %2$s</string>
+    <string name="floating_menu_config_incomplete">还没配好：请先选一个好友（服务器可留「顺序轮换」）。</string>
+    <string name="floating_menu_config_save_failed">保存失败：%1$s（预设没有被改动）</string>
+    <string name="floating_reason_preset_broken">一键拜访预设读取失败：%1$s</string>
+    <string name="floating_menu_switch">换号</string>
+    <string name="floating_menu_visit_title">拜访</string>
+    <string name="floating_menu_stop">停止</string>
+    <string name="floating_menu_glyph_switch">⇄</string>
+    <string name="floating_menu_glyph_visit">☺</string>
+    <string name="floating_menu_glyph_stop">■</string>
+    <string name="floating_menu_glyph_back">←</string>
+    <string name="floating_menu_switch_next">下一个</string>
+    <string name="floating_menu_visit_toggle">进入好友农场（点击切换）</string>
+    <string name="floating_menu_confirm">确定拜访</string>
+    <string name="floating_menu_cancel">取消</string>
+    <string name="floating_menu_confirm_friend">确认要拜访「%1$s」吗？</string>
+    <string name="floating_menu_no_server">服务器清单是空的：先到「服务器」页添加。</string>
+    <string name="floating_menu_no_friend">好友清单是空的：先到「好友」页添加。</string>
+    <string name="floating_menu_nothing_running">当前没有进行中的流程（自动执行属下一个里程碑）。</string>
     <string name="floating_menu_glyph_patrol">▶</string>
     <string name="floating_reason_no_session">尚未建立采集会话：请先到「授权状态」页授予屏幕采集权限。</string>
-    <string name="floating_reason_config_empty">巡查列表为空：请先到「巡查配置」页添加至少一项。</string>
-    <string name="floating_reason_config_broken">巡查配置读取失败：%1$s</string>
+    <string name="floating_reason_config_empty">跑号清单为空：请先到「跑号清单」页添加至少一项。</string>
+    <string name="floating_reason_config_broken">跑号清单读取失败：%1$s</string>
     <string name="floating_side_left">左侧</string>
     <string name="floating_side_right">右侧</string>
     <string name="floating_label_default">底部居中</string>
     <string name="floating_label_custom">已自定义</string>
 
     <!-- 悬浮窗位置（M3-T3-4；T3-7 起两个部件各自可拖动） -->
-    <string name="auth_floating_label">悬浮窗位置</string>
-    <string name="auth_floating_desc">游戏内悬浮窗分两个部件，都能按住拖动、位置都会被记住：① 手柄——贴屏幕边缘（贴边时收窄成扁半圆，只露一半），单击展开菜单；② 状态标签——显示当前状态与动作，默认停在屏幕底部居中。两者都只吞掉自己那一小块区域，其余触摸照常给游戏。若被拖到不好点的位置，可在下面重置。</string>
-    <string name="auth_floating_current">手柄：%1$s ｜ 状态标签：%2$s</string>
-    <string name="auth_floating_reset">重置到默认位置</string>
-    <string name="auth_floating_reset_done">已重置为默认位置（游戏切到前台时生效）。</string>
+    <!-- 「悬浮窗位置」卡已按用户口径 2026-09-17 移除（手柄不可拖动，位置只由 DEFAULT 决定）。 -->
+    <!-- 旧的 4 条 auth_floating_* 文案随卡片一起删除。 -->
     <string name="accessibility_service_label">MasterMechanic</string>
     <string name="accessibility_service_description">用于代替手动重复操作：点击由本服务执行，不会读取或修改游戏数据。</string>
 
@@ -136,81 +171,160 @@
     <string name="calibration_error_frame_decode">帧文件解码失败</string>
     <string name="calibration_error_selection_too_small">选区太小：原图至少需要 %1$d×%2$d 像素</string>
 
-    <!-- 巡查配置（M3-T3-3 / FR-03） -->
-    <string name="auth_open_patrol_config">巡查配置</string>
-    <string name="patrol_title">巡查配置</string>
-    <string name="patrol_subtitle">每项 = 一个区服名称 + 一个目标好友名称，巡查时按列表顺序依次执行。这里只校验「名称不得为空」；能不能在界面上唯一找到这个名称，要到巡查开始时才判断（找不到或不止一个就停下，不会猜着点）。</string>
+    <!-- 跑号清单（M3-T3-3 / FR-03） -->
+    <string name="auth_open_patrol_config">跑号</string>
+    <string name="patrol_title">跑号</string>
+    <string name="patrol_subtitle">每项 = 一个区服名称 + 一个目标好友名称，跑号时按列表顺序依次执行。这里只校验「名称不得为空」；能不能在界面上唯一找到这个名称，要到跑号开始时才判断（找不到或不止一个就停下，不会猜着点）。</string>
     <string name="patrol_back">返回授权页</string>
-    <string name="patrol_list_title">巡查列表（%1$d 项）</string>
-    <string name="patrol_empty">尚无巡查项。点「新增巡查项」添加第一项。</string>
+    <string name="patrol_list_title">跑号（%1$d 项）</string>
+    <string name="patrol_empty">尚无跑号项。点上面右侧的「新增跑号项」添加第一项。</string>
     <string name="patrol_index">%1$d.</string>
     <string name="patrol_item_friend">目标好友：%1$s</string>
-    <string name="patrol_add">新增巡查项</string>
+    <!-- 读屏用：把一整行念成一句话（视觉上的分行对读屏是噪音） -->
+    <!-- 跑号项编辑页（2026-09-16 用户口径：好友上移 + 服务器多选；UX 结论：弃用小弹框 + 下拉框，改全屏页） -->
+    <string name="patrol_editor_add">新增跑号项</string>
+    <string name="patrol_editor_edit">编辑跑号项</string>
+    <string name="patrol_save">保存</string>
+    <string name="patrol_select_all">全选</string>
+    <string name="patrol_clear_selection">清空</string>
+    <string name="patrol_selected_count">已选 %1$d / %2$d 个服务器</string>
+    <string name="patrol_need_friend">请先选一个好友</string>
+    <string name="patrol_need_server">请至少选一个服务器</string>
+    <string name="patrol_add_count">添加 %1$d 条</string>
+    <string name="patrol_batch_preview">将新增 %1$d 条</string>
+    <string name="patrol_batch_preview_mixed">将新增 %1$d 条，另有 %2$d 条已存在、会被跳过</string>
+    <!-- 按好友合并展示（2026-09-16 用户口径「相同好友对应的服务器合并展示」） -->
+    <string name="patrol_group_servers">%1$d 个服务器</string>
+    <string name="patrol_group_more">+%1$d</string>
+    <string name="patrol_group_desc">第 %1$d 组：好友 %2$s，共 %3$d 个服务器，包括 %4$s</string>
+    <string name="patrol_group_deleted">已删除 %1$s 的 %2$d 个服务器</string>
+    <string name="patrol_group_updated">已更新 %1$s 的 %2$d 个服务器</string>
+    <string name="patrol_group_will_be_removed">一个服务器都不勾 = 删掉这一组</string>
+    <string name="patrol_batch_preview_skip">选中的 %1$d 条都已存在，不会重复添加</string>
+    <string name="patrol_batch_added">已新增 %1$d 条跑号项</string>
+    <string name="patrol_batch_added_mixed">已新增 %1$d 条，跳过 %2$d 条（已存在）</string>
+    <string name="patrol_batch_added_none">没有新增：选中的 %1$d 条都已存在</string>
+    <string name="patrol_server_fixed">服务器决定这条挂在哪个区服，编辑时不可改；要换服务器请删掉这条重新加。</string>
+    <string name="patrol_row_desc">第 %1$d 项：%2$s，目标好友 %3$s</string>
+    <string name="patrol_add">新增跑号项</string>
     <string name="patrol_edit">编辑</string>
     <string name="patrol_move_up">上移</string>
     <string name="patrol_move_down">下移</string>
     <string name="patrol_delete">删除</string>
     <string name="patrol_clear">整体清空</string>
-    <string name="patrol_clear_title">清空全部巡查项？</string>
-    <string name="patrol_clear_body">将删除当前全部 %1$d 项巡查配置，此操作不可撤销。</string>
+    <string name="patrol_clear_title">清空全部跑号项？</string>
+    <string name="patrol_clear_body">将删除当前全部 %1$d 个跑号项，此操作不可撤销。</string>
     <string name="patrol_clear_confirm">清空</string>
     <string name="patrol_cancel">取消</string>
-    <string name="patrol_dialog_add">新增巡查项</string>
-    <string name="patrol_dialog_edit">编辑巡查项</string>
+    <string name="patrol_dialog_add">新增跑号项</string>
+    <string name="patrol_dialog_edit">编辑跑号项</string>
     <string name="patrol_field_server">区服名称</string>
     <string name="patrol_field_friend">目标好友名称</string>
+    <!-- 跑号项改为引用：两个字段都只能从清单里选，选不到就说明该先去清单里加一条 -->
+    <string name="patrol_picker_hint">点这里选择</string>
+    <!-- 改引用后的判重：同一区服允许出现多次（同一个号拜访多个好友），但同一组合排两遍没意义 -->
+    <string name="patrol_duplicate">这一组（%1$s → %2$s）已经在清单里了。</string>
+    <!-- 悬空引用：清单里那条被删了，跑号项还指着它 —— 必须说出来，不能静默失效 -->
+    <string name="patrol_dangling">引用对不上：清单里已经没有它了，点「编辑」重新选。</string>
+    <string name="patrol_no_server_option">服务器清单还是空的：先去「服务器清单」页加一条，再来选。</string>
+    <string name="patrol_no_friend_option">好友清单还是空的：先去「好友清单」页加一条，再来选。</string>
     <string name="patrol_field_required">区服名称与目标好友名称均不得为空（也不能只剩空格）。</string>
     <string name="patrol_field_separator">名称里不能出现「|」或换行。</string>
     <string name="patrol_confirm">保存</string>
     <string name="patrol_save_failed">保存失败：%1$s</string>
-    <string name="patrol_load_failed">巡查配置解析失败：%1$s</string>
+    <string name="patrol_load_failed">跑号清单解析失败：%1$s</string>
     <string name="patrol_rebuild">清空重建</string>
-    <string name="patrol_hint">同一区服可以重复添加（同一区服拜访多个好友）。</string>
+    <string name="patrol_hint">一行是一个好友，右侧是它在几个区服跑。点一行改它的服务器；左滑删掉这一组；长按拖动调整整组顺序。</string>
 
     <!-- 服务器清单（M3-T3-9 / FR-10） -->
-    <string name="auth_open_server_list">服务器清单</string>
-    <string name="server_title">服务器清单</string>
-    <string name="server_subtitle">每条 = 一个区服名称 + 角色名（可留空）+ 等级（可留空）。换号时只按「区服名称」到界面上找它；角色名与等级只是帮你认出这是哪个号，不参与定位（找不到或不止一个就停下，不会猜着点）。这里的顺序也就是「按顺序切下一个」的顺序。</string>
+    <string name="auth_open_server_list">服务器</string>
+    <string name="server_title">服务器</string>
+    <string name="server_subtitle">每条 = 平台（微信 / QQ，可留空）+ 区号（可留空）+ 区服名称 + 角色名（可留空）+ 等级（可留空）。一个区服只有一个小号，所以同一区服只能有一条（按区服名称判重，平台与区号算不算都一样）。换号时只按「区服名称」到界面上找它；平台、区号、角色名与等级只是帮你认出这是哪个号（平台与区号显示在每行开头，一眼就能对上），不参与定位（找不到或不止一个就停下，不会猜着点）。这里的顺序也就是「按顺序切下一个」的顺序。</string>
     <string name="server_back">返回授权页</string>
-    <string name="server_list_title">服务器清单（%1$d 条）</string>
-    <string name="server_empty">尚无服务器。点「新增服务器」添加第一条。</string>
-    <string name="server_index">%1$d.</string>
-    <string name="server_item_role">角色名：%1$s</string>
-    <string name="server_item_level">等级：%1$s</string>
-    <string name="server_field_unset">未填</string>
+    <string name="server_list_title">服务器（%1$d 条）</string>
+    <string name="server_empty">还没有服务器。点右上角「新增服务器」加第一条。
+
+列表里可以这样操作：双击一张卡 = 编辑，按住一张卡拖动 = 调整顺序，往左滑一张卡 = 尾部压出红色的「删除」按钮，点它就直接删掉（删了不能撤销）。</string>
+    <string name="server_index">%1$d</string>
+    <!-- 区号在列表里的显示后缀：用户填「256」→ 列表显示「256区」（用户自己写了「区」则不重复补）。 -->
+    <string name="server_no_suffix">区</string>
+    <!-- 等级在列表里的显示前缀：用户填「30」→ 列表显示「Lv.30」（已带 Lv / LV 前缀则不重复补）。 -->
+    <string name="server_level_prefix">Lv.</string>
+    <string name="server_item_separator">·</string>
+    <string name="server_field_optional_hint">可留空</string>
+    <string name="server_field_server_hint">必填</string>
     <string name="server_add">新增服务器</string>
+    <string name="server_gesture_hint">双击 = 编辑 ｜ 按住拖动 = 排序 ｜ 左滑出「删除」，点它直接删</string>
     <string name="server_edit">编辑</string>
-    <string name="server_move_up">上移</string>
-    <string name="server_move_down">下移</string>
+    <string name="server_move_up">前移</string>
+    <string name="server_move_down">后移</string>
     <string name="server_delete">删除</string>
+    <string name="server_delete_action_desc">删除第 %1$d 条</string>
     <string name="server_clear">整体清空</string>
     <string name="server_clear_title">清空全部服务器？</string>
     <string name="server_clear_body">将删除当前全部 %1$d 条服务器清单，此操作不可撤销。</string>
     <string name="server_clear_confirm">清空</string>
     <string name="server_cancel">取消</string>
+    <string name="server_about">说明</string>
+    <string name="server_about_close">知道了</string>
     <string name="server_dialog_add">新增服务器</string>
-    <string name="server_dialog_edit">编辑服务器</string>
+    <string name="server_dialog_edit_indexed">编辑服务器（第 %1$d 条）</string>
+    <string name="server_field_platform">平台</string>
+    <string name="server_platform_wechat">微信</string>
+    <string name="server_platform_qq">QQ</string>
+    <string name="server_field_server_no_hint">区号，如 392</string>
     <string name="server_field_server">区服名称</string>
-    <string name="server_field_role">角色名（可留空）</string>
-    <string name="server_field_level">等级（可留空）</string>
-    <string name="server_field_required">区服名称不得为空（也不能只剩空格）；角色名与等级可以留空。</string>
+    <string name="server_field_role">角色名</string>
+    <string name="server_field_level">等级</string>
+    <string name="server_field_required">区服名称不得为空（也不能只剩空格）；平台、区号、角色名与等级都可以留空。</string>
+    <string name="server_field_duplicate">这个区服已经在清单里了：一个区服只能建一个小号。想改它的角色名 / 等级，请回到列表双击这一条。</string>
     <string name="server_field_separator">字段里不能出现「|」或换行。</string>
     <string name="server_confirm">保存</string>
     <string name="server_save_failed">保存失败：%1$s</string>
     <string name="server_load_failed">服务器清单解析失败：%1$s</string>
+    <string name="server_load_failed_hint">已经保存过的条目没有被动过（文件是唯一数据源）。确认不要里面的内容了，再点「清空重建」。</string>
     <string name="server_rebuild">清空重建</string>
-    <string name="server_hint">同一区服可以添加多条（一个区服里有多个小号）。</string>
+    <string name="server_deleted_with_name">已删除「%1$s」</string>
+    <string name="server_undo">撤销</string>
+    <string name="server_row_desc">第 %1$d 条，%2$s</string>
+    <string name="server_row_desc_role">，角色 %1$s</string>
+    <string name="server_row_desc_level">，等级 %1$s</string>
+    <string name="server_hint">同一个区服只能有一条：一个区服只有一个小号（按区服名称判重）。要改它的平台 / 区号 / 角色名 / 等级，双击这一条。</string>
+
+    <!-- 好友清单（M3-T3-8 / FR-07「拜访 → 指定好友」三级列表的数据源，2026-09-15 用户口径「独立维护」） -->
+    <string name="auth_open_friend_list">好友</string>
+    <string name="friend_list_title">好友</string>
+    <string name="friend_list_subtitle">悬浮窗菜单「拜访 → 指定好友」从这里挑目标；名字会直接用于在好友列表里定位。</string>
+    <string name="friend_list_count">好友（%1$d 条）</string>
+    <string name="friend_add">添加好友</string>
+    <string name="friend_empty">还没有好友。点「添加好友」录入想拜访的人。</string>
+    <string name="friend_clear">整体清空</string>
+    <string name="friend_clear_title">清空好友清单？</string>
+    <string name="friend_clear_body">%1$d 位好友会被全部删除，删了不能恢复。</string>
+    <string name="friend_clear_confirm">清空</string>
+    <string name="friend_cancel">取消</string>
+    <string name="friend_save">保存</string>
+    <string name="friend_save_failed">保存失败：%1$s（清单没有被改动）</string>
+    <string name="friend_load_failed">读清单失败：%1$s</string>
+    <string name="friend_load_failed_hint">已经保存过的好友没有被动过（文件是唯一数据源）。确认不再需要里面的内容了，再点「清空重建」。</string>
+    <string name="friend_rebuild">清空重建</string>
+    <string name="friend_back_to_auth">返回</string>
+    <string name="friend_row_edit">编辑</string>
+    <string name="friend_row_delete">删除</string>
+    <string name="friend_row_desc">第 %1$d 位，共 %2$d 位：%3$s</string>
+    <!-- 手势的发现性全靠这一行：行内没有可见按钮，不写出来没人知道点按 / 长按分别是什么 -->
+    <string name="friend_list_hint">点按一行改名；向左滑一行露出「删除」，点它才删。</string>
+    <string name="friend_deleted_with_name">已删除「%1$s」</string>
+    <string name="friend_undo">撤销</string>
+    <string name="friend_field_label">好友名称</string>
+    <string name="friend_editor_title_new">添加好友</string>
+    <string name="friend_editor_title_edit">编辑好友</string>
+    <string name="friend_editor_hint">与游戏里好友名字的写法保持一致（中间的空格也算）</string>
+    <string name="friend_name_required">好友名称不得为空</string>
+    <string name="friend_name_duplicate">这个好友已经在清单里了</string>
+    <string name="friend_name_invalid">好友名称不得含「|」或换行</string>
 
     <!-- 运行方式（M1-T1-7 演练模式；T2-6 开放实点开关） -->
-    <string name="run_mode_label">运行方式</string>
-    <string name="run_mode_dry_run">演练（只识别、不点击）</string>
-    <string name="run_mode_desc">当前版本只识别画面状态、不产生任何点击，用于在目标设备上验证识别能力；识别到的界面状态会实时显示在游戏内的悬浮窗上。自动点击能力将在后续版本开放，演练模式将长期保留用于回归验证。</string>
-    <string name="run_mode_live">实点（会真的点击游戏界面）</string>
-    <string name="run_mode_drill_desc">只识别画面状态、不产生任何点击；识别到的界面状态实时显示在悬浮窗上。用于验证识别能力，长期保留。</string>
-    <string name="run_mode_live_desc">命中活动弹窗后会对游戏界面产生真实点击（当前仅关闭弹窗一类）。每次点击都留有审计记录；识别不可信或画面不明时一律不点。运行方式会一直保留到你手动关闭（重新授权、重建会话都不会重置）。</string>
-    <string name="run_mode_live_switch">允许真实点击</string>
-    <string name="run_mode_live_confirm_title">开启实点？</string>
-    <string name="run_mode_live_confirm_body">开启后，程序会真的点击游戏界面。当前仅对已标定的活动弹窗执行关闭动作；点击后必须由下一次识别确认，未确认不会重复盲点。开启后会一直生效，直到你手动关闭（重新授权、重建会话都不会重置）。确定开启？</string>
-    <string name="run_mode_confirm_ok">开启实点</string>
-    <string name="run_mode_confirm_cancel">取消</string>
+    <!-- 「运行方式」卡（run_mode_*）已按用户口径 2026-09-17 移除 —— 默认允许真实点击，不再提供切换入口。
+         ClickDispatch.enableLive / enableDrill 这两个 API 仍保留，但当前没有任何调用方。 -->
 </resources>

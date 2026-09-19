@@ -1,15 +1,15 @@
 package com.example.mastermechanic.floating
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 悬浮窗几何与手势判据单测（M3-T3-4 / T3-7 / FR-07）：手柄贴边（窗口完全在屏内，可见条贴边）、
- * 菜单相对手柄的落位、状态标签中心点定位、跨分辨率还原、拖动阈值判据（不得用"位移是否非零"）。
+ * 悬浮窗几何单测（M3-T3-4 / T3-7 / FR-07）：手柄贴边（窗口完全在屏内，可见条贴边）、
+ * 菜单相对手柄的落位、跨分辨率还原。
+ *
+ * 状态标签窗已取消（2026-09-17 用户口径）—— 标签相关测试随 `LabelPosition` / `FloatingPositions` 一起删除；
+ * 拖动阈值判据（`FloatingGesture`）随"手柄不可拖动"一并删除（2026-09-19）—— 手柄只响应单击展开。
  *
  * 数值用抽象的"屏幕"尺寸代入，不绑定任何真实设备（红线 4）。
  */
@@ -18,8 +18,6 @@ class FloatingPositionTest {
     private val screenWidth = 1440
     private val screenHeight = 3168
     private val handleWidth = 40
-    private val labelWidth = 200
-    private val labelHeight = 100
     private val margin = 12
 
     @Test
@@ -62,104 +60,6 @@ class FloatingPositionTest {
     fun illegalRatiosAreRejected() {
         assertThrows(IllegalArgumentException::class.java) { FloatingPosition(FloatingSide.LEFT, -0.01) }
         assertThrows(IllegalArgumentException::class.java) { FloatingPosition(FloatingSide.LEFT, 1.01) }
-        assertThrows(IllegalArgumentException::class.java) { LabelPosition(-0.01, 0.5) }
-        assertThrows(IllegalArgumentException::class.java) { LabelPosition(0.5, 1.01) }
-    }
-
-    @Test
-    fun invalidScreenSizeIsRejected() {
-        assertThrows(IllegalArgumentException::class.java) {
-            FloatingLayout.snapLabelCenter(0, 0, 10, 10, 0, 100)
-        }
-    }
-
-    @Test
-    fun labelCenterRatioMapsToPixelOffset() {
-        // 居中（0.5）→ 标签左缘 = 屏宽一半 - 标签一半
-        assertEquals(
-            screenWidth / 2 - labelWidth / 2,
-            FloatingLayout.labelXByCenter(0.5, labelWidth, screenWidth, margin),
-        )
-        // 0.25 同理
-        assertEquals(
-            (screenWidth * 0.25).toInt() - labelWidth / 2,
-            FloatingLayout.labelXByCenter(0.25, labelWidth, screenWidth, margin),
-        )
-    }
-
-    @Test
-    fun labelIsClampedInsideScreenWithMargin() {
-        // 贴左 / 贴右都退到边距位置，绝不越出屏幕
-        assertEquals(margin, FloatingLayout.labelXByCenter(0.0, labelWidth, screenWidth, margin))
-        assertEquals(
-            screenWidth - labelWidth - margin,
-            FloatingLayout.labelXByCenter(1.0, labelWidth, screenWidth, margin),
-        )
-        // 标签比屏幕还宽 → 退化为边距（不产生负偏移 / 不抛错）
-        assertEquals(margin, FloatingLayout.labelXByCenter(0.5, screenWidth + 10, screenWidth, margin))
-    }
-
-    @Test
-    fun labelDefaultLandsBottomCenter() {
-        // 默认（0.5, 1.0）→ 居中 + 贴着底边（留边距）
-        val x = FloatingLayout.labelXByCenter(
-            LabelPosition.DEFAULT.xRatio,
-            labelWidth,
-            screenWidth,
-            margin,
-        )
-        val y = FloatingLayout.labelYByCenter(
-            LabelPosition.DEFAULT.yRatio,
-            labelHeight,
-            screenHeight,
-            margin,
-        )
-        assertEquals(screenWidth / 2 - labelWidth / 2, x)
-        assertEquals(screenHeight - labelHeight - margin, y)
-    }
-
-    @Test
-    fun labelDragRoundTripsThroughCenterRatios() {
-        // 拖动到 (300, 500) → 折成中心比例 → 再还原回同一像素位置（跨分辨率可还原的前提）
-        val position = FloatingLayout.snapLabelCenter(
-            windowX = 300,
-            windowY = 500,
-            labelWidth = labelWidth,
-            labelHeight = labelHeight,
-            screenWidth = screenWidth,
-            screenHeight = screenHeight,
-        )
-        assertEquals(
-            300,
-            FloatingLayout.labelXByCenter(position.xRatio, labelWidth, screenWidth, margin),
-        )
-        assertEquals(
-            500,
-            FloatingLayout.labelYByCenter(position.yRatio, labelHeight, screenHeight, margin),
-        )
-        // 换算比例落在 0..1
-        assertTrue(position.xRatio in 0.0..1.0)
-        assertTrue(position.yRatio in 0.0..1.0)
-    }
-
-    @Test
-    fun dragClampKeepsWindowInsideScreen() {
-        assertEquals(0, FloatingLayout.clampInside(-500, 60, screenWidth))
-        assertEquals(screenWidth - 60, FloatingLayout.clampInside(99999, 60, screenWidth))
-        assertEquals(100, FloatingLayout.clampInside(100, 60, screenWidth))
-        assertEquals(0, FloatingLayout.clampInside(50, screenWidth + 10, screenWidth))
-    }
-
-    @Test
-    fun dragNeedsToExceedTouchSlop() {
-        // 位移不足阈值 → 不是拖动（手指抖动不应让菜单永远展不开，FR-07 原文）
-        assertFalse(FloatingGesture.isDrag(1f, 1f, 8f))
-        assertFalse(FloatingGesture.isDrag(5f, 5f, 8f))
-        // 达到阈值 → 拖动（对角线按欧氏距离判定）
-        assertTrue(FloatingGesture.isDrag(8f, 0f, 8f))
-        assertTrue(FloatingGesture.isDrag(3f, 4f, 5f))
-        assertFalse(FloatingGesture.isDrag(3f, 4f, 6f))
-        assertThrows(IllegalArgumentException::class.java) { FloatingGesture.isDrag(1f, 1f, -1f) }
     }
 
     @Test
@@ -200,23 +100,16 @@ class FloatingPositionTest {
     }
 
     @Test
-    fun sideTokenRoundTrip() {
-        assertEquals(FloatingSide.LEFT, FloatingSide.fromToken("left"))
-        assertEquals(FloatingSide.RIGHT, FloatingSide.fromToken("right"))
-        assertNull(FloatingSide.fromToken("top"))
-    }
-
-    @Test
-    fun defaultPositionsAreHandleRightAndLabelBottomCenter() {
-        // 手柄：右侧边缘、纵向三分之一（2026-09-14 用户口径；手柄不可拖动，位置只由默认 / 重置决定）
-        assertEquals(FloatingSide.RIGHT, FloatingPositions.DEFAULT.handle.side)
-        // 6 位小数（写盘精度）→ 换算到像素仍是屏高的三分之一（3168 * 1/3 = 1056）
-        assertEquals(1.0 / 3.0, FloatingPositions.DEFAULT.handle.yRatio, 1e-6)
+    fun defaultHandlePositionIsRightEdgeAndUpperFifth() {
+        // 手柄默认值：右侧边缘、纵向偏上（0.200000，2026-09-17 用户口径"适当往上调整"）。
+        // 测试与常量**用同一个 DEFAULT_Y_RATIO**比值，免得以后调手柄位置时又把这条用例写死挂掉
+        //（沿革：0.333333 → 0.200000，每次都是写死 1/3 被挂）。
         assertEquals(FloatingSide.RIGHT, FloatingPosition.DEFAULT.side)
-        assertEquals(screenHeight / 3, FloatingLayout.y(FloatingPosition.DEFAULT.yRatio, 0, screenHeight))
-        // 状态标签：底部居中
-        assertEquals(LabelPosition.DEFAULT, FloatingPositions.DEFAULT.label)
-        assertEquals(0.5, LabelPosition.DEFAULT.xRatio, 1e-9)
-        assertEquals(1.0, LabelPosition.DEFAULT.yRatio, 1e-9)
+        assertEquals(FloatingPosition.DEFAULT_Y_RATIO, FloatingPosition.DEFAULT.yRatio, 1e-6)
+        assertEquals(
+            screenHeight * FloatingPosition.DEFAULT_Y_RATIO,
+            FloatingLayout.y(FloatingPosition.DEFAULT.yRatio, 0, screenHeight).toDouble(),
+            0.5,
+        )
     }
 }
