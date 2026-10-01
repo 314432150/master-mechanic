@@ -80,6 +80,19 @@ if (project.hasProperty("fastTests")) {
     }
 }
 
+/**
+ * 单测 JVM 的堆上限（2026-10-01 加）。
+ *
+ * 依据：里程碑口径的真全量 `:app:test` 里 `NameLocateProbeTest`（真机帧池回放）
+ * 以 `java.lang.OutOfMemoryError: Java heap space` 挂掉 —— 一帧 3168×1440 RGBA ≈ **18MB**，
+ * 默认堆（Gradle 默认 512MB）放不下几十帧。抬到 4GB。
+ *
+ * ⚠ 只影响**测试 JVM**，不进 APK、不影响包体（NFR-03 那 25MB 与此无关）。
+ */
+tasks.withType<Test>().configureEach {
+    maxHeapSize = "4g"
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)

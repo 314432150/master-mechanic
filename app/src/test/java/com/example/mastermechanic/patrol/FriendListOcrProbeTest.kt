@@ -165,17 +165,22 @@ class FriendListOcrProbeTest {
     }
 
     @Test
-    fun matchReportsWhyWhenTwoRowsLookAlike() {
-        // **备注重名** = "分不清是哪一个"，必须如实报不唯一（不许挑一个），原因里带上面有几条
+    fun matchTakesTheTopRowWhenTheRemarkRepeats() {
+        // **备注重名**（同一好友的多个小号共用备注，真机原样 `克克雨儿(阿娜雅)` / `克克洛儿(阿娜雅)`）：
+        // 2026-09-30 用户口径修订 ⇒ **不再算"不唯一 / 停下"，而是命中并取最上面那一行**
+        //（`requirements.md`「口径修订十」；`NameLocating.locateFriend` 负责取最上面）。
+        //
+        // ⚠ 2026-10-01：里程碑口径的真全量（`:app:test`）逮到本用例**仍在断言老口径**
+        //（`found == false` + detail 里有条数）—— 探针类被 `-PfastTests` 排除，所以口令改了它一直没被跑到。
+        // 教训：**改"命中口径"时，`*ProbeTest` 里同源的用例也要一起改**（它们直接调生产函数）。
         val candidates = listOf(
             NameCandidate("克克雨儿(阿娜雅) 荣耀黄金 离线", 10, 100, 200, 20),
             NameCandidate("克克洛儿(阿娜雅) 尊贵铂金 在线", 10, 130, 200, 20),
         )
 
-        val miss = FriendListOcrProbe.match("阿娜雅", candidates)
+        val hit = FriendListOcrProbe.match("阿娜雅", candidates)
 
-        assertFalse(miss.found)
-        assertTrue("要说清是「有几个」，而不是「没找到」：${miss.detail}", miss.detail.contains("2"))
+        assertTrue("同名多行 ⇒ 命中（取最上面那一行，不再判「不唯一」）：${hit.detail}", hit.found)
     }
 
     @Test
