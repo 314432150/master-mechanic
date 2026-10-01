@@ -545,21 +545,27 @@ fun ServerListRoute(resumeTick: Int, addTick: Int = 0) {
         ModalBottomSheet(onDismissRequest = { aboutOpen = false }) {
             Column(
                 modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
                     text = stringResource(R.string.server_about),
                     style = MaterialTheme.typography.titleMedium,
                 )
-                Text(
-                    text = stringResource(R.string.server_subtitle),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Text(
-                    text = stringResource(R.string.server_hint),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // **一段一句、行首带标签、每句 ≤60 字**（用户 2026-10-01："内容太啰嗦了，而且没有排版、
+                // 阅读困难 ⇒ 精简内容、只留最核心的、重新排版以便于阅读"）。
+                // 顺序是"从最容易踩坑的到最常见的"：判重 → 定位 → 字段 → 顺序 → 手势。
+                listOf(
+                    R.string.server_about_unique,
+                    R.string.server_about_locate,
+                    R.string.server_about_fields,
+                    R.string.server_about_order,
+                    R.string.server_about_gestures,
+                ).forEach { line ->
+                    Text(
+                        text = stringResource(line),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
             }
         }
     }
@@ -613,21 +619,6 @@ fun ServerListScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            // M5-U4（ADR-009 决策五）：**标题与「返回」收进壳**（一级目的地不给返回箭头；壳出标题「账号与好友」）
-            // ⇒ 本页从"**一行要点 + 说明入口**"开始。首屏永远只有 1 行（验收 V2），长文进「说明」弹层。
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = stringResource(R.string.server_one_line),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = onAbout) {
-                    Text(stringResource(R.string.server_about))
-                }
-            }
 
             message?.let { text ->
                 Text(
@@ -661,21 +652,22 @@ fun ServerListScreen(
                     }
                 }
                 is ServerListState.Loaded -> {
-                    // M5-U4：「新增」已搬进**壳的标题栏**（ADR-009 决策五：列表页的新增统一放 `TopAppBar.actions`，
-                    // 一处一个、不再各页自造）⇒ 这里只剩条数。
-                    Text(
-                        text = stringResource(R.string.server_list_title, entries.size),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    // 手势提示：按钮全删掉之后，这三个手势唯一的"发现入口"（空态另有教学文案）
-                    if (entries.isNotEmpty()) {
+                    // M5-U4：「新增」已搬进**壳的标题栏**（ADR-009 决策五）⇒ 这一行只剩「条数 + 说明」。
+                    // 「说明」**贴着"服务器（N 条）"放**（用户 2026-10-01：挪到这一行）—— 它讲的就是这些东西，
+                    // 单独占一行标题反而多占一行的位置（首屏越短越好，验收 V2）。
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = stringResource(R.string.server_gesture_hint),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
+                            text = stringResource(R.string.server_list_title, entries.size),
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f),
                         )
+                        TextButton(onClick = onAbout) {
+                            Text(stringResource(R.string.server_about))
+                        }
                     }
+                    // ⚠ 手势提示那一行**已移除**（用户 2026-10-01："服务器下一行的交互说明移除"）。
+                    // 但**三个手势不能就此没了说法** —— 它们搬进了「说明」弹层（[R.string.server_about_gestures]）。
+                    // 也就是说：**发现入口从"列表上方常驻一行"改成"点「说明」看"**。别再往这里加回来。
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()

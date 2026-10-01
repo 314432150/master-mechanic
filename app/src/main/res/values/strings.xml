@@ -467,7 +467,7 @@
          页头（标题 + 返回）收进壳（ADR-009 决策五），「说明」改成底部弹层后也不需要"知道了"按钮。
          零死文案守卫生效时会盯着这一类。 -->
 
-    <string name="server_subtitle">每条 = 平台（微信 / QQ，可留空）+ 区号（可留空）+ 区服名称 + 角色名（可留空）+ 等级（可留空）。一个区服只有一个小号，所以同一区服只能有一条（按区服名称判重，平台与区号算不算都一样）。换号时只按「区服名称」到界面上找它；平台、区号、角色名与等级只是帮你认出这是哪个号（平台与区号显示在每行开头，一眼就能对上），不参与定位（找不到或不止一个就停下，不会猜着点）。这里的顺序也就是「按顺序切下一个」的顺序。</string>
+
     <string name="server_list_title">服务器（%1$d 条）</string>
     <string name="server_empty">还没有服务器。点右上角「新增服务器」加第一条。
 
@@ -479,10 +479,16 @@
     <string name="server_field_optional_hint">可留空</string>
     <string name="server_field_server_hint">必填</string>
     <string name="server_add">新增服务器</string>
-    <!-- M5-U4：清单页首屏**只留 1 行要点**（验收 V2：超 60 字的说明一律折叠）——
-         其余规则（判重口径、只按区服名称定位、顺序含义）都在「说明」弹层里。 -->
-    <string name="server_one_line">顺序即「下一个」的顺序</string>
-    <string name="server_gesture_hint">双击 = 编辑 ｜ 按住拖动 = 排序 ｜ 左滑出「删除」，点它直接删</string>
+    <!-- ⚠ `server_gesture_hint` **已删**（M5-U4：用户要求移除列表上方那一行交互说明）⇒
+         三个手势改在「说明」弹层里说（`server_about_gestures`），发现入口从"常驻一行"变成"点说明看"。 -->
+    <!-- 「说明」弹层的正文（M5-U4 重排）：**一段一句 + 行首标签 + 每句 ≤60 字**，
+         取代原先两段共 ≈350 字的长文（`server_subtitle` / `server_hint` 已删）。
+         顺序：判重 → 定位 → 字段 → 顺序 → 手势（从最容易踩坑的到最常见的）。 -->
+    <string name="server_about_unique">判重：一个区服只有一个小号 ⇒ 同区服名只能有一条</string>
+    <string name="server_about_locate">定位：换号时只按「区服名称」找；找不到或不止一个就停下</string>
+    <string name="server_about_fields">字段：平台 / 区号 / 角色名 / 等级可留空，只是帮你认人</string>
+    <string name="server_about_order">顺序：列表顺序 = 「下一个」的顺序</string>
+    <string name="server_about_gestures">手势：双击 = 编辑 ｜ 按住拖动 = 排序 ｜ 左滑出「删除」</string>
     <string name="server_edit">编辑</string>
     <string name="server_move_up">前移</string>
     <string name="server_move_down">后移</string>
@@ -528,7 +534,7 @@
     <string name="server_row_desc">第 %1$d 条，%2$s</string>
     <string name="server_row_desc_role">，角色 %1$s</string>
     <string name="server_row_desc_level">，等级 %1$s</string>
-    <string name="server_hint">同一个区服只能有一条：一个区服只有一个小号（按区服名称判重）。要改它的平台 / 区号 / 角色名 / 等级，双击这一条。</string>
+
 
     <!-- 好友清单（M3-T3-8 / FR-07「拜访 → 指定好友」三级列表的数据源，2026-09-15 用户口径「独立维护」） -->
     <string name="auth_open_friend_list">好友</string>
