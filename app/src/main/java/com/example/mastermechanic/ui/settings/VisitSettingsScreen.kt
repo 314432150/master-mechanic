@@ -1,7 +1,6 @@
 package com.example.mastermechanic.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,8 +11,6 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
@@ -33,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.mastermechanic.R
 import com.example.mastermechanic.friends.FriendListStore
@@ -40,6 +38,7 @@ import com.example.mastermechanic.preset.ServerChoice
 import com.example.mastermechanic.preset.VisitPreset
 import com.example.mastermechanic.preset.VisitPresetStore
 import com.example.mastermechanic.servers.ServerListStore
+import com.example.mastermechanic.ui.components.ListPickerSheet
 import kotlinx.coroutines.launch
 
 /**
@@ -274,6 +273,14 @@ private fun StrategyOption(label: String, selected: Boolean, onSelect: () -> Uni
 /**
  * 从清单里**选**一个值（不是手打）。
  *
+ * ## 选择在**底部弹层**里做（2026-10-01 用户口径）
+ *
+ * 用户："**区服列表和好友列表展示方式不够友好，区服名太长会覆盖其他元素**，改为友好的底部向上弹出、
+ * 可滑动选择的方式"。第一版用的是 `DropdownMenu`（贴锚点弹出、按最长项撑宽）⇒ 长区服名会横着压住
+ * 别的元素，所以换成 [ListPickerSheet]。
+ *
+ * 触发按钮自己也要抗长名：**整宽 + 单行省略号**（把按钮撑变形或者把「▾」挤出去，同属"覆盖"）。
+ *
  * 清单为空时**不是静默变灰**：按钮禁用 + 下面一行说清"去哪儿加"（用户看到灰按钮最怕的就是
  * "为什么不能点"，而这里的原因只有一个：清单还是空的）。
  */
@@ -289,21 +296,18 @@ private fun PickerRow(
     var open by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(text = label, style = MaterialTheme.typography.titleSmall)
-        Box {
-            OutlinedButton(onClick = { open = true }, enabled = options.isNotEmpty()) {
-                Text(text = value.ifEmpty { pickHint })
-            }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                options.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option) },
-                        onClick = {
-                            open = false
-                            onPick(option)
-                        },
-                    )
-                }
-            }
+        OutlinedButton(
+            onClick = { open = true },
+            enabled = options.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                text = value.ifEmpty { pickHint },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(text = "▾")
         }
         if (options.isEmpty()) {
             Text(
@@ -312,5 +316,17 @@ private fun PickerRow(
                 color = MaterialTheme.colorScheme.error,
             )
         }
+    }
+    if (open) {
+        ListPickerSheet(
+            title = label,
+            options = options,
+            selected = value,
+            onPick = {
+                open = false
+                onPick(it)
+            },
+            onDismiss = { open = false },
+        )
     }
 }
