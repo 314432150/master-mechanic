@@ -322,10 +322,9 @@ private fun PickerRow(
             title = label,
             options = options,
             selected = value,
-            onPick = {
-                open = false
-                onPick(it)
-            },
+            // **滚到哪就实时改草稿**（弹层里没有「确定」了 —— 用户口径："外层还有一个保存按钮"）；
+            // 点某一行时弹层会自己关掉，所以这里不在这里关
+            onPick = onPick,
             onDismiss = { open = false },
         )
     }

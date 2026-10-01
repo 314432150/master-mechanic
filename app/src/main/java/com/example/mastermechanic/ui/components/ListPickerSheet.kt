@@ -4,9 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,24 +20,19 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.example.mastermechanic.R
 import kotlin.math.abs
-import kotlinx.coroutines.launch
 
 /**
  * **行高**（**40dp**；两轮真机反馈一路收下来：`ListItem` 默认 ≈72dp → 48 → 40）。
@@ -58,9 +51,15 @@ private val WHEEL_ROW_HEIGHT: Dp = 40.dp
 private const val WHEEL_VISIBLE_ROWS = 5
 
 /**
- * 上下各留半个滚轮高度的**空白**，好让**第一行 / 最后一行也能滚到中间**。
+ * 上下各留 [WHEEL_VISIBLE_ROWS] / 2 行的**空白**（= 两行高）。
  *
- * 没有它的话首尾两项永远到不了中线 ⇒ 选中项是首尾时，用户一打开就看到"选中项不在中间"。
+ * ## 这个留白同时决定了两件事（2026-10-01 在这里踩过一次，写清楚）
+ *
+ * 1. **首 / 末项也能滚到中线**：没有它的话，第一项永远到不了中线
+ *    （用户一打开就是"选中的不在中间"）；
+ * 2. **"第一个可见项"就等于"中线那一格"**：留白占满上面两格，
+ *    所以第一个可见项正好落在第 3 格 —— 于是**初始定位直接把"选中下标"当作首项下标**即可
+ *    （见 [ListPickerSheet] 里 `initialFirstVisibleItemIndex` 的注释，别再加 `- 2`）。
  */
 private val WHEEL_EDGE_PADDING: Dp = WHEEL_ROW_HEIGHT * (WHEEL_VISIBLE_ROWS / 2)
 
@@ -74,51 +73,44 @@ private val WHEEL_TITLE_TOP_PADDING: Dp = 16.dp
 private val WHEEL_ROW_PADDING: Dp = 16.dp
 
 /**
- * **从列表里选一个** —— 底部向上弹出的**滚轮选择器**（2026-10-01 用户口径）。
- *
- * ## 长什么样、怎么用
+ * **从列表里选一个** —— 底部向上弹出的**滚轮选择器**（2026-10-01 用户口径，经五轮真机反馈定型）。
  *
  * ```
  * ┌──────────────────────────────┐
- * │ 区服                            │   ← 标题
+ * │ 区服                            │   ← 标题（拖手已去掉，见下）
  * ├──────────────────────────────┤
- * │        （上两行，陪衬）           │
- * │ ▓▓▓▓▓ 中间这一行 = 当前选中 ▓▓▓▓▓ │   ← 中线高亮
- * │        （下两行，陪衬）           │
+ * │          克克花儿(阿娜雅)         │   ← 陪衬（次级色）
+ * │ ▓▓ 莲动渔舟 ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ │   ← 中线：加粗 + 主色 + 高亮带 = 当前选中
+ * │          星月晚.(星月晚)          │   ← 陪衬
  * ├──────────────────────────────┤
- * │ 将选：莲动渔舟      [取消] [确定]  │
+ * │ （没有取消 / 确定 / 「将选」了）    │
  * └──────────────────────────────┘
  * ```
  *
- * - **打开时直接定位到当前选中的那一行**（用户 2026-10-01 要求）：初始滚动位置按 `selected` 算好，
- *   并把中线吸附到它上面 ⇒ 不用手动去找"现在选的是哪个"；
- * - **中间那一行 = 选中行**（用户原话："**列表拖动时，中间位置代表选中该行**"）⇒
- *   滚动带**中线吸附**（`SnapPosition.Center`，停下时总是整行对齐中线）；
- * - **点某一行 = 把它滚到中线**（不是立刻提交 —— 滚轮的心智是"停下即选中"，提交统一走「确定」）；
- * - **「将选：X」** 把当前中线那一行**用文字再报一遍**（弹层里的字可能被截断/被手指挡着，
- *   而这一句永远看得清）；**「确定」才真正生效**，「取消」/ 点外部 / 返回键都不改值。
+ * ## 怎么提交（用户 2026-10-01："移除取消/确定/将选，因为外层还有一个保存按钮"）
  *
- * ## 为什么不用 `DropdownMenu`（用户第一次反馈）
+ * ⇒ **弹层里没有提交动作**，选中的那一刻就**实时回调** [onPick]（写进外层的草稿），
+ * **落盘由外层那个「保存」按钮负责**。于是：
+ * - **滚动**（停下后中线变了）⇒ 实时更新草稿，**弹层不关**（可以继续来回调）；
+ * - **点某一行** ⇒ 立刻把该值回调出去并**关闭弹层**（"就是它了"的快捷路径）；
+ * - **点弹层外部 / 系统返回** ⇒ 关掉，**草稿保持**（外层不保存就不生效 ⇒ 天然的"取消"）。
  *
- * `DropdownMenu` 贴着锚点弹出、宽度按最长项撑开 ⇒ 长区服名会横着压住别的元素；贴锚点还会被挤到屏幕上缘。
- * 底部弹层**整宽** ⇒ 长名字只在自己那一行里截断，压不到任何东西。
+ * ## 其余关键点（每条都对应一轮真机反馈）
  *
- * ## 为什么关掉弹层自己的拖拽 + 去掉拖手（用户第三 / 第四次反馈）
- *
- * `ModalBottomSheet` 的手势是**复合的**（列表滚到头继续拖 = 拖弹层，M3 用嵌套滚动接在一起）⇒
- * 手指在列表里上下滑会把弹层带着回缩/展开 ✗。所以 `sheetGesturesEnabled = false`；
- * 而**拖手是"可以拖"的视觉暗示**，拖不动还留着就是骗人去拖 ⇒ 一并 `dragHandle = null`。
- *
- * ## 高度为什么"算"而不是"量"（用户第二次反馈）
- *
- * 行高与滚轮高度都是常量（[WHEEL_ROW_HEIGHT] × [WHEEL_VISIBLE_ROWS]）⇒ 与滚动位置无关，滑不抖；
- * 也不用 `ListItem`（它默认内边距 ≈72dp 正是"行距太高"的来源）。
+ * - **打开时中线就是当前值**：`initialFirstVisibleItemIndex = 选中下标`（配合 [WHEEL_EDGE_PADDING]
+ *   的几何：第一个可见项就是中线那一格）；不再额外调 `scrollToItem`（它是"置顶"语义，会把
+ *   选中行顶到视口顶部、高亮带指上一行 ✗，踩过一次）；
+ * - **中线 = 选中**：`SnapPosition.Center` 吸附（停下时整行对齐）+ 中央高亮带 + 中线行加粗；
+ * - **滑不抖**：滚轮高度与行高都是常量（[WHEEL_ROW_HEIGHT] × [WHEEL_VISIBLE_ROWS]），与滚动位置无关；
+ * - **不用 `ListItem`**：它的默认内边距 ≈72dp 正是"行距太高"的来源；
+ * - **关掉弹层自身的拖拽 + 去掉拖手**：`ModalBottomSheet` 的手势是**复合的**（列表滚到头继续拖 = 拖弹层
+ *   ⇒ 手指在列表里滑会把弹层带着回缩/展开 ✗）；而拖手是"可以拖"的视觉暗示，拖不动还留着就是骗人去拖。
  *
  * @param title 弹层标题（调用方那一条的字段名，例如「区服」/「拜访好友」）
  * @param options 候选项（来自清单，**不是手打**）
- * @param selected 当前值（**打开时定位到它**；不在列表里就从第一行开始）
- * @param onPick 点「确定」时给出**中线那一行**（调用方负责关弹层）
- * @param onDismiss 取消 / 点弹层外部 / 系统返回（**都不改值**）
+ * @param selected 当前值（**打开时中线定位到它**）；不在列表里就从中线那一格的第一项开始
+ * @param onPick 中线变化时**实时**给值（写进外层草稿）；点某一行也会调它（随后自动关闭）
+ * @param onDismiss 点弹层外部 / 系统返回（草稿保持，是否生效由外层的保存决定）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -131,12 +123,10 @@ fun ListPickerSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val selectedIndex = options.indexOf(selected).takeIf { it >= 0 } ?: 0
-    // **打开就定位到选中行**：初始位置把它放在中线（上方留两行的量，由 contentPadding 提供）
-    val listState = rememberLazyListState(
-        initialFirstVisibleItemIndex = (selectedIndex - WHEEL_VISIBLE_ROWS / 2).coerceAtLeast(0),
-    )
+    // **打开就定位到选中行**：`WHEEL_EDGE_PADDING` 把上面两格留成空白 ⇒ 第一个可见项**就是中线那一格**
+    // ⇒ 首项下标 = 选中下标（⚠ 别再写 `- 2`：那会把中线指到选中值**上面两行**，真机报过这个 bug）。
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex)
     val snap = rememberSnapFlingBehavior(lazyListState = listState, snapPosition = SnapPosition.Center)
-    val scope = rememberCoroutineScope()
 
     // **中线那一行**：取"离视口中心最近"的那一项（比 `firstVisibleItemIndex ± 常数` 稳：
     // 首尾附近、或列表比滚轮还短时，那个常数就不成立了）
@@ -152,12 +142,8 @@ fun ListPickerSheet(
     }
     val centerValue = options.getOrNull(centerIndex) ?: selected
 
-    // ⚠ **不要在这里再补一句 `scrollToItem(selectedIndex)`**（写错过一次，编译能过但行为错）：
-    // `scrollToItem(index)` 是"**把这一项置顶**"的语义 ⇒ 选中行会跑到**视口顶部**而不是中线，
-    // 中线高亮带于是指着**上一行**（用户一打开就看到"选中的不是我"）。
-    // 定位只由 `initialFirstVisibleItemIndex = selected - (可见行数/2)` 负责：
-    // 让 `selected` 落在第 (可见行数/2 + 1) = **第 3 格**，也就是滚轮的中线。
-    // （首尾两项走不到中线的问题由 `contentPadding` = 各半屏解决，见 [WHEEL_EDGE_PADDING]。）
+    // **实时生效**：中线变了就把值交出去（写进外层草稿）。首次组合时值相同 ⇒ 空跑一次，无副作用。
+    LaunchedEffect(centerValue) { onPick(centerValue) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -177,89 +163,53 @@ fun ListPickerSheet(
         )
         HorizontalDivider()
 
-        if (options.isEmpty()) {
-            // 理论上不会走到（调用方在清单为空时把触发按钮禁用了）；真到了也不给一个空白弹层
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(WHEEL_ROW_HEIGHT * WHEEL_VISIBLE_ROWS),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator()
-            }
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(WHEEL_ROW_HEIGHT * WHEEL_VISIBLE_ROWS),
-            ) {
-                // 中线高亮带（在列表**下面**一层：文字盖在它上面才读得清）
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(WHEEL_ROW_HEIGHT)
-                        .align(Alignment.Center)
-                        .background(MaterialTheme.colorScheme.secondaryContainer),
-                )
-                LazyColumn(
-                    state = listState,
-                    flingBehavior = snap,
-                    contentPadding = PaddingValues(vertical = WHEEL_EDGE_PADDING),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    itemsIndexed(items = options, key = { _, option -> option }) { index, option ->
-                        WheelRow(
-                            option = option,
-                            atCenter = index == centerIndex,
-                            originallySelected = index == selectedIndex,
-                            onClick = {
-                                // 点一行 = 把它滚到中线（滚轮的心智是"停下即选中"，提交统一走「确定」）
-                                scope.launch { listState.animateScrollToItem(index) }
-                            },
-                        )
-                    }
-                }
-            }
-        }
-
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = WHEEL_ROW_PADDING, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                .height(WHEEL_ROW_HEIGHT * WHEEL_VISIBLE_ROWS),
         ) {
-            Text(
-                text = stringResource(R.string.picker_to_pick, centerValue),
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
+            if (options.isEmpty()) {
+                // 理论上不会走到（调用方在清单为空时把触发按钮禁用了）；真到了也不给一个空白弹层
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+                return@Box
+            }
+            // 中线高亮带（在列表**下面**一层：文字盖在它上面才读得清）。
+            // ⚠ 必须作为 **Box 的直接子项 + `Alignment.Center`** 才是在垂直中线上 ——
+            // 放进 `Column` 里会被排到顶部（写错过一次）。
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(WHEEL_ROW_HEIGHT)
+                    .align(Alignment.Center)
+                    .background(MaterialTheme.colorScheme.secondaryContainer),
             )
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.picker_cancel)) }
-            TextButton(
-                onClick = { onPick(centerValue) },
-                enabled = options.isNotEmpty(),
+            LazyColumn(
+                state = listState,
+                flingBehavior = snap,
+                contentPadding = PaddingValues(vertical = WHEEL_EDGE_PADDING),
+                modifier = Modifier.fillMaxSize(),
             ) {
-                Text(stringResource(R.string.picker_confirm))
+                itemsIndexed(items = options, key = { _, option -> option }) { index, option ->
+                    WheelRow(
+                        option = option,
+                        atCenter = index == centerIndex,
+                        onClick = {
+                            // 点一行 = "就是它了" ⇒ 立刻回调并关闭（快捷路径；滚动那条路径不关弹层）
+                            onPick(option)
+                            onDismiss()
+                        },
+                    )
+                }
             }
         }
     }
 }
 
-/**
- * 滚轮里的一行。
- *
- * 两种"标记"是**两件事**，别混：`atCenter` = 现在停在中线上（即将选它）；`originallySelected` = 打开弹层时
- * 存着的那个值（给一个 ✓，好让用户看清"我从哪来的"）。
- */
+/** 滚轮里的一行：只有"在中线上"一种标记（**选中值末尾那个 ✓ 已按用户口径去掉**）。 */
 @Composable
-private fun WheelRow(
-    option: String,
-    atCenter: Boolean,
-    originallySelected: Boolean,
-    onClick: () -> Unit,
-) {
+private fun WheelRow(option: String, atCenter: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -277,17 +227,9 @@ private fun WheelRow(
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
-            textAlign = TextAlign.Start,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.fillMaxWidth(),
         )
-        if (originallySelected) {
-            Text(
-                text = "✓",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
     }
 }

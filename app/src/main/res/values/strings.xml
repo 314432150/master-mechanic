@@ -56,13 +56,7 @@
     <string name="visit_settings_server">区服</string>
     <string name="visit_settings_friend">拜访好友</string>
     <string name="visit_settings_pick">点这里选择</string>
-    <!-- 底部弹层选择器的**显式关闭**入口（`ui/components/ListPickerSheet`）：弹层自身的拖拽手势
-         已按用户口径关掉（滑动列表不该带动弹层），所以补一个可以点的「取消」。 -->
-    <string name="picker_cancel">取消</string>
-    <!-- 滚轮选择器：中线那一行 = 将选的值；**用文字再报一遍**（弹层里的字可能被截断或被手指挡着，
-         而这一句永远看得清）。「确定」才真正生效。 -->
-    <string name="picker_confirm">确定</string>
-    <string name="picker_to_pick">将选：%1$s</string>
+
     <string name="visit_settings_no_servers">清单里还没有区服：先去「账号与好友」加一条</string>
     <string name="visit_settings_no_friends">清单里还没有好友：先去「账号与好友」加一条</string>
     <string name="visit_settings_save">保存</string>
@@ -75,6 +69,11 @@
     <string name="visit_settings_current_fixed">当前生效：固定「%1$s」· 去「%2$s」的农场</string>
     <string name="visit_settings_current_none">还没配置过：选好策略与好友再保存</string>
     <string name="visit_settings_run_hint">本页只保存设置；要跑的时候回游戏，用悬浮窗的「拜访」。</string>
+    <!-- ⚠ 滚轮选择器**没有**自己的「取消 / 确定 / 将选」了（用户 2026-10-01：
+         "移除取消/确定/将选，因为外层还有一个保存按钮"）⇒ 选中的那一刻就实时写进外层草稿，
+         落盘由外层的「保存」负责；弹层靠"点某一行（选中并关闭）/ 点外部 / 返回键"退出。
+         所以 `picker_cancel` / `picker_confirm` / `picker_to_pick` 三条**已删除**（零死文案守卫会盯着）。 -->
+
 
     <!-- 授权流（M0-T0-2） -->
     <string name="auth_title">授权状态</string>
