@@ -412,11 +412,6 @@ fun CalibrationRoute(
      * 随 [frames] 变化重算：清空后变非空、恢复/重录后回到 0 —— 帧池变了它就一定变。
      */
     val restorableFrames = remember(frames) { CalibrationFramePool.restorableCount(context) }
-    // 参数文本按产物当前值初始化（此后只随使用者的编辑走：编辑合法即写入产物，不回填覆盖输入）
-    var thresholdText by remember { mutableStateOf(artifact.paramsText(0)) }
-    var marginText by remember { mutableStateOf(artifact.paramsText(1)) }
-    var minDistanceText by remember { mutableStateOf(artifact.paramsText(2)) }
-    val editedParams = CalibrationSignals.parseParams(thresholdText, marginText, minDistanceText)
 
     // 采集会话状态以真实信号为准（与授权页一致）
     DisposableEffect(Unit) {
@@ -441,49 +436,16 @@ fun CalibrationRoute(
         frames = CalibrationFramePool.listFrames(context)
     }
 
-    /**
-     * 参数编辑（T1-5l ⑤）：**合法即写入产物**（无产物时不写，参数随首个信号写入）。
-     *
-     * 关键：解析必须用编辑后的**实时**文本（局部委托属性的读取是即时的），且基线产物必须现读盘上内容——
-     * 若沿用组合期计算出的旧值（`editedParams` / `artifact`），写入会落后一次编辑（真机核对实录：
-     * 界面 0.86、产物 0.80）。
-     */
-    fun applyParams() {
-        val params = CalibrationSignals.parseParams(thresholdText, marginText, minDistanceText) ?: return
-        if (!CalibrationStore.exists(context)) return
-        scope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    val current = CalibrationStore.load(context) ?: return@withContext false
-                    val updated = CalibrationSignals.withParams(current, params) ?: return@withContext false
-                    CalibrationStore.save(context, updated)
-                    true
-                }
-            }
-                .onSuccess { saved ->
-                    if (saved) {
-                        artifactTick++
-                        message = context.getString(R.string.calibration_param_applied)
-                    }
-                }
-                .onFailure {
-                    message = context.getString(
-                        R.string.calibration_write_failed,
-                        it.message ?: it.javaClass.simpleName,
-                    )
-                }
-        }
-    }
+    // ⚠ 这里原有 `thresholdText` / `marginText` / `minDistanceText` 三个编辑态与 `applyParams()`：
+    // **2026-10-02 整体搬到抽屉「诊断」页**（用户："识别参数目前还是放在了最底部，放进抽屉里吧"）——
+    // 判断依据是"什么时候会用到它"：只在**认不出画面 / 老判不可信**时才调，而那正是去诊断页查问题的时刻。
+    // 参数仍属于标定产物、读写同一个文件（`CalibrationStore`），本页不再持有任何参数输入。
 
     CalibrationScreen(
         captureActive = captureActive,
         frames = frames,
         recording = recording,
         artifact = artifact,
-        thresholdText = thresholdText,
-        marginText = marginText,
-        minDistanceText = minDistanceText,
-        paramsValid = editedParams != null,
         message = message,
         onToggleRecord = {
             val target = !recording
@@ -507,9 +469,6 @@ fun CalibrationRoute(
             message = null
             workbenchOpen = true
         },
-        onThresholdChange = { thresholdText = it; applyParams() },
-        onMarginChange = { marginText = it; applyParams() },
-        onMinDistanceChange = { minDistanceText = it; applyParams() },
         onViewSignal = { id, role ->
             viewingSignal = id
             viewingRole = role
@@ -812,12 +771,10 @@ fun CalibrationRoute(
                             // 2026-09-23：界面上不再有"归属好友名"这个输入（`friend_avatar` 用途已撤），
                             // 数据层那条 `friend` 字段留着只为读旧产物。
                             anchorFriend = null,
-                            // 实时读取编辑框内容（局部委托属性读取即时，不是组合快照）
-                            params = CalibrationSignals.parseParams(
-                                thresholdText,
-                                marginText,
-                                minDistanceText,
-                            ),
+                            // 参数**不再是本页的输入框**（2026-10-02 搬到抽屉「诊断」页）⇒
+                            // 写入新信号时**沿用产物里现有的那份**（与搬走前等价：那时输入框的初值
+                            // 就是产物里的值，用户不改就等于沿用）。null = 产物还没有参数 ⇒ 由写入侧取默认。
+                            params = artifact.data?.params,
                         )
                         message = result.message
                         if (result.saved) {

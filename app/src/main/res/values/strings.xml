@@ -25,7 +25,8 @@
     <string name="nav_tab_friends">好友清单</string>
     <!-- U1 阶段的**占位页**（U3 / U6 会各自替换掉；每句 ≤60 字，见验收 V2）：
          写清"这一页以后是什么"，而不是留一片空白 —— 空白会被当成 bug。 -->
-    <string name="nav_stub_diagnostics">本页在 M5-U6 建设：画面是否在来、当前识别结果、单帧耗时、日志。</string>
+    <!-- 抽屉「诊断」页（M5-U6 第一段，2026-10-02 先落「识别参数」）：其余诊断项**明确写"待补"**，不静默。 -->
+    <string name="diagnostics_coming">画面是否在来、当前识别结果、单帧耗时、日志：随后补上。</string>
     <string name="nav_stub_settings">本页在 M5-U6 建设：自动关弹窗、悬浮窗提示位置、退出 App。</string>
     <string name="nav_stub_help">本页在 M5-U6 建设：术语与流程说明。</string>
 

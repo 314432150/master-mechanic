@@ -158,19 +158,12 @@ internal fun CalibrationScreen(
     frames: List<File>,
     recording: Boolean,
     artifact: ArtifactState,
-    thresholdText: String,
-    marginText: String,
-    minDistanceText: String,
-    paramsValid: Boolean,
     message: String?,
     onToggleRecord: () -> Unit,
     onClearFrames: () -> Unit,
     restorableCount: Int,
     onRestoreFrames: () -> Unit,
     onOpenWorkbench: () -> Unit,
-    onThresholdChange: (String) -> Unit,
-    onMarginChange: (String) -> Unit,
-    onMinDistanceChange: (String) -> Unit,
     onViewSignal: (String, SignalRole) -> Unit,
     onRemoveSignal: (String, SignalRole) -> Unit,
     onDeleteArtifact: () -> Unit,
@@ -239,16 +232,6 @@ internal fun CalibrationScreen(
                 onDeleteArtifact = onDeleteArtifact,
             )
 
-            ParamsCard(
-                thresholdText = thresholdText,
-                marginText = marginText,
-                minDistanceText = minDistanceText,
-                paramsValid = paramsValid,
-                hasArtifact = artifact.data != null,
-                onThresholdChange = onThresholdChange,
-                onMarginChange = onMarginChange,
-                onMinDistanceChange = onMinDistanceChange,
-            )
         }
     }
 
@@ -916,145 +899,4 @@ internal fun TemplateDetailDialog(
  *
  * ⚠ 为什么不是"删掉、只用内置默认"（用户问过）：这三个是**唯一**能调识别松紧的旋钮 ——
  * 换设备后若出现"认不出 / 老判不可信"，没有它就只剩改代码重装一条路（见 `progress.md` 第 415 条）。
- */
-@Composable
-internal fun ParamsCard(
-    thresholdText: String,
-    marginText: String,
-    minDistanceText: String,
-    paramsValid: Boolean,
-    hasArtifact: Boolean,
-    onThresholdChange: (String) -> Unit,
-    onMarginChange: (String) -> Unit,
-    onMinDistanceChange: (String) -> Unit,
-) {
-    // 只有"展开没展开"是本卡的私有 UI 状态；三个值仍由调用方持有（落盘时机不变）
-    var open by remember { mutableStateOf(false) }
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.calibration_param_title),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = stringResource(R.string.calibration_param_subtitle),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                TextButton(onClick = { open = !open }) {
-                    Text(
-                        stringResource(
-                            if (open) {
-                                R.string.calibration_param_collapse
-                            } else {
-                                R.string.calibration_param_expand
-                            },
-                        ),
-                    )
-                }
-            }
-            if (open) {
-                // 三个值**竖排 + 各自一行说明**（原来挤在一行里，正是"看不出是干嘛用的"的来源之一）
-                ParamWithHint(
-                    label = stringResource(R.string.calibration_param_threshold),
-                    value = thresholdText,
-                    onValueChange = onThresholdChange,
-                    keyboardType = KeyboardType.Decimal,
-                    hint = stringResource(R.string.calibration_param_threshold_hint),
-                )
-                ParamWithHint(
-                    label = stringResource(R.string.calibration_param_margin),
-                    value = marginText,
-                    onValueChange = onMarginChange,
-                    keyboardType = KeyboardType.Decimal,
-                    hint = stringResource(R.string.calibration_param_margin_hint),
-                )
-                ParamWithHint(
-                    label = stringResource(R.string.calibration_param_min_distance),
-                    value = minDistanceText,
-                    onValueChange = onMinDistanceChange,
-                    keyboardType = KeyboardType.Number,
-                    hint = stringResource(R.string.calibration_param_min_distance_hint),
-                )
-                if (!paramsValid) {
-                    Text(
-                        text = stringResource(R.string.calibration_param_invalid),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                } else if (!hasArtifact) {
-                    Text(
-                        text = stringResource(R.string.calibration_param_pending),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** 一个参数 = 输入框 + 它下面那行「什么时候该改」（见 [ParamsCard] 的口径）。 */
-@Composable
-private fun ParamWithHint(
-    label: String,
-    value: String,
-    onValueChange: (String) -> Unit,
-    keyboardType: KeyboardType,
-    hint: String,
-) {
-    ParamField(
-        label = label,
-        value = value,
-        onValueChange = onValueChange,
-        keyboardType = keyboardType,
-    )
-    Text(
-        text = hint,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-}
-
-@Composable
-internal fun ParamField(
-    label: String,
-    value: String,
-    onValueChange: (String) -> Unit,
-    keyboardType: KeyboardType,
-    modifier: Modifier = Modifier,
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        label = { Text(label) },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-        modifier = modifier,
-    )
-}
-
-/**
- * 标定工作台（T1-5l ③ 起；T1-5m 按用户参考系统相册定稿交互）：大图占满全屏（黑底等比居中），
- * 缩略图条与工具栏绝对定位悬浮于屏幕底部。
- *
- * 两种模式：
- * - 浏览：左右滑动大图切换帧（缩略图「过半即同步」，T1-5j 口径）；工具栏「框选」进入框选模式；
- * - 框选：禁用滑页、隐藏缩略图条；工具栏左 ✕（放弃本次框选：清选框并回浏览）/
- *   右 ✓（确认写入：需已框选 + 已选归属状态 + 至少一个写入角色）；工具栏上方是两行各自的选项
- *   （T2-3f：「归属状态」chip 行 +「角色」行），再上一行为选区坐标（单行全宽居中）。
- *   缺条件时点 ✓ 不写入，改为弹窗列出缺项（用户 2026-09-13）。
- *
- * 写入时机（T1-5m 修订 T1-5l 口径）：点 ✓ 按选中状态写入产物，成功后回浏览模式。
- * 角色可多选（T2-3g）：勾两个 = 同一个元素同时写「标志 + 锚点」两条记录（§2.1）。
  */

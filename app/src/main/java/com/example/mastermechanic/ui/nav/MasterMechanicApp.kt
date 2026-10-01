@@ -44,6 +44,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.mastermechanic.R
 import com.example.mastermechanic.ui.AuthorizationRoute
 import com.example.mastermechanic.ui.CalibrationRoute
+import com.example.mastermechanic.ui.diagnostics.DiagnosticsRoute
 import com.example.mastermechanic.ui.FriendListRoute
 import com.example.mastermechanic.ui.ServerListRoute
 import com.example.mastermechanic.ui.run.RunRoute
@@ -241,8 +242,9 @@ fun MasterMechanicApp(
                         onFullScreenChange = { calibrationFullScreen = it },
                     )
                 }
-                // 抽屉：诊断 / 设置 / 帮助（U6 建设）
-                composable(Routes.DIAGNOSTICS) { StubDestination(R.string.nav_stub_diagnostics) }
+                // 抽屉：诊断 —— **已落地第一段**（识别参数；2026-10-02 从标定页搬来：那里"要滑到底"）
+                composable(Routes.DIAGNOSTICS) { DiagnosticsRoute(resumeTick = resumeTick) }
+                // 抽屉：设置 / 帮助（U6 建设）
                 composable(Routes.SETTINGS) { StubDestination(R.string.nav_stub_settings) }
                 composable(Routes.HELP) { StubDestination(R.string.nav_stub_help) }
             }

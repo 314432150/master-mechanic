@@ -9057,6 +9057,30 @@
     可再把它挪到「说明」行附近或并进抽屉的「诊断」页（另开一条）。
   - 名词类问题（标定 / 产物）本轮**未动**，等用户后续决定；证据与备选名（「校准 / 标定结果」等）记在会话里。
 
+416. **「识别参数」从标定页搬进抽屉「诊断」页（用户："放进抽屉里吧"）+ 抽屉诊断页第一段落地**（2026-10-02）
+  - 用户："**识别参数目前还是放在了最底部，放进抽屉里吧，放在什么位置合适？**"
+    ⇒ 我给的判断依据是"**什么时候会用到它**"：只在"认不出画面 / 老判不可信"时才调，
+    而那正是来**诊断**页查问题的时刻 ⇒ **放诊断页**（另一候选「设置」偏 App 级开关：自动关弹窗 /
+    悬浮窗位置 / 退出，与识别无关）。用户采纳。
+  - **搬法（行为零回归）**：
+    ① 新增 `ui/diagnostics/DiagnosticsScreen.kt`：`DiagnosticsRoute`（读数 / 落盘逻辑与标定页那份**逐字相同**：
+    解析用实时文本、基线产物**现读盘**、`withParams` + `save`、无产物时不写）+ 原 `ParamsCard` /
+    `ParamWithHint` **整体搬来**（默认收起、白话标签、"什么时候该改"，一字未改）；参数错误 / 成功改走
+    **Snackbar**（原来在标定页是一行 message）。
+    ② 标定页**删掉参数相关的一切**：`ParamsCard` / `ParamWithHint` / `ParamField` 三个组件、
+    `thresholdText` / `marginText` / `minDistanceText` / `editedParams` / `applyParams()`，
+    以及 `CalibrationScreen` 的 7 个相关参数（入口页只剩两张卡：样本帧 + 产物）。
+    ③ **写入新信号时参数从哪来**：原来读的是本页输入框（初值=产物里的值，用户不改=沿用）⇒
+    现在直接 `params = artifact.data?.params`（`writeSignalFromSelection` 内部还有
+    `params ?: current?.params ?: defaultParams()` 三级兜底，见 `CalibrationCanvas` 第 891 行）⇒ **等价** ✓。
+  - 壳：`composable(Routes.DIAGNOSTICS)` 从 `StubDestination` 换成 `DiagnosticsRoute`；
+    页面底部明写"画面是否在来、当前识别结果、单帧耗时、日志：随后补上"（**不静默**，U6 再补）。
+    `nav_stub_diagnostics` 随之下线（零死文案守卫 ✓）。
+  - 验证：`-PfastTests` **965 例 0 失败** ✓ ＋ `assembleDebug` ✓ ＋ `adb install -r` + `am start` ✓。
+  - ⏳ 走查：抽屉 → 诊断 ⇒ 看到「识别参数（高级）」折叠卡（默认收起）；标定页**不再有任何参数输入框**；
+    改一个值 ⇒ Snackbar「参数已写入产物」，回标定页写新信号时用的是新值。
+  - 📌 备选名词（用户问，本轮未改）：「标定」→「校准 / 识别校准」；「产物」→「标定结果 / 识别数据」。
+
 ## 待开发（用户列，2026-09-24）
 
 1. **优化 · 悬浮窗一级菜单底部加「返回 App」**：一级菜单最下方增加一个回到我们 App 的入口（现在只能靠后台/多任务切回去）。
