@@ -2,13 +2,21 @@ package com.example.mastermechanic.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.snapping.SnapPosition
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -17,100 +25,100 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.mastermechanic.R
+import kotlin.math.abs
+import kotlinx.coroutines.launch
 
 /**
- * **行高**（2026-10-01 定死，**40dp**）。
+ * **行高**（**40dp**；两轮真机反馈一路收下来：`ListItem` 默认 ≈72dp → 48 → 40）。
  *
- * ⚠ **两轮真机反馈一路收下来**：`ListItem` 默认 ≈72dp → 48dp → **40dp**
- * （用户第二次："列表还是**不够紧凑**"）。
- *
- * ⚠ 口径冲突如实记在这里：**Material 的触控目标建议是 ≥48dp**（验收 V6 引用那条），
- * 而用户明确要更紧凑 ⇒ 取 40dp（约 8mm，实际点起来仍够用）。**V6 走查时把这一条一起确认**：
- * 若真机上发现难点，就回到 44 或 48。
- *
- * ⚠ **定死**（而不是让内容撑）是修"滑动时高度抖动"的关键：高度由 [ListPickerSheet] 按
- * `行数 × 本值` **算出来**，与滚动位置无关 ⇒ 滑到哪高度都一样。
+ * ⚠ 口径冲突如实记：Material 的触控目标建议 **≥48dp**（验收 V6 引用那条），用户明确要更紧凑 ⇒ 40dp
+ * （≈8mm）。**V6 走查时一起确认**，真机难点就回 44 / 48。
  */
-private val PICKER_ROW_HEIGHT: Dp = 40.dp
+private val WHEEL_ROW_HEIGHT: Dp = 40.dp
 
 /**
- * 列表区的**最大高度**（取 **200dp** = 正好 5 行）。
+ * 滚轮里**同时看到的行数**（取 **5**）。
  *
- * 演变：360 → 240 → **200**（随行高 48 → 40 一起收；用户两次都说"太高 / 不够紧凑"）。
- * 超过 5 行的清单**在里面滑**。
+ * 必须是**奇数** —— 中间那一行才是"当前选中"（用户 2026-10-01 的口径：
+ * "**列表拖动时，中间位置代表选中该行**"）。5 行 = 上下各两行陪衬，中间一行高亮。
  */
-private val PICKER_LIST_MAX_HEIGHT: Dp = 200.dp
-
-/** 标题与列表之间的留白（越小弹层越矮）。 */
-private val PICKER_TITLE_PADDING: Dp = 8.dp
+private const val WHEEL_VISIBLE_ROWS = 5
 
 /**
- * 标题的**上边距**。
+ * 上下各留半个滚轮高度的**空白**，好让**第一行 / 最后一行也能滚到中间**。
  *
- * 为什么要它：**拖手已去掉**（[ListPickerSheet] 里 `dragHandle = null`）—— 原来那一截高度由拖手占着，
- * 去掉后标题会贴着弹层顶边 ⇒ 看起来像被裁掉。这段留白就是补这一块（比拖手矮，弹层因此还更紧凑了一点）。
+ * 没有它的话首尾两项永远到不了中线 ⇒ 选中项是首尾时，用户一打开就看到"选中项不在中间"。
  */
-private val PICKER_TITLE_TOP_PADDING: Dp = 16.dp
+private val WHEEL_EDGE_PADDING: Dp = WHEEL_ROW_HEIGHT * (WHEEL_VISIBLE_ROWS / 2)
 
-/** 行的左右内边距（20 → 16：40dp 的行高配 20 的左右会显得"空"）。 */
-private val PICKER_ROW_PADDING: Dp = 16.dp
+/** 标题与滚轮之间的留白（越小弹层越矮）。 */
+private val WHEEL_TITLE_PADDING: Dp = 8.dp
+
+/** 标题的**上边距**：拖手已去掉（`dragHandle = null`），不留会贴着弹层顶边像被裁掉。 */
+private val WHEEL_TITLE_TOP_PADDING: Dp = 16.dp
+
+/** 行的左右内边距。 */
+private val WHEEL_ROW_PADDING: Dp = 16.dp
 
 /**
- * **从列表里选一个** —— 底部向上弹出的可滑动选择器（2026-10-01 用户口径）。
+ * **从列表里选一个** —— 底部向上弹出的**滚轮选择器**（2026-10-01 用户口径）。
  *
- * ## 为什么不用 `DropdownMenu`（用户真机反馈）
+ * ## 长什么样、怎么用
  *
- * 用户："**区服列表和好友列表展示方式不够友好，区服名太长会覆盖其他元素**，
- * 改为友好的底部向上弹出、可滑动选择的方式。"
+ * ```
+ * ┌──────────────────────────────┐
+ * │ 区服                            │   ← 标题
+ * ├──────────────────────────────┤
+ * │        （上两行，陪衬）           │
+ * │ ▓▓▓▓▓ 中间这一行 = 当前选中 ▓▓▓▓▓ │   ← 中线高亮
+ * │        （下两行，陪衬）           │
+ * ├──────────────────────────────┤
+ * │ 将选：莲动渔舟      [取消] [确定]  │
+ * └──────────────────────────────┘
+ * ```
  *
- * `DropdownMenu` 的两个硬伤都是它自己的定位方式造成的：① **贴着锚点**弹出、宽度按最长那一项撑开
- * ⇒ 长区服名会横着压住别的元素；② 贴锚点时会被挤到屏幕上缘，可点区域跟着飘。
- * 底部弹层没有这两个问题：**整宽**（长名字在自己那一行里截断，压不到任何东西）、高度可预期、内容多可滑。
+ * - **打开时直接定位到当前选中的那一行**（用户 2026-10-01 要求）：初始滚动位置按 `selected` 算好，
+ *   并把中线吸附到它上面 ⇒ 不用手动去找"现在选的是哪个"；
+ * - **中间那一行 = 选中行**（用户原话："**列表拖动时，中间位置代表选中该行**"）⇒
+ *   滚动带**中线吸附**（`SnapPosition.Center`，停下时总是整行对齐中线）；
+ * - **点某一行 = 把它滚到中线**（不是立刻提交 —— 滚轮的心智是"停下即选中"，提交统一走「确定」）；
+ * - **「将选：X」** 把当前中线那一行**用文字再报一遍**（弹层里的字可能被截断/被手指挡着，
+ *   而这一句永远看得清）；**「确定」才真正生效**，「取消」/ 点外部 / 返回键都不改值。
  *
- * ## 高度为什么"算"而不是"量"（用户第二次反馈：滑动时高度抖动 + 太高太松）
+ * ## 为什么不用 `DropdownMenu`（用户第一次反馈）
  *
- * 第一版把列表写成 `heightIn(max = 360.dp)` + 默认 `ListItem` 行 ⇒ 两个毛病：
- * - **抖动**：弹层高度跟着**内容测量结果**走，而 `LazyColumn` 在滚动中的测量与
- *   `ModalBottomSheet` 的手势折叠互相影响 ⇒ 一边滑、高度一边变 ✗；
- * - **太高太松**：`ListItem` 的默认内边距把每行撑到 ≈72dp，5 行就 360dp 顶满半屏 ✗。
+ * `DropdownMenu` 贴着锚点弹出、宽度按最长项撑开 ⇒ 长区服名会横着压住别的元素；贴锚点还会被挤到屏幕上缘。
+ * 底部弹层**整宽** ⇒ 长名字只在自己那一行里截断，压不到任何东西。
  *
- * ⇒ 现在：**行高定死 48dp**、**列表高度 = min(行数 × 48dp, 240dp)**（[PICKER_ROW_HEIGHT] /
- * [PICKER_LIST_MAX_HEIGHT]），并且 `skipPartiallyExpanded = true`（不让弹层停在"半展开"那个
- * 会与内部滚动抢手势的中间态）。**高度与滚动位置无关** ⇒ 怎么滑都不抖；
- * **短清单也不会留一大片空白**（高度按行数算，1 项就 48dp）。
+ * ## 为什么关掉弹层自己的拖拽 + 去掉拖手（用户第三 / 第四次反馈）
  *
- * ## 三条口径（免得被"顺手改回下拉 / 改回 ListItem"）
+ * `ModalBottomSheet` 的手势是**复合的**（列表滚到头继续拖 = 拖弹层，M3 用嵌套滚动接在一起）⇒
+ * 手指在列表里上下滑会把弹层带着回缩/展开 ✗。所以 `sheetGesturesEnabled = false`；
+ * 而**拖手是"可以拖"的视觉暗示**，拖不动还留着就是骗人去拖 ⇒ 一并 `dragHandle = null`。
  *
- * 1. **每行单行 + 省略号**：[PICKER_ROW_HEIGHT] 是固定行高，长名字在整宽的弹层里按尾截断，
- *    **永远不会压到别的元素**；当前值在下面的触发按钮上还会完整显示（那里也是整宽）；
- * 2. **列表限高 + 内部滚动**：超长清单不把弹层撑满，用户始终看得见上下文；
- * 3. **当前值高亮 + 勾**：一眼看出"现在是哪一个"。
+ * ## 高度为什么"算"而不是"量"（用户第二次反馈）
  *
- * ## 为什么把弹层自己的拖拽手势**关掉**（用户第三次反馈：列表滑动会带动弹层）
+ * 行高与滚轮高度都是常量（[WHEEL_ROW_HEIGHT] × [WHEEL_VISIBLE_ROWS]）⇒ 与滚动位置无关，滑不抖；
+ * 也不用 `ListItem`（它默认内边距 ≈72dp 正是"行距太高"的来源）。
  *
- * 用户："**列表滑动会触发弹层的滑动，触发弹窗回缩和展开导致出现抖动。**"
- *
- * 这是 `ModalBottomSheet` 的默认行为：**手势是"复合"的** —— 往上拖先滚列表、到底/到顶后**继续拖就变成拖弹层**
- * （M3 用嵌套滚动把两者接在一起）。弹层里只有"一屏列表"时，这个衔接非常容易被误触发：
- * 手指在列表里上下滑，弹层就跟着**回缩 / 再展开** ⇒ 看起来就是抖动 ✗。
- *
- * ⇒ [sheetGesturesEnabled] = **false**：**弹层不再响应拖拽**，列表怎么滑都只影响列表。
- * 关闭方式改为**「取消」按钮 / 点弹层外部 / 系统返回**（前两条本来就成立，所以补一个显式的取消按钮，
- * 免得用户以为"关不掉"）。
- *
- * @param title 弹层标题（用调用方那一条的字段名，例如「区服」/「拜访好友」）
+ * @param title 弹层标题（调用方那一条的字段名，例如「区服」/「拜访好友」）
  * @param options 候选项（来自清单，**不是手打**）
- * @param selected 当前值（高亮用；不在列表里也没关系）
- * @param onPick 选中某一项（调用方负责关弹层）
- * @param onDismiss 点弹层外部 / 系统返回 / 「取消」关闭（**下滑关闭已按上面的理由禁用**）
+ * @param selected 当前值（**打开时定位到它**；不在列表里就从第一行开始）
+ * @param onPick 点「确定」时给出**中线那一行**（调用方负责关弹层）
+ * @param onDismiss 取消 / 点弹层外部 / 系统返回（**都不改值**）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -122,82 +130,164 @@ fun ListPickerSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val selectedIndex = options.indexOf(selected).takeIf { it >= 0 } ?: 0
+    // **打开就定位到选中行**：初始位置把它放在中线（上方留两行的量，由 contentPadding 提供）
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = (selectedIndex - WHEEL_VISIBLE_ROWS / 2).coerceAtLeast(0),
+    )
+    val snap = rememberSnapFlingBehavior(lazyListState = listState, snapPosition = SnapPosition.Center)
+    val scope = rememberCoroutineScope()
+
+    // **中线那一行**：取"离视口中心最近"的那一项（比 `firstVisibleItemIndex ± 常数` 稳：
+    // 首尾附近、或列表比滚轮还短时，那个常数就不成立了）
+    val centerIndex by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val viewportCenter = (info.viewportStartOffset + info.viewportEndOffset) / 2
+            info.visibleItemsInfo
+                .minByOrNull { abs(it.offset + it.size / 2 - viewportCenter) }
+                ?.index
+                ?: selectedIndex
+        }
+    }
+    val centerValue = options.getOrNull(centerIndex) ?: selected
+
+    // ⚠ **不要在这里再补一句 `scrollToItem(selectedIndex)`**（写错过一次，编译能过但行为错）：
+    // `scrollToItem(index)` 是"**把这一项置顶**"的语义 ⇒ 选中行会跑到**视口顶部**而不是中线，
+    // 中线高亮带于是指着**上一行**（用户一打开就看到"选中的不是我"）。
+    // 定位只由 `initialFirstVisibleItemIndex = selected - (可见行数/2)` 负责：
+    // 让 `selected` 落在第 (可见行数/2 + 1) = **第 3 格**，也就是滚轮的中线。
+    // （首尾两项走不到中线的问题由 `contentPadding` = 各半屏解决，见 [WHEEL_EDGE_PADDING]。）
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        // **关掉弹层自身的拖拽**（见上方说明）：列表滑动不再带动弹层回缩/展开
         sheetGesturesEnabled = false,
-        // **顶部的"拖手"也一并去掉**（用户 2026-10-01 第三次反馈："现在弹层已经完全不会滑动了，
-        // 那个顶部的滑动拖手也无法触发弹层回缩和展开，应该移除"）：
-        // 拖手是"可以拖"的视觉暗示 ⇒ 拖不动了还留着，就是在**骗人去拖**（拉一下没反应，只会让人以为卡了）。
-        // 去掉之后标题自带一点上边距，免得贴着顶边显得被裁掉。
         dragHandle = null,
     ) {
         Text(
             text = title,
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(
-                start = PICKER_ROW_PADDING,
-                end = PICKER_ROW_PADDING,
-                top = PICKER_TITLE_TOP_PADDING,
-                bottom = PICKER_TITLE_PADDING,
+                start = WHEEL_ROW_PADDING,
+                end = WHEEL_ROW_PADDING,
+                top = WHEEL_TITLE_TOP_PADDING,
+                bottom = WHEEL_TITLE_PADDING,
             ),
         )
         HorizontalDivider()
-        // **高度自己算，不靠测量**：行数 × 行高（封顶 5 行）⇒ 滑动时高度恒定
-        val listHeight = PICKER_ROW_HEIGHT * options.size
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(if (listHeight > PICKER_LIST_MAX_HEIGHT) PICKER_LIST_MAX_HEIGHT else listHeight),
-        ) {
-            items(items = options, key = { it }) { option ->
-                PickerRow(
-                    option = option,
-                    selected = option == selected,
-                    onPick = { onPick(option) },
+
+        if (options.isEmpty()) {
+            // 理论上不会走到（调用方在清单为空时把触发按钮禁用了）；真到了也不给一个空白弹层
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(WHEEL_ROW_HEIGHT * WHEEL_VISIBLE_ROWS),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(WHEEL_ROW_HEIGHT * WHEEL_VISIBLE_ROWS),
+            ) {
+                // 中线高亮带（在列表**下面**一层：文字盖在它上面才读得清）
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(WHEEL_ROW_HEIGHT)
+                        .align(Alignment.Center)
+                        .background(MaterialTheme.colorScheme.secondaryContainer),
                 )
+                LazyColumn(
+                    state = listState,
+                    flingBehavior = snap,
+                    contentPadding = PaddingValues(vertical = WHEEL_EDGE_PADDING),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    itemsIndexed(items = options, key = { _, option -> option }) { index, option ->
+                        WheelRow(
+                            option = option,
+                            atCenter = index == centerIndex,
+                            originallySelected = index == selectedIndex,
+                            onClick = {
+                                // 点一行 = 把它滚到中线（滚轮的心智是"停下即选中"，提交统一走「确定」）
+                                scope.launch { listState.animateScrollToItem(index) }
+                            },
+                        )
+                    }
+                }
             }
         }
-        // 下滑关闭禁用后，给一个**显式的**关闭入口（免得用户以为关不掉）
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = PICKER_ROW_PADDING, vertical = 4.dp),
-            horizontalArrangement = Arrangement.End,
+                .padding(horizontal = WHEEL_ROW_PADDING, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.picker_cancel))
+            Text(
+                text = stringResource(R.string.picker_to_pick, centerValue),
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.picker_cancel)) }
+            TextButton(
+                onClick = { onPick(centerValue) },
+                enabled = options.isNotEmpty(),
+            ) {
+                Text(stringResource(R.string.picker_confirm))
             }
         }
     }
 }
 
-/** 一行（自绘，不用 `ListItem` —— 它的默认内边距正是"行距太高"的来源）。 */
+/**
+ * 滚轮里的一行。
+ *
+ * 两种"标记"是**两件事**，别混：`atCenter` = 现在停在中线上（即将选它）；`originallySelected` = 打开弹层时
+ * 存着的那个值（给一个 ✓，好让用户看清"我从哪来的"）。
+ */
 @Composable
-private fun PickerRow(option: String, selected: Boolean, onPick: () -> Unit) {
+private fun WheelRow(
+    option: String,
+    atCenter: Boolean,
+    originallySelected: Boolean,
+    onClick: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(PICKER_ROW_HEIGHT)
-            .background(
-                if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-            )
-            .clickable(onClick = onPick)
-            .padding(horizontal = PICKER_ROW_PADDING),
+            .height(WHEEL_ROW_HEIGHT)
+            .clickable(onClick = onClick)
+            .padding(horizontal = WHEEL_ROW_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = option,
-            // 40dp 的行高配 bodyMedium 才不挤（bodyLarge 在小屏上会显得"字撑满行"）
             style = MaterialTheme.typography.bodyMedium,
-            // 口径 1：单行 + 省略号（固定行高装不下第二行；整宽弹层里这条也够宽了）
+            fontWeight = if (atCenter) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (atCenter) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            textAlign = TextAlign.Start,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (selected) {
-            Text(text = "✓", style = MaterialTheme.typography.bodyMedium)
+        if (originallySelected) {
+            Text(
+                text = "✓",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
