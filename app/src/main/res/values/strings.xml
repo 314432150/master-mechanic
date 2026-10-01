@@ -563,8 +563,9 @@
     <string name="friend_row_edit">编辑</string>
     <string name="friend_row_delete">删除</string>
     <string name="friend_row_desc">第 %1$d 位，共 %2$d 位：%3$s</string>
-    <!-- 手势的发现性全靠这一行：行内没有可见按钮，不写出来没人知道点按 / 长按分别是什么 -->
-    <string name="friend_list_hint">点按一行改名；向左滑一行露出「删除」，点它才删。</string>
+    <!-- ⚠ `friend_list_hint` **已删**（2026-10-02 用户："好友页好友标题下方的交互说明也移除，都说了两边交互一致"）⇒
+         三个手势现在只在「说明」弹层里说（`friend_about_gestures`），与区服清单同一个版式。 -->
+
     <string name="friend_deleted_with_name">已删除「%1$s」</string>
     <!-- 删除时的引用验证（2026-09-22 用户口径）：删掉的是清单那一份，别处的引用不会跟着消失 -->
     <string name="friend_deleted_referenced_preset">已删除「%1$s」；拜访规则还在拜访它，去改掉才不会再中止</string>

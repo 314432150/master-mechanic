@@ -38,6 +38,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
@@ -612,13 +613,17 @@ fun ServerListScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        // ⚠ **别再吃一遍系统栏 inset**（2026-10-02 用户第二次报"顶部空白还是太宽"的**真凶**）：
+        // 外层壳的 `Scaffold` 已经按标题栏 + 导航栏 + 系统栏算好 `innerPadding` 给了 `NavHost`，
+        // 页面这个 `Scaffold` 默认**又按系统栏加了一遍**（≈状态栏那一条）⇒ 顶/底各多出一段空白 ✗。
+        // 页面级 Scaffold 只负责"Snackbar 落脚"，inset 一律交给壳 ⇒ 这里清零。
+        contentWindowInsets = WindowInsets(0.dp),
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                // 上边距从 8dp 收到 **2dp**（用户 2026-10-01："服务器距离顶部太高了，适当缩减"）：
-                // 壳的标题栏本来就占着一条，页面再留 8dp 会显出一段"什么都没写"的空白。
+                // 页面自己只留 2dp（**真正的空白来自上面那个双层 inset，不是这个数**）
                 .padding(horizontal = 16.dp, vertical = 2.dp),
         ) {
 

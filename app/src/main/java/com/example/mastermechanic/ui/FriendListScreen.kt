@@ -29,6 +29,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
@@ -752,12 +753,9 @@ private fun FriendListScreen(
                             }
                         }
                     } else {
-                        // 手势的**发现性**全靠这一行常驻提示：没有可见按钮，不告诉用户就没人知道长按能删
-                        Text(
-                            text = stringResource(R.string.friend_list_hint),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        // ⚠ 手势提示那一行**已移除**（用户 2026-10-02："好友页好友标题下方的交互说明也移除，
+                        //    都说了两边交互一致"）—— 三个手势现在只在「说明」弹层里说
+                        //    （`friend_about_gestures`），与区服清单**同一个版式**。别再往这里加回来。
                         LazyColumn(
                             modifier = Modifier.weight(1f),
                             state = listState,

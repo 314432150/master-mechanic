@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -110,6 +111,9 @@ fun VisitSettingsRoute(resumeTick: Int) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        // 同清单页：**inset 一律交给壳**（页面级 Scaffold 只负责给 Snackbar 落脚），
+        // 否则系统栏会被算两遍 ⇒ 顶/底各多一段空白（见 `ServerListScreen` 里那段说明）。
+        contentWindowInsets = WindowInsets(0.dp),
     ) { innerPadding ->
         Column(
             modifier = Modifier

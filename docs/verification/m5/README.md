@@ -98,7 +98,9 @@
 | 5 | 零死文案 | ✅ | 随本轮下线：`server_title` / `server_back` / `server_about_close` / `server_one_line` / `server_gesture_hint` / `server_subtitle` / `server_hint`（**守卫逐条验证**） |
 | 6 | 全量单测 + 编译 + 装机 | ✅ | `-PfastTests` **964 例 0 失败** ✓ ＋ `assembleDebug` ✓ ＋ 装机 ✓ |
 | 7 | 好友清单同套收编 | ✅（2026-10-01 第二半） | 删页内「好友 + 返回」与常驻长副标题 ⇒ 首屏只留「好友（N 条） + 说明」；「添加好友」搬进壳的标题栏（按 Tab 切换文案）；「说明」`AlertDialog`→`ModalBottomSheet`，正文重排为五条（引用/判重/定位/名字/手势）。⚠ **手势本来就是同一套**（`ServerListGestures.swipeRevealsDeleteButton` + 拖动 + 双击），本轮**没有**改交互；死文案清了 3 条 |
-| 7b | 区服页**上边距缩减**（用户："服务器距离顶部太高了，适当缩减"） | ✅ | Column 的 `vertical = 8.dp` ⇒ **2.dp**；⚠ 装机被设备拒（`INSTALL_FAILED_ABORTED: User rejected permissions`）⇒ **待用户确认后补装** |
+| 7b | 区服页**上边距缩减**（用户："服务器距离顶部太高了，适当缩减"） | ✅ 并**已找到真凶**（见 7c） | Column 的 `vertical = 8.dp` ⇒ **2.dp**（只值 6dp，所以用户第二次仍觉得宽 ✗） |
+| 7c | **顶部空白太宽的真凶 = 页面级 `Scaffold` 又吃了一遍系统栏 inset**（用户 2026-10-02 第二次报） | ✅ | 壳的 `Scaffold` 已按标题栏 + 导航栏 + 系统栏算好 `innerPadding`；页面那个只为"给 Snackbar 落脚"的 `Scaffold` **默认再按系统栏加一遍** ⇒ 顶/底各多一段 ✗ ⇒ 三个页面级 `Scaffold` 一律 **`contentWindowInsets = WindowInsets(0.dp)`**（`ServerListScreen` / `FriendListScreen` / `VisitSettingsScreen`）。📌 **通用坑：嵌套 Scaffold 时内层必须清零 inset** |
+| 7d | 好友页**列表上方的手势提示行移除**（用户："好友页好友标题下方的交互说明也移除，都说了两边交互一致"） | ✅ | 删 `friend_list_hint`（"点按一行改名；向左滑一行露出「删除」…"）—— ⚠ 上一轮删的是**另一条**（标题下长副标题 `friend_list_subtitle`），这条是列表上方那行；三个手势只保留在「说明」弹层（`friend_about_gestures`）。`friend_list_hint` 随之下线（守卫 ✓）。⚠ 用户"看着没变"的原因：**上一轮装机被设备拒**（`INSTALL_FAILED_ABORTED`），手机上还是旧版 —— 本轮已装上 ✓ |
 | 8 | 真机走查：增删改 / 拖动排序 / 改名同步 / 撤销 Snackbar **零回归** | ⏳ **待用户** | 走查：① 区服 Tab 顶部**没有**返回按钮、标题由壳给；② 「新增服务器」在**标题栏右侧**，点了能打开编辑页；③ 编辑 / 左滑删除 / 按住拖动排序 / 底部整体清空都照旧；④ 改名后下游同步提示照旧；⑤ 「说明」从底部滑上来、能滑走 |
 
 ---
