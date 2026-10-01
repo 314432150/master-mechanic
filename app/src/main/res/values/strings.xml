@@ -9,6 +9,11 @@
     <string name="nav_visit_settings">拜访设置</string>
     <string name="nav_accounts">账号与好友</string>
     <string name="nav_calibration">标定</string>
+    <!-- 底栏标签**要短**（用户 2026-10-01："「拜访设置」「账号与好友」作为导航栏太长了"）：
+         底栏一律 **2 字**（运行 / 拜访 / 清单 / 标定），**页面标题仍用上面那套全名**
+         —— 短处够短、出处够清楚；两者不一致是刻意的，见 `TopLevelDestination` 的说明。 -->
+    <string name="nav_visit_settings_short">拜访</string>
+    <string name="nav_accounts_short">清单</string>
     <string name="nav_auth">授权与权限</string>
     <string name="nav_diagnostics">诊断</string>
     <string name="nav_settings">设置</string>

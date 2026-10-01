@@ -60,6 +60,31 @@ class StringResourcesTest {
         )
     }
 
+    @Test
+    fun theBottomBarLabelsStayShortEnoughToNotGetTruncated() {
+        // 用户 2026-10-01："「**拜访设置**」「**账号与好友**」作为导航栏**太长了**" ⇒
+        // 底栏一律 2 字（运行 / 拜访 / 清单 / 标定），**页面标题**仍用全名。
+        // 这里钉住"短名真的短"：底栏宽度只够 2 字，超了会被截断成"拜访设…"——比短名更糟。
+        val moduleDir = findModuleDir()
+        val text = File(moduleDir, "src/main/res/values/strings.xml").readText()
+        val shortNames = listOf(
+            "nav_run",
+            "nav_visit_settings_short",
+            "nav_accounts_short",
+            "nav_calibration",
+        )
+        shortNames.forEach { name ->
+            val value = Regex("<string name=\"$name\">([^<]*)</string>")
+                .find(text)
+                ?.groupValues?.get(1)
+            assertTrue("strings.xml 里找不到「$name」", value != null)
+            assertTrue(
+                "底栏标签「$name」=「$value」超了 2 字 ⇒ 底栏会被截断（短名见 nav_*_short；全名留给页面标题）",
+                (value?.length ?: 0) <= 2,
+            )
+        }
+    }
+
     /** 把 `src/` 下所有可能引用文案的文件拼成一大块文本（`strings.xml` 自己排除掉）。 */
     private fun referenceHaystack(moduleDir: File, stringsFile: File): String {
         val extensions = setOf("kt", "java", "xml")

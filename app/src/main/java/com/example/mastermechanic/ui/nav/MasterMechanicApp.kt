@@ -151,8 +151,12 @@ fun MasterMechanicApp(
                         NavigationBarItem(
                             selected = currentRoute == destination.route,
                             onClick = { go(destination.route) },
+                            // 图标不带 contentDescription：底栏每一项都有文字标签，读屏念标签即可
+                            // （再给图标一个描述会念两遍；V6 的实测在真机走查里确认）。
                             icon = { Icon(destination.icon, contentDescription = null) },
-                            label = { Text(stringResource(destination.labelRes)) },
+                            // **底栏一律短名**（2 字：运行 / 拜访 / 清单 / 标定）；页面标题才是全名 ——
+                            // 用户 2026-10-01："「拜访设置」「账号与好友」作为导航栏太长了"。
+                            label = { Text(stringResource(destination.shortLabelRes)) },
                         )
                     }
                 }
