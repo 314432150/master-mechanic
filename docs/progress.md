@@ -9138,6 +9138,28 @@
     ④ 有结果 ⇒ "标定结果 N 条已生效…"；⑤ 卡头 ⋮ 里有「清空帧池 / 恢复…」，
     底部「删除整个标定结果」是红描边且与清单隔开。
 
+419. **标定页清单搬进 `LazyColumn`（UX 评审 P1 落地）**（2026-10-02 用户："先只把清单搬进 LazyColumn"）
+  - **骨架**：`CalibrationScreen` 的 `Column.verticalScroll` ⇒ **`LazyColumn`**
+    （`contentPadding = 16/8`，**不是** 用 `Modifier.padding` 包列表 —— 那会把列表裁掉）；
+    首屏指令句 / 消息 / 采样卡 / 结果区头 / 分组标题 / **清单行** / 区尾，全部成为 `item` / `itemsIndexed`。
+  - **关键副作用（必须记住）**：行现在是 `LazyColumn` 的 item、**会被回收** ⇒ 左滑 / 筛选状态
+    （`revealFractions` / `revealedKey` / `settleJobs` / `groupFilter`）**从卡片内部提升到 `CalibrationScreen`**
+    （原来它们藏在一个"只组合一次"的卡片里，回收后放在那儿就会串状态）。
+    ⚠ 保留两条既有口径：① 数据一变（写入 / 删除 / 撤销）**显式清一遍露出状态**（`LaunchedEffect(artifactData)`），
+    **不是** `remember(data)` 重建实例（那条路真机 ANR + 每半秒 100MB，2026-09-29 已回退过）；
+    ② 分组标题用**普通 item，不用 `stickyHeader`**（TalkBack 顺序错乱，UX 评审点到）。
+  - **拆文件**：原 `ArtifactCard`（一张卡包住头 + 清单 + 尾）拆成 **区头 / 行 / 区尾** ——
+    头与尾搬进新文件 `ui/CalibrationArtifactSection.kt`（`ArtifactSectionHeader` / `ArtifactSectionFooter`），
+    行留在页面的 `LazyColumn` 里；`ArtifactCard` 删除（脚本按声明边界删，`_tmp_check/drop-artifact-card.ps1`）。
+    ⚠ 视觉代价如实：**"一整张卡包住清单"没有了** —— 头尾各占一段卡片外壳，行与行之间照旧只靠缩略图底色 +
+    分组内分隔线（"不给每行套边框"是 2026-09-29 的老口径，未变）。
+  - **未做（下一档）**：分区编号「①/②」+ 状态摘要；`maxWidth ≥ 600dp`（横屏 / 平板）改左右两栏。
+  - 验证：`-PfastTests` **966 例 0 失败** ✓ ＋ `assembleDebug` ✓ ＋ `adb install -r` + `am start` ✓。
+  - ⏳ **真机走查（重点，UX 评审标为阻塞级风险）**：① **左滑仍能划出删除**、且**列表纵向滚动不打架**
+    （横向划不该变成纵向滚）；② 20+ 行连续滚动**无掉帧**；③ 切换筛选 chip 后列表从头显示；
+    ④ 写入 / 删除一条后**没有行卡在"半拉开"**（删除按钮不会自己冒出来）；⑤ 滚到底能正常点到
+    「删除整个标定结果」（它现在在区尾，与清单隔开 16dp）。
+
 ## 待开发（用户列，2026-09-24）
 
 1. **优化 · 悬浮窗一级菜单底部加「返回 App」**：一级菜单最下方增加一个回到我们 App 的入口（现在只能靠后台/多任务切回去）。

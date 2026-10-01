@@ -33,7 +33,9 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
@@ -212,81 +214,222 @@ internal fun CalibrationScreen(
         // 系统栏那一条**壳已经算进 innerPadding** 了 ⇒ 这里同样清零。
         contentWindowInsets = WindowInsets(0.dp),
     ) { innerPadding ->
-        Column(
+        // ⚠ 页面骨架 = **`LazyColumn`**（2026-10-02 UX 评审 P1，用户："先只把清单搬进 LazyColumn"）：
+        // 原来是 `Column.verticalScroll` + `forEach` 铺清单 —— 20+ 行**一次性组合**（每行还可能解位图），
+        // 筛选一换整页重排、滚动位置跳；横屏（可视高 ≈216dp）时"打开工作台"会被挤出首屏。
+        // ⚠ 副作用：行**会被回收** ⇒ 左滑 / 筛选状态不能再藏在"外面那层组合作用域"里，必须提升到本函数。
+        // ⚠ 不要用 `Modifier.padding(...)` 包 LazyColumn（列表会被裁），用 `contentPadding`。
+        val artifactCount = artifact.data?.signals?.size ?: 0
+        val todo = calibrationTodoOf(
+            captureActive = captureActive,
+            frameCount = frames.size,
+            artifactCount = artifactCount,
+        )
+        val artifactData = artifact.data
+        val artifactGroups = remember(artifactData) {
+            artifactData?.let { CalibrationArtifactGroups.of(it) }
+        }
+        var groupFilter by remember(artifactData) { mutableStateOf<UiState?>(null) }
+        val swipeScope = rememberCoroutineScope()
+        val haptics = LocalHapticFeedback.current
+        val density = LocalDensity.current.density
+        val revealWidthDp = ServerListGestures.REVEAL_WIDTH_DP.dp
+        val revealWidthPx = with(LocalDensity.current) { revealWidthDp.toPx() }
+        // ⚠ 2026-09-29 修（用户报"写入标志后返回清单，那条的删除按钮自己冒出来"，且他**从未划过任何一行**）：
+        // `revealFractions`（每行拉开多少）不跟标定结果走 —— 写入让数据变、[revealedKey] 归零，
+        // 而比例还留着残留值 ⇒ 行被画成"半拉开"（`revealed=false` 但 `revealFraction≠0`）⇒ 删除按钮露在行尾。
+        // 半拉开很容易出现：手指离开页面（进工作台 / 点返回）时 [swipeScope] 被取消，180ms 吸附动画停在半路。
+        // ⚠ 修法**不能**是 `remember(data) { … }`（第一版就是这么写的，已回退）：把数据换身份当钥匙会让
+        // 这些状态整体重建，而它们被行 / 位图的 `remember` 牵连 ⇒ 真机 ANR + 每半秒 100MB 垃圾。
+        // **改用"数据一变就显式清一遍"**：状态只在原地复用，不换实例。
+        val revealFractions = remember { mutableStateMapOf<String, Float>() }
+        var revealedKey by remember(artifactData) { mutableStateOf<String?>(null) }
+        val settleJobs = remember { mutableMapOf<String, Job>() }
+        LaunchedEffect(artifactData) {
+            settleJobs.values.forEach { it.cancel() }
+            settleJobs.clear()
+            revealFractions.clear()
+            revealedKey = null
+        }
+        val settle: (String, Float, Float) -> Unit = { key, from, target ->
+            settleJobs[key]?.cancel()
+            settleJobs[key] = swipeScope.launch {
+                Animatable(from).animateTo(target, tween(CalibrationSwipeSettleMillis, easing = FastOutSlowInEasing)) {
+                    revealFractions[key] = value
+                }
+            }
+        }
+        val collapse: (String) -> Unit = { key ->
+            val from = revealFractions[key] ?: 0f
+            if (from != 0f) settle(key, from, 0f)
+            if (revealedKey == key) revealedKey = null
+        }
+        val visibleGroups = artifactGroups.orEmpty().filter { groupFilter == null || it.state == groupFilter }
+        val deleteLabel = stringResource(R.string.calibration_signal_remove)
+
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
+                .padding(innerPadding),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // M5-U5（ADR-009 决策五）：**标题与返回都收进壳**（用户 2026-10-01："标定页顶部为什么没有
-            // 标题栏"）⇒ 页内不再有「返回授权页」，标题由壳的 `TopAppBar` 出（`nav_calibration` = 标定）。
-            //
-            // 这一行原来是"要点式"的静态说明（"本页录样本帧、管理标定结果与匹配参数。"）—— UX 评审
-            // （2026-10-02）判为 **P3：信息量为零，真正的"下一步"被藏在「说明」弹层里**：
-            // 那句话说到底只是"本页做本页的事"，而用户需要的是"**我现在该点哪儿**"。
-            // ⇒ 改成**状态驱动的指令句**（四态见 [calibrationTodoOf]，每句 ≤24 字），
-            //   长说明照旧在「说明」弹层里（V2：超 60 字必须默认收起）。
-            val artifactCount = artifact.data?.signals?.size ?: 0
-            val todo = calibrationTodoOf(
-                captureActive = captureActive,
-                frameCount = frames.size,
-                artifactCount = artifactCount,
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = when (todo) {
-                        CalibrationTodo.AUTH -> stringResource(R.string.calibration_todo_auth)
-                        CalibrationTodo.RECORD -> stringResource(R.string.calibration_todo_record)
-                        CalibrationTodo.WORKBENCH ->
-                            stringResource(R.string.calibration_todo_workbench, frames.size)
+            item {
+                // M5-U5（ADR-009 决策五）：**标题与返回都收进壳**（用户 2026-10-01："标定页顶部为什么没有
+                // 标题栏"）⇒ 页内不再有「返回授权页」，标题由壳的 `TopAppBar` 出（`nav_calibration` = 标定）。
+                //
+                // 这一行原来是"要点式"的静态说明（"本页录样本帧、管理标定结果与匹配参数。"）—— UX 评审
+                // （2026-10-02）判为 **P3：信息量为零，真正的"下一步"被藏在「说明」弹层里**：
+                // 那句话说到底只是"本页做本页的事"，而用户需要的是"**我现在该点哪儿**"。
+                // ⇒ 改成**状态驱动的指令句**（四态见 [calibrationTodoOf]，每句 ≤24 字），
+                //   长说明照旧在「说明」弹层里（V2：超 60 字必须默认收起）。
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = when (todo) {
+                            CalibrationTodo.AUTH -> stringResource(R.string.calibration_todo_auth)
+                            CalibrationTodo.RECORD -> stringResource(R.string.calibration_todo_record)
+                            CalibrationTodo.WORKBENCH ->
+                                stringResource(R.string.calibration_todo_workbench, frames.size)
 
-                        CalibrationTodo.REVIEW ->
-                            stringResource(R.string.calibration_todo_review, artifactCount)
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    // ⚠ 不要设 maxLines = 1：大字号下会被截断（UX 评审明确点到）
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = { aboutOpen = true }) {
-                    Text(stringResource(R.string.calibration_about))
+                            CalibrationTodo.REVIEW ->
+                                stringResource(R.string.calibration_todo_review, artifactCount)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        // ⚠ 不要设 maxLines = 1：大字号下会被截断（UX 评审明确点到）
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { aboutOpen = true }) {
+                        Text(stringResource(R.string.calibration_about))
+                    }
                 }
             }
             if (message != null) {
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                item {
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+
+            item {
+                FramesCard(
+                    captureActive = captureActive,
+                    frames = frames,
+                    recording = recording,
+                    restorableCount = restorableCount,
+                    onToggleRecord = onToggleRecord,
+                    onClearFrames = onClearFrames,
+                    onRestoreFrames = onRestoreFrames,
+                    onRequestReauth = onRequestReauth,
                 )
             }
 
-            FramesCard(
-                captureActive = captureActive,
-                frames = frames,
-                recording = recording,
-                restorableCount = restorableCount,
-                onToggleRecord = onToggleRecord,
-                onClearFrames = onClearFrames,
-                onRestoreFrames = onRestoreFrames,
-                onRequestReauth = onRequestReauth,
-            )
-
-            ArtifactCard(
-                artifact = artifact,
-                framesExist = frames.isNotEmpty(),
-                onOpenWorkbench = onOpenWorkbench,
-                onViewSignal = onViewSignal,
-                onRemoveSignal = onRemoveSignal,
-                onDeleteArtifact = onDeleteArtifact,
-            )
-
+            // ---- 标定结果区（头 / 行 / 尾）----
+            item {
+                ArtifactSectionHeader(
+                    artifact = artifact,
+                    framesExist = frames.isNotEmpty(),
+                    groups = artifactGroups.orEmpty(),
+                    filter = groupFilter,
+                    onFilterChange = { groupFilter = it },
+                    onOpenWorkbench = onOpenWorkbench,
+                )
+            }
+            visibleGroups.forEach { group ->
+                val rows = CalibrationArtifactGroups.rowsOf(group)
+                if (groupFilter == null) {
+                    // 分组标题用**普通 item**，不要 `stickyHeader`：TalkBack 会把粘性标题归到列表头部语义位置
+                    // ⇒ "先念一遍组标题、滚到组里又念一遍"的顺序错乱（UX 评审明确点到）。
+                    item(key = "group-${group.state.name}") {
+                        Text(
+                            text = stringResource(
+                                R.string.calibration_group_title,
+                                group.state.label,
+                                rows.size,
+                            ),
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(top = 10.dp),
+                        )
+                    }
+                }
+                // **行 = 一条记录**（2026-10-01 用户口径"标志和锚点分两行显示"）：左滑删除也按这一行的
+                // 角色走（删哪行删哪条）；行键带角色，同一 ID 的两条不会互相顶掉。
+                itemsIndexed(rows, key = { _, row -> row.key }) { index, row ->
+                    val element = row.element
+                    val key = row.key
+                    // 删除 = **左滑 → 行尾压出按钮 → 点按钮**（2026-09-19 用户口径，与服务器 / 好友清单同一套）。
+                    // 行本身不动，按钮盖在行尾上；读屏走 ArtifactRow 的自定义「删除」动作（同一个出口）。
+                    Column {
+                        SwipeActionRow(
+                            key = key,
+                            revealed = revealedKey == key,
+                            anyRevealed = revealedKey != null,
+                            revealWidthPx = revealWidthPx,
+                            revealFraction = revealFractions[key] ?: 0f,
+                            rowHeight = ArtifactRowHeight,
+                            onDelete = { onRemoveSignal(element.id, row.role) },
+                            onCollapse = { revealedKey?.let(collapse) },
+                            onSwipeStart = { settleJobs[key]?.cancel() },
+                            onSwipe = { revealFractions[key] = it },
+                            onSwipeEnd = { fraction, velocityX ->
+                                val open = ServerListGestures.swipeRevealsDeleteButton(
+                                    revealFraction = fraction,
+                                    velocityXPx = velocityX,
+                                    density = density,
+                                )
+                                if (open) {
+                                    // 同一时刻只露出一行：把上一行收起，再震一下提示"这一行已露出"
+                                    if (revealedKey != key) {
+                                        revealedKey?.let(collapse)
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        revealedKey = key
+                                    }
+                                    settle(key, fraction, 1f)
+                                } else {
+                                    if (revealedKey == key) revealedKey = null
+                                    settle(key, fraction, 0f)
+                                }
+                            },
+                            action = {
+                                DeleteActionButton(
+                                    label = deleteLabel,
+                                    description = deleteLabel,
+                                    // 只有停稳之后才可点：拖动途中不算，避免手指一划就删掉
+                                    enabled = revealedKey == key,
+                                    onDelete = { onRemoveSignal(element.id, row.role) },
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .width(revealWidthDp)
+                                        .clip(RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp)),
+                                )
+                            },
+                        ) {
+                            ArtifactRow(
+                                row = row,
+                                state = group.state,
+                                onTap = { onViewSignal(element.id, row.role) },
+                                onRemove = { onRemoveSignal(element.id, row.role) },
+                            )
+                        }
+                        // 组内细分隔线（最后一行不画）：分隔的是"内容"，不是给每行套边框 ——
+                        // 20 行各加边框/卡片底会变成一片线条噪声，且缩略图自带深色底会打架
+                        if (index < rows.size - 1) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
+                    }
+                }
+            }
+            item {
+                ArtifactSectionFooter(onDeleteArtifact = onDeleteArtifact)
+            }
         }
     }
 
@@ -465,259 +608,6 @@ internal fun ConfirmDialog(
             }
         },
     )
-}
-
-@Composable
-internal fun ArtifactCard(
-    artifact: ArtifactState,
-    framesExist: Boolean,
-    onOpenWorkbench: () -> Unit,
-    onViewSignal: (String, SignalRole) -> Unit,
-    onRemoveSignal: (String, SignalRole) -> Unit,
-    onDeleteArtifact: () -> Unit,
-) {
-    val data = artifact.data
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.calibration_artifact_title),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            // T1-5m：工作台入口属标定结果操作，移入本卡。
-            // UX 评审（2026-10-02）：**还没有结果时它是这一页的主 CTA**（filled）；
-            // 已经有结果时降为 tonal —— 那时用户多半是回来看清单的，重心不该被按钮抢走。
-            if (data == null) {
-                Button(
-                    onClick = onOpenWorkbench,
-                    enabled = framesExist,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(text = stringResource(R.string.calibration_workbench_open))
-                }
-            } else {
-                FilledTonalButton(
-                    onClick = onOpenWorkbench,
-                    enabled = framesExist,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(text = stringResource(R.string.calibration_workbench_open))
-                }
-            }
-            when {
-                artifact.broken -> Text(
-                    text = stringResource(R.string.calibration_artifact_broken),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                data == null -> Text(
-                    text = stringResource(R.string.calibration_artifact_none),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                else -> {
-                    // 按「所属界面」分组 + 顶部筛选 chip（2026-09-19 用户口径）：
-                    // 行 = 一个**元素**（同一次框选的标志 + 锚点合成一行），筛选默认停在「全部」。
-                    val groups = CalibrationArtifactGroups.of(data)
-                    var filter by remember(data) { mutableStateOf<UiState?>(null) }
-                    // 左滑删除的状态机（与服务器清单 / 好友清单同一套：复用 SwipeActionRow + 纯逻辑判据）。
-                    // 只在一行露出、露出比例按元素 ID 索引；ID 在清单里唯一，正好当行的稳定标识。
-                    val swipeScope = rememberCoroutineScope()
-                    val haptics = LocalHapticFeedback.current
-                    val density = LocalDensity.current.density
-                    val revealWidthDp = ServerListGestures.REVEAL_WIDTH_DP.dp
-                    val revealWidthPx = with(LocalDensity.current) { revealWidthDp.toPx() }
-                    // ⚠ 2026-09-29 修（用户报"写入标志后返回产物列表，那条的删除按钮自己冒出来"，
-                    // 且他**从未划过任何一行**）：原因是 `revealFractions`（每行拉开多少）不跟产物走 ——
-                    // 写入会让产物变、[revealedKey] 归零，而比例还留着残留值 ⇒ 行被画成"半拉开"
-                    // （`revealed=false` 但 `revealFraction≠0`）⇒ 删除按钮露在行尾。
-                    // 半拉开本身很容易出现：手指离开页面（进工作台 / 点返回）时 [swipeScope] 被取消，
-                    // 180ms 的吸附动画停在半路 ⇒ 比例卡在 0 与 1 之间 —— **不需要"故意划"**。
-                    //
-                    // ⚠ 修法**不能**是 `remember(data) { … }`（第一版就是这么写的，已回退）：
-                    // 把 `data` 当钥匙会让这两个状态在**每次产物换身份时整体重建**，而它们被
-                    // 列表行 / 位图的 `remember` 牵连 —— 真机上表现为主线程反复重活（ANR + 每半秒
-                    // 100MB 垃圾）。**改用"写入后显式清一遍"**：状态只在原地复用，不换实例。
-                    val revealFractions = remember { mutableStateMapOf<String, Float>() }
-                    var revealedKey by remember(data) { mutableStateOf<String?>(null) }
-                    val settleJobs = remember { mutableMapOf<String, Job>() }
-                    // 产物一变（= 写入成功、删除、撤销）就把"露出"清干净：不留半拉开、也不留已露出。
-                    // 用 [data] 当**副作用**的钥匙是安全的（只重跑这段清理，不重建任何状态实例）。
-                    LaunchedEffect(data) {
-                        settleJobs.values.forEach { it.cancel() }
-                        settleJobs.clear()
-                        revealFractions.clear()
-                        revealedKey = null
-                    }
-                    val settle: (String, Float, Float) -> Unit = { key, from, target ->
-                        settleJobs[key]?.cancel()
-                        settleJobs[key] = swipeScope.launch {
-                            Animatable(from).animateTo(target, tween(CalibrationSwipeSettleMillis, easing = FastOutSlowInEasing)) {
-                                revealFractions[key] = value
-                            }
-                        }
-                    }
-                    val collapse: (String) -> Unit = { key ->
-                        val from = revealFractions[key] ?: 0f
-                        if (from != 0f) settle(key, from, 0f)
-                        if (revealedKey == key) revealedKey = null
-                    }
-                    val roleCounts = CalibrationArtifactGroups.roleCounts(groups)
-                    // **统计信息分两行**（用户 2026-10-01 口径）：一行说"多少条"、一行说"覆盖范围"。
-                    // 挤作一行时后半截（界面数 / 帧尺寸）会被挤到换行处，读起来像两件无关的事。
-                    Text(
-                        text = stringResource(
-                            R.string.calibration_artifact_summary,
-                            // 「共 N 条」= **标志条数 + 锚点条数**（用户口径）：
-                            // 口径收在 CalibrationArtifactGroups.roleCounts / rowCount，与分组标题、
-                            // 筛选按钮**同源**；这里把两项都摆出来，省得"总条数到底数の什么"再对不上。
-                            roleCounts.total,
-                            roleCounts.marker,
-                            roleCounts.anchor,
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = stringResource(
-                            R.string.calibration_artifact_scope,
-                            groups.count { it.state != UiState.UNKNOWN },
-                            data.frameWidth,
-                            data.frameHeight,
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        item {
-                            FilterChip(
-                                selected = filter == null,
-                                onClick = { filter = null },
-                                label = { Text(stringResource(R.string.calibration_filter_all)) },
-                            )
-                        }
-                        items(groups, key = { it.state.name }) { group ->
-                            FilterChip(
-                                selected = filter == group.state,
-                                onClick = { filter = group.state },
-                                label = {
-                                    // 计数与「总条数」同源：都数**记录行**（每个角色一行）
-                                    Text("${group.state.label} ${CalibrationArtifactGroups.rowsOf(group).size}")
-                                },
-                            )
-                        }
-                    }
-                    groups.filter { filter == null || it.state == filter }.forEach { group ->
-                        if (filter == null) {
-                            Text(
-                                text = stringResource(
-                                    R.string.calibration_group_title,
-                                    group.state.label,
-                                    CalibrationArtifactGroups.rowsOf(group).size,
-                                ),
-                                style = MaterialTheme.typography.titleSmall,
-                                modifier = Modifier.padding(top = 10.dp),
-                            )
-                        }
-                        val deleteLabel = stringResource(R.string.calibration_signal_remove)
-                        // **行 = 一条记录**（2026-10-01 用户口径"标志和锚点分两行显示"）：左滑删除也按这一行的
-                        // 角色走（删哪行删哪条）；行键带角色，同一 ID 的两条不会互相顶掉。
-                        val rows = CalibrationArtifactGroups.rowsOf(group)
-                        rows.forEachIndexed { index, row ->
-                            val element = row.element
-                            val key = row.key
-                            // 删除 = **左滑 → 行尾压出按钮 → 点按钮**（2026-09-19 用户口径，与服务器 / 好友清单同一套）。
-                            // 行本身不动，按钮盖在行尾上；读屏走 ArtifactRow 的自定义「删除」动作（同一个出口）。
-                            SwipeActionRow(
-                                key = key,
-                                revealed = revealedKey == key,
-                                anyRevealed = revealedKey != null,
-                                revealWidthPx = revealWidthPx,
-                                revealFraction = revealFractions[key] ?: 0f,
-                                rowHeight = ArtifactRowHeight,
-                                onDelete = { onRemoveSignal(element.id, row.role) },
-                                onCollapse = { revealedKey?.let(collapse) },
-                                onSwipeStart = { settleJobs[key]?.cancel() },
-                                onSwipe = { revealFractions[key] = it },
-                                onSwipeEnd = { fraction, velocityX ->
-                                    val open = ServerListGestures.swipeRevealsDeleteButton(
-                                        revealFraction = fraction,
-                                        velocityXPx = velocityX,
-                                        density = density,
-                                    )
-                                    if (open) {
-                                        // 同一时刻只露出一行：把上一行收起，再震一下提示"这一行已露出"
-                                        if (revealedKey != key) {
-                                            revealedKey?.let(collapse)
-                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            revealedKey = key
-                                        }
-                                        settle(key, fraction, 1f)
-                                    } else {
-                                        if (revealedKey == key) revealedKey = null
-                                        settle(key, fraction, 0f)
-                                    }
-                                },
-                                action = {
-                                    DeleteActionButton(
-                                        label = deleteLabel,
-                                        description = deleteLabel,
-                                        // 只有停稳之后才可点：拖动途中不算，避免手指一划就删掉
-                                        enabled = revealedKey == key,
-                                        onDelete = { onRemoveSignal(element.id, row.role) },
-                                        modifier = Modifier
-                                            .fillMaxHeight()
-                                            .width(revealWidthDp)
-                                            .clip(
-                                                RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp),
-                                            ),
-                                    )
-                                },
-                            ) {
-                                ArtifactRow(
-                                    row = row,
-                                    state = group.state,
-                                    onTap = { onViewSignal(element.id, row.role) },
-                                    onRemove = { onRemoveSignal(element.id, row.role) },
-                                )
-                            }
-                            // 组内细分隔线（最后一行不画）：分隔的是"内容"，不是给每行套边框 ——
-                            // 20 行各加边框/卡片底会变成一片线条噪声，且缩略图自带深色底会打架
-                            if (index < rows.size - 1) {
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                            }
-                        }
-                    }
-                    // 危险动作（UX 评审 P2）：与上方清单**隔开 16dp** + error 描边 + 写明不可撤销。
-                    // 原来它跟清单最后一行**零间隔**，而且和普通次要按钮长得一样 ——
-                    // 用户单手滚到底想点最后一行，落点正好在"删除整个标定结果"上 ✗。
-                    Spacer(modifier = Modifier.height(16.dp))
-                    OutlinedButton(
-                        onClick = onDeleteArtifact,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error,
-                        ),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
-                    ) {
-                        Text(text = stringResource(R.string.calibration_delete))
-                    }
-                    Text(
-                        text = stringResource(R.string.calibration_delete_irreversible),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
-            Text(
-                text = stringResource(R.string.calibration_take_effect),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
 }
 
 /**
