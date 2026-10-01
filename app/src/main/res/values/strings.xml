@@ -26,8 +26,9 @@
     <!-- U1 阶段的**占位页**（U3 / U6 会各自替换掉；每句 ≤60 字，见验收 V2）：
          写清"这一页以后是什么"，而不是留一片空白 —— 空白会被当成 bug。 -->
     <!-- 抽屉「诊断」页（M5-U6 第一段，2026-10-02 先落「识别参数」）：其余诊断项**明确写"待补"**，不静默。 -->
-    <string name="diagnostics_coming">画面是否在来、当前识别结果、单帧耗时、日志：随后补上。</string>
+
     <string name="nav_stub_settings">本页在 M5-U6 建设：自动关弹窗、悬浮窗提示位置、退出 App。</string>
+    <string name="nav_stub_diagnostics">本页在 M5-U6 建设：画面是否在来、当前识别结果、单帧耗时、日志。</string>
     <string name="nav_stub_help">本页在 M5-U6 建设：术语与流程说明。</string>
 
     <!-- ===== M5-U2「运行」页（2026-10-01）=====
@@ -304,10 +305,10 @@
     <!-- ⚠ 这一行**不要写成分隔符串**（首版写成「采样本 › 全屏框选 › 落盘为产物」，用户 2026-10-02：
          "看着像面包屑导航，容易引起误解" —— `›` 串起来的东西天生像"可点的层级"）。
          ⇒ 用**一句话**说明"这页管什么"，与页面上三张卡一一对应（样本帧 / 产物 / 参数）。 -->
-    <string name="calibration_one_line">本页录样本帧、管理标定产物与匹配参数。</string>
+    <string name="calibration_one_line">本页录样本帧、管理标定结果与匹配参数。</string>
     <string name="calibration_about">说明</string>
     <string name="calibration_about_flow">流程：先录样本帧，再进全屏工作台框选，点「写入」即落盘。</string>
-    <string name="calibration_about_source">产物（模板 / 搜索窗口 / 匹配参数）是识别与点击的唯一数据源。</string>
+    <string name="calibration_about_source">标定结果（模板 / 搜索窗口 / 匹配参数）是识别与点击的唯一数据源。</string>
     <string name="calibration_about_params">代码不含任何设备绑定参数 —— 换设备或换分辨率都要重新标定。</string>
     <string name="calibration_capture_missing">尚未建立采集会话：请先回到「授权状态」页授予屏幕采集权限，否则无法录制画面样本。</string>
     <string name="calibration_frames_title">画面样本采集</string>
@@ -426,7 +427,7 @@
     <string name="calibration_note_label">备注</string>
     <string name="calibration_note_saved">备注已保存</string>
     <string name="calibration_notes_filled">已按新规则补全 %1$d 条备注（只填空的，原有备注没动）</string>
-    <string name="calibration_note_save_failed">备注保存失败：读不到产物文件</string>
+    <string name="calibration_note_save_failed">备注保存失败：读不到标定结果文件</string>
     <string name="calibration_action_save">保存</string>
     <string name="calibration_count_marker">标志 %1$d 条</string>
     <string name="calibration_count_anchor">锚点 %1$d 条</string>
@@ -439,21 +440,21 @@
          ① 默认收起（首屏只占一行标题）；② 术语换**白话**；③ 每个值下面写清「**什么时候该改**」。
          ⚠ 不要删掉这三项：它们是**唯一**能调识别松紧的旋钮（换设备后若"认不出 / 老判不可信"就靠它）。 -->
     <string name="calibration_param_title">识别参数（高级）</string>
-    <string name="calibration_param_subtitle">一般不用动；认不出画面、或老是判「不可信」时才调。</string>
+    <string name="calibration_param_subtitle">属于「标定结果」；一般不用动 —— 认不出画面、或老是判「不可信」时才调。</string>
     <string name="calibration_param_expand">展开</string>
     <string name="calibration_param_collapse">收起</string>
     <string name="calibration_param_threshold">认出画面的门槛</string>
-    <string name="calibration_param_threshold_hint">相似度低于它就当没认出。认不出画面时先试 0.80；误认变多就调回 0.85。</string>
+    <string name="calibration_param_threshold_hint">取值范围 0～1 之间的小数（越大越严）。认不出画面时先试 0.80；误认变多调回 0.85。</string>
     <string name="calibration_param_margin">两处相像时的辨别线</string>
-    <string name="calibration_param_margin_hint">画面里两处都像时，差距不到它就判「不可信」⇒ 宁可不点。老判不可信就调低。</string>
+    <string name="calibration_param_margin_hint">取值范围 0 或更大的小数（填 0 = 不做这项检查）。老判「不可信」就调小一点。</string>
     <string name="calibration_param_min_distance">靠多近算同一处</string>
-    <string name="calibration_param_min_distance_hint">相隔小于它（像素）的两个候选算同一处。算法细节，一般别动。</string>
-    <string name="calibration_param_invalid">参数非法：门槛需在 (0,1]，辨别线 ≥ 0，判定半径 ≥ 1</string>
-    <string name="calibration_param_pending">尚无产物：参数将随首个信号一并写入。</string>
-    <string name="calibration_param_applied">参数已写入产物。</string>
-    <string name="calibration_delete">删除整个产物</string>
-    <string name="calibration_artifact_title">标定产物</string>
-    <string name="calibration_artifact_none">当前无标定产物（识别循环以空配置运行）。打开工作台框选并点「所属界面」即可写入首条信号。</string>
+    <string name="calibration_param_min_distance_hint">单位：像素。取值范围 1 以上的整数。算法细节，一般别动。</string>
+    <string name="calibration_param_invalid">参数非法：门槛要在 0～1 之间，辨别线不能是负数，判定半径至少 1。</string>
+    <string name="calibration_param_pending">尚无标定结果：参数将随首个信号一并写入。</string>
+    <string name="calibration_param_applied">参数已写入标定结果。</string>
+    <string name="calibration_delete">删除整个标定结果</string>
+    <string name="calibration_artifact_title">标定结果</string>
+    <string name="calibration_artifact_none">当前无标定结果（识别循环以空配置运行）。打开工作台框选并点「所属界面」即可写入首条信号。</string>
     <string name="calibration_artifact_summary">共 %1$d 条（标志 %2$d + 锚点 %3$d）</string>
     <string name="calibration_artifact_scope">覆盖 %1$d 个界面 · 标定帧 %2$d×%3$d</string>
     <string name="calibration_group_title">%1$s · %2$d 条</string>
@@ -470,15 +471,15 @@
     <string name="calibration_signal_row_desc">%1$s，%2$s，%3$s，模板 %4$d 乘 %5$d</string>
     <string name="calibration_undo">撤销</string>
     <string name="calibration_restored">已恢复</string>
-    <string name="calibration_artifact_broken">产物解析失败：文件损坏或格式不符，请重新标定保存。</string>
+    <string name="calibration_artifact_broken">标定结果解析失败：文件损坏或格式不符，请重新标定保存。</string>
     <string name="calibration_take_effect">写入 / 删除后在下次建立采集会话时生效（停止采集后重新授权）。</string>
-    <string name="calibration_deleted">产物已删除。</string>
+    <string name="calibration_deleted">标定结果已删除。</string>
     <!-- 删除整个产物 = 二次确认 + 可恢复（2026-09-20 用户口径） -->
-    <string name="calibration_delete_title">删除整个标定产物？</string>
+    <string name="calibration_delete_title">删除整个标定结果？</string>
     <string name="calibration_delete_body">将删除全部 %1$d 条记录（标定帧 %2$d×%3$d）。删除后可以撤销；一旦重新写入或离开本页就找不回来了。</string>
     <string name="calibration_delete_confirm">删除</string>
     <string name="calibration_cancel">取消</string>
-    <string name="calibration_geometry_mismatch">画布几何不一致：本次帧 %1$dx%2$d，产物 %3$dx%4$d。请先删除产物后重标，或在与产物相同方向的画布下建会话。</string>
+    <string name="calibration_geometry_mismatch">画布几何不一致：本次帧 %1$dx%2$d，标定结果 %3$dx%4$d。请先删除标定结果后重标，或在与标定结果相同方向的画布下建会话。</string>
     <string name="calibration_error_frame_decode">帧文件解码失败</string>
     <string name="calibration_error_selection_too_small">选区太小：原图至少需要 %1$d×%2$d 像素</string>
 
@@ -570,7 +571,7 @@
     <!-- 「说明」（M5-U4，与区服清单同一个版式）：**一段一句 + 行首标签 + 每句 ≤60 字**，
          取代原先常驻的那行长副标题（`friend_list_subtitle` 已删）。顺序：引用 → 判重 → 定位 → 名字 → 手势。 -->
     <string name="friend_about">说明</string>
-    <string name="friend_about_key">引用：拜访预设与标定产物都按这个名字找你 ⇒ 改名会一起改</string>
+    <string name="friend_about_key">引用：拜访预设与标定结果都按这个名字找你 ⇒ 改名会一起改</string>
     <string name="friend_about_unique">判重：同一条名字只能有一条</string>
     <string name="friend_about_locate">定位：只认括号里的备注名，且要求完全一致</string>
     <string name="friend_about_name">名字：不能含「|」或换行（它会直接用于界面定位）</string>

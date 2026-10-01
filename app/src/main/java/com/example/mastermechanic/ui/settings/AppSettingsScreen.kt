@@ -1,4 +1,4 @@
-package com.example.mastermechanic.ui.diagnostics
+package com.example.mastermechanic.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -42,15 +42,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 抽屉「**诊断**」页（M5-U6 的第一段；2026-10-02 先落「识别参数」这一块）。
+ * 抽屉「**设置**」页（M5-U6 的第一段；2026-10-02 先落「识别参数」这一块）。
  *
- * ## 为什么识别参数搬到这里（用户 2026-10-02）
+ * ## 识别参数为什么一路搬到这里（用户 2026-10-02 三次意见）
  *
- * 用户："**识别参数目前还是放在了最底部，放进抽屉里吧**" —— 标定页那张卡已经是"高级折叠"，
- * 但**位置**仍在页面末尾（要滑到底才看得见）。判断放哪儿时的依据是"**什么时候会用到它**"：
- * 只在"**认不出画面 / 老判不可信**"时才需要调，而那正是来**诊断**页查问题的时刻
- * ⇒ 与识别诊断同一场景，放这里最顺。（另一候选是「设置」，但那里是 App 级开关
- * —— 自动关弹窗 / 悬浮窗位置 / 退出，与识别无关。）
+ * ① 用户在标定页看到它"**藏在太靠下、三个值太过抽象**"⇒ 先做成默认收起的「高级」折叠；
+ * ② 用户仍嫌"**在最底部**"⇒ 搬进抽屉 → **诊断**；
+ * ③ 用户接着指出"**这个菜单放在诊断里好像不合适吧**" ⇒ 搬到这里。
+ * ③ 是对的：**诊断是"看问题"的地方，这里是"改东西"的地方** —— 参数是配置，
+ * 与「自动关弹窗 / 悬浮窗提示位置 / 退出 App」同类，归「设置」才符合心理模型。
+ *
+ * ⚠ 别再往「诊断」搬：那边只放**只读读数**（画面在不在来 / 识别结果 / 耗时 / 日志）。
  *
  * ## 与标定的关系
  *
@@ -60,11 +62,11 @@ import kotlinx.coroutines.withContext
  *
  * ## 本页后续（U6）
  *
- * 帧率 / 停更 / 当前识别画面与分数 / 单帧耗时 / 日志 —— 见 [R.string.diagnostics_coming] 那条占位说明；
+ * 帧率 / 停更 / 当前识别画面与分数 / 单帧耗时 / 日志 —— 见 [R.string.nav_stub_settings] 那条占位说明；
  * 本轮只落参数这一段，其余留给 U6，**不静默**（页面明确写着"待补"）。
  */
 @Composable
-fun DiagnosticsRoute(resumeTick: Int) {
+fun AppSettingsRoute(resumeTick: Int) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var artifactTick by remember { mutableIntStateOf(0) }
@@ -116,7 +118,7 @@ fun DiagnosticsRoute(resumeTick: Int) {
         }
     }
 
-    DiagnosticsScreen(
+    AppSettingsScreen(
         artifact = artifact,
         thresholdText = thresholdText,
         marginText = marginText,
@@ -130,7 +132,7 @@ fun DiagnosticsRoute(resumeTick: Int) {
 }
 
 @Composable
-private fun DiagnosticsScreen(
+private fun AppSettingsScreen(
     artifact: ArtifactState,
     thresholdText: String,
     marginText: String,
@@ -167,7 +169,7 @@ private fun DiagnosticsScreen(
                 onMinDistanceChange = onMinDistanceChange,
             )
             Text(
-                text = stringResource(R.string.diagnostics_coming),
+                text = stringResource(R.string.nav_stub_settings),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

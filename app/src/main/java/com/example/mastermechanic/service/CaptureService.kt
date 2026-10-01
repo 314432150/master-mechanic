@@ -707,7 +707,7 @@ class CaptureService : Service() {
             val anchorCount = calibration.signals.count { it.role == SignalRole.ANCHOR }
             MmLog.i(
                 TAG,
-                "标定产物已加载：信号 ${calibration.signals.size} 个（其中锚点 $anchorCount 个），" +
+                "标定结果已加载：信号 ${calibration.signals.size} 个（其中锚点 $anchorCount 个），" +
                     "标定帧 ${calibration.frameWidth}x${calibration.frameHeight}；" +
                     "搜索窗口 = 模板 + 每边固定余量（标志 ${SelectionWindow.MARKER_MARGIN_PX} / " +
                     "锚点 ${SelectionWindow.ANCHOR_MARGIN_PX} px；加载期已对「可证居中」的轴重算，见 tightenedWindows）",
@@ -1294,7 +1294,7 @@ class CaptureService : Service() {
         if (geometryMismatchSinceMs == 0L) {
             geometryMismatchSinceMs = now
             val detail = if (calibrationMismatch) {
-                "帧几何与**标定产物**不一致：帧 ${frameWidth}x$frameHeight｜产物 " +
+                "帧几何与**标定结果**不一致：帧 ${frameWidth}x$frameHeight｜标定结果 " +
                     "${calibratedFrameWidth}x$calibratedFrameHeight（T4-6 起不再做方向归一 ⇒ 这一轮不判不点）"
             } else {
                 "帧几何与屏幕不一致：帧 ${frameWidth}x$frameHeight｜屏幕 " +
@@ -2055,7 +2055,7 @@ class CaptureService : Service() {
                 calibrationGeometryWarned = true
                 MmLog.w(
                     TAG,
-                    "采集帧 ${width}x$height 与标定产物 ${calibratedFrameWidth}x$calibratedFrameHeight 几何不一致 ⇒ " +
+                    "采集帧 ${width}x$height 与标定结果 ${calibratedFrameWidth}x$calibratedFrameHeight 几何不一致 ⇒ " +
                         "本轮起不判不点（T4-6 起不再做方向归一）；请在游戏前台（横屏）重新建立采集会话",
                 )
             }
@@ -2348,8 +2348,8 @@ class CaptureService : Service() {
                 "没指定要换到哪个区服（「顺序轮换」没能从服务器清单里算出下一个：清单是空的 / 读不了；" +
                     "详见 MM-Patrol 那一行日志）",
             )
-        val data = calibrationData ?: return PatrolRunner.NamePlan.Failed("没有标定产物")
-        val locator = anchorLocator ?: return PatrolRunner.NamePlan.Failed("产物里没有锚点")
+        val data = calibrationData ?: return PatrolRunner.NamePlan.Failed("没有标定结果")
+        val locator = anchorLocator ?: return PatrolRunner.NamePlan.Failed("标定结果里没有锚点")
         // ① 识别区域：「服务器列表区域」是**纵向**范围，两条列竖带是**横向**限制器（T4-9 口径）
         val areaId = data.anchorIdFor(UiState.SERVER_SELECT, PatrolAnchors.SERVER_LIST_AREA)
             ?: return PatrolRunner.NamePlan.Failed(
@@ -2808,8 +2808,8 @@ class CaptureService : Service() {
         if (state != UiState.FRIEND_LIST) return PatrolRunner.NamePlan.Waiting
         val target = PatrolSession.targetFriend
             ?: return PatrolRunner.NamePlan.Failed("没指定要拜访的好友名（预设里没配好友）")
-        val data = calibrationData ?: return PatrolRunner.NamePlan.Failed("没有标定产物")
-        val locator = anchorLocator ?: return PatrolRunner.NamePlan.Failed("产物里没有锚点")
+        val data = calibrationData ?: return PatrolRunner.NamePlan.Failed("没有标定结果")
+        val locator = anchorLocator ?: return PatrolRunner.NamePlan.Failed("标定结果里没有锚点")
         // 文字识别尚未通过真机精度验收时**不启用**（FR-04 硬性要求 2：不满足前置条件就停，不做"试试看"）
         if (!NameLocating.ENABLED) {
             return PatrolRunner.NamePlan.Failed("按名称定位尚未启用（文字识别未通过真机精度验收）")
@@ -3140,7 +3140,7 @@ class CaptureService : Service() {
             // 不自动重试（每次重载都要再吃一遍那几 MB）；用户在标定页**再写一次**就会重新触发。
             MmLog.w(
                 TAG,
-                "标定产物重载失败（${t.javaClass.simpleName}：${t.message}）⇒ **继续用当前这份产物**，" +
+                "标定结果重载失败（${t.javaClass.simpleName}：${t.message}）⇒ **继续用当前这份标定结果**，" +
                     "本次不再自动重试（再写一次标定即会重试）。若是内存不足：把过大的那一块" +
                     "（例如整屏 / 整个列表区域）重新框小些再写。",
             )
@@ -3165,7 +3165,7 @@ class CaptureService : Service() {
         val anchorCount = calibration?.signals?.count { it.role == SignalRole.ANCHOR } ?: 0
         MmLog.i(
             TAG,
-            "标定产物已重载（标定页刚写入，无需重开会话）：信号 ${calibration?.signals?.size ?: 0} 个" +
+            "标定结果已重载（标定页刚写入，无需重开会话）：信号 ${calibration?.signals?.size ?: 0} 个" +
                 "（其中锚点 $anchorCount 个）",
         )
         // 逐条列全：重载后日志里那份清单必须和"标定页刚写进去的"一致，否则排障会对不上

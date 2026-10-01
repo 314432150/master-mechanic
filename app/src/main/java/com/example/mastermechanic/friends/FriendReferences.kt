@@ -87,7 +87,7 @@ object FriendReferences {
             )
         } catch (e: Exception) {
             MmLog.w(TAG, "标定产物读不了，无法确认引用", e)
-            Hits(presetNames = presetNames, failure = "标定产物：${reason(e)}")
+            Hits(presetNames = presetNames, failure = "标定结果：${reason(e)}")
         }
     }
 
