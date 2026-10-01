@@ -44,6 +44,9 @@
     <string name="run_frame_starved">这次授权没收到任何画面 ⇒ 请重新授权采集</string>
     <string name="run_frame_no_session">采集会话不在：程序现在看不见游戏 ⇒ 请重新授权采集</string>
     <string name="run_flow_idle">当前没有进行中的流程</string>
+    <!-- 「继续」在本页**只指路、不做按钮**（用户 2026-10-01 真机："在 App 里出现继续按钮没有意义，
+         因为游戏不在前台"）⇒ 这句替代那个按钮。 -->
+    <string name="run_resume_in_game">已停在第 %1$d 步：请回到游戏，点悬浮窗的「继续」</string>
 
     <!-- 授权流（M0-T0-2） -->
     <string name="auth_title">授权状态</string>

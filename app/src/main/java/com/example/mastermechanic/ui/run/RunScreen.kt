@@ -3,7 +3,6 @@ package com.example.mastermechanic.ui.run
 import android.os.SystemClock
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -11,7 +10,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -100,7 +98,7 @@ fun RunRoute(
         stale = FrameFreshness.isStale(),
     )
     val frameAgeMs = FrameFreshness.ageMs() ?: 0L
-    val buttons = RunPageLogic.buttons(running)
+    val actions = RunPageLogic.actions(running)
 
     Column(
         modifier = Modifier
@@ -152,20 +150,22 @@ fun RunRoute(
                 else -> "$progress\n$status"
             },
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    enabled = buttons.stop,
-                    onClick = { requestPatrol(PatrolRequestSignal.Kind.STOP) },
-                ) {
+            // **"继续"只指路、不做按钮**（用户 2026-10-01："在 App 里出现继续按钮没有意义，
+            // 因为游戏不在前台"）：跑号要游戏在前台才成立，而在 App 里按「继续」时前台正是我们自己
+            // ⇒ 那一枪要么被门禁拦下、要么立刻再暂停一次。入口留在游戏（与"发起只在悬浮窗"同一条口径）。
+            if (actions.resumeInGame) {
+                Text(
+                    text = stringResource(
+                        R.string.run_resume_in_game,
+                        PatrolSession.current?.step?.number ?: 0,
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            if (actions.stop) {
+                Button(onClick = { requestPatrol(PatrolRequestSignal.Kind.STOP) }) {
+                    // 文案与悬浮窗那一行**同一个字符串**（术语统一）
                     Text(stringResource(R.string.floating_menu_stop))
-                }
-                OutlinedButton(
-                    enabled = buttons.resume,
-                    onClick = { requestPatrol(PatrolRequestSignal.Kind.RESUME) },
-                ) {
-                    // 文案与悬浮窗那一行**同一个字符串**（术语统一）；读屏会说"继续（从第 N 步接着来）"，
-                    // 具体从哪一步由上面的流程卡说清，所以这里不重复塞描述。
-                    Text(stringResource(R.string.floating_menu_resume))
                 }
             }
         }

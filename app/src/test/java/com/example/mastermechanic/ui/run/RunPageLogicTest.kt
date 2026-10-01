@@ -45,32 +45,42 @@ class RunPageLogicTest {
     }
 
     @Test
-    fun buttonsFollowTheSameRuleAsTheFloatingControlRow() {
+    fun thePageOnlyStopsAndPointsAtTheRightPlaceToContinue() {
         // 判据借的是 PatrolStatus 的那两个方法（"能不能按"的唯一出处）—— 这里钉住它确实透传，
         // 而不是页面自己另写一套（另写就会出现"App 显示能按、按了却说没有流程"）。
-        val idle = RunPageLogic.buttons(null)
+        //
+        // ⚠ **「继续」在本页不是按钮、只是一句指路**（用户 2026-10-01 真机："在 App 里出现继续按钮
+        // 没有意义，因为游戏不在前台"）：跑号要游戏在前台才成立，而在 App 里按「继续」时前台正是我们自己
+        // ⇒ 那一枪要么被门禁拦下、要么立刻再暂停一次。入口留在游戏（与"发起只在悬浮窗"同一条口径）。
+        val idle = RunPageLogic.actions(null)
         assertFalse("没有流程时不该出现「停止」（2026-09-22 用户口径）", idle.stop)
-        assertFalse("更没有「继续」", idle.resume)
+        assertFalse("也没有「该回游戏继续」这回事", idle.resumeInGame)
 
         val running = PatrolFlow.State(range = PatrolFlow.Range.SWITCH_AND_VISIT, step = PatrolFlow.Step.ENTER_FARM)
-        val runningButtons = RunPageLogic.buttons(running)
-        assertTrue("跑着就要能停", runningButtons.stop)
-        assertFalse("跑着不摆「继续」（点了没用会让人以为卡住）", runningButtons.resume)
+        val runningActions = RunPageLogic.actions(running)
+        assertTrue("跑着就要能停", runningActions.stop)
+        assertFalse("跑着也不用指路", runningActions.resumeInGame)
 
         val paused = PatrolFlow.pause(running)
-        assertEquals("暂停：继续 + 停止", RunPageLogic.Buttons(stop = true, resume = true), RunPageLogic.buttons(paused))
-
         assertEquals(
-            "中止：继续 + 停止（从失败那一步接着来）",
-            RunPageLogic.Buttons(stop = true, resume = true),
-            RunPageLogic.buttons(failedAt(PatrolFlow.Step.OPEN_FRIENDS)),
+            "暂停：能停 + 要提示「回游戏点继续」",
+            RunPageLogic.Actions(stop = true, resumeInGame = true),
+            RunPageLogic.actions(paused),
         )
 
-        val finished = PatrolFlow.advance(PatrolFlow.State(range = PatrolFlow.Range.SWITCH_ONLY, step = PatrolFlow.Step.LOGIN))
         assertEquals(
-            "已完成：两个按钮都不给（这次执行结束了，要再来一次是重新点菜单）",
-            RunPageLogic.Buttons(stop = false, resume = false),
-            RunPageLogic.buttons(finished),
+            "中止：同样能停 + 指路（从失败那一步接着来）",
+            RunPageLogic.Actions(stop = true, resumeInGame = true),
+            RunPageLogic.actions(failedAt(PatrolFlow.Step.OPEN_FRIENDS)),
+        )
+
+        val finished = PatrolFlow.advance(
+            PatrolFlow.State(range = PatrolFlow.Range.SWITCH_ONLY, step = PatrolFlow.Step.LOGIN),
+        )
+        assertEquals(
+            "已完成：什么都不给（这次执行结束了，要再来一次是重新点菜单）",
+            RunPageLogic.Actions(stop = false, resumeInGame = false),
+            RunPageLogic.actions(finished),
         )
     }
 

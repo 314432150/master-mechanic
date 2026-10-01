@@ -65,18 +65,30 @@ object RunPageLogic {
     }
 
     /**
-     * 「停止 / 继续」两个按钮的可用性。
+     * 本页**能做什么 / 要指路做什么**。
      *
-     * 判据**直接借** [PatrolStatus] 的那两个方法（`showsControlRow` / `canResume`）——
-     * 它们是"能不能按"的唯一出处；在这里重写一遍判断，迟早出现"App 显示能按、按了却说没有流程"。
+     * @param stop 要不要给「停止」按钮。判据**直接借** [PatrolStatus.showsControlRow]
+     *   ——"有没有流程可停"的唯一出处；在这里另写一遍迟早出现"App 显示能按、按了却说没有流程"。
+     * @param resumeInGame 要不要显示**"回游戏点「继续」"那句提示**（**不是按钮**，见下）。
+     *
+     * ## 为什么「继续」在 App 里不做成按钮（用户 2026-10-01 真机反馈）
+     *
+     * 用户原话："**在 App 里出现继续按钮没有意义，因为游戏不在前台**"。
+     * 对：跑号的每一步都要**游戏在前台**才成立（点击门禁 + 前置判定都以此为前提），
+     * 而在 App 里按「继续」的那一刻，前台恰恰是**我们自己的 App** ⇒ 那一枪要么被门禁拦下，
+     * 要么刚恢复就因"游戏不在前台"再暂停一次 —— 按钮等于在骗人。
+     * 这跟"**发起只在悬浮窗**"（用户同日拍板）是同一条口径：**要游戏在前台才能做的动作，入口就留在游戏里**。
+     *
+     * ⇒ 本页只负责**说清现状并指路**：`已停在第 N 步：请回到游戏，点悬浮窗的「继续」`。
+     * 「停止」不受影响：它不依赖前台（停一下在任何地方都成立），所以照旧做成按钮。
      *
      * @param running **真在跑的那个**流程（`PatrolSession.current`），不是界面显示态。
      */
-    data class Buttons(val stop: Boolean, val resume: Boolean)
+    data class Actions(val stop: Boolean, val resumeInGame: Boolean)
 
-    fun buttons(running: PatrolFlow.State?): Buttons = Buttons(
+    fun actions(running: PatrolFlow.State?): Actions = Actions(
         stop = PatrolStatus.showsControlRow(running),
-        resume = PatrolStatus.canResume(running),
+        resumeInGame = PatrolStatus.canResume(running),
     )
 
     /** 四项授权是否全部就绪。 */
