@@ -298,9 +298,13 @@
 
     <!-- 识别标定（M1-T1-5） -->
     <string name="auth_open_calibration">识别标定</string>
-    <string name="calibration_title">识别标定</string>
-    <string name="calibration_subtitle">在目标设备上采集画面样本，在全屏工作台框选界面标志并选所属界面——产物（模板 / 搜索窗口 / 匹配参数）即唯一数据源，框完即落盘。识别运行时只使用产物中的数值，代码不含任何设备绑定参数。</string>
-    <string name="calibration_back">返回授权页</string>
+    <!-- M5-U5：入口页首屏只留 1 行要点（标题由壳给：`nav_calibration` = 标定）；原来 ≈120 字的长副标题
+         （`calibration_subtitle`）拆成下面三条，搬进「说明」弹层（验收 V2：超 60 字必须默认收起）。 -->
+    <string name="calibration_one_line">采样本 › 全屏框选 › 落盘为产物</string>
+    <string name="calibration_about">说明</string>
+    <string name="calibration_about_flow">流程：先录样本帧，再进全屏工作台框选，点「写入」即落盘。</string>
+    <string name="calibration_about_source">产物（模板 / 搜索窗口 / 匹配参数）是识别与点击的唯一数据源。</string>
+    <string name="calibration_about_params">代码不含任何设备绑定参数 —— 换设备或换分辨率都要重新标定。</string>
     <string name="calibration_capture_missing">尚未建立采集会话：请先回到「授权状态」页授予屏幕采集权限，否则无法录制画面样本。</string>
     <string name="calibration_frames_title">画面样本采集</string>
     <string name="calibration_record_start">开始录制</string>
@@ -350,8 +354,17 @@
     <string name="calibration_missing_state">选所属界面</string>
     <string name="calibration_missing_roles">选记录类型</string>
     <string name="calibration_missing_sep">、</string>
-    <string name="calibration_annotate_hint">浏览模式：左右滑动大图切换样本帧（缩略图过半即同步）；点「框选」进入框选模式——拖动空白处新建选框，拖动框内整体移动，拖动外层白线拉伸 / 缩放选框，点选框左上角 × 清除重画。下方各行各管一件事：「所属界面」= 这个元素属于哪个界面（按流程顺序排，最前面是"随时可能出现的活动弹窗"），「记录类型（可多选）」= 这次框选写成什么（标志 = 判断界面 / 锚点 = 在该界面点这个位置），若勾了锚点而该界面有两个以上可点控件，还会多出一行「锚点用途」——同一个元素两样都要就**两个都勾**，一次写两条记录，最后点「✓ 写入X」。框线颜色跟着「记录类型」的勾选走：标志红、锚点青，两个都勾 = 红青双框线，一个都没勾 = 琥珀黄（还没决定写什么）；双指捏合缩放 / 平移画面（小目标先放大再框选），放大后可以把画面拖到黑边区域继续框，点下方的倍数即可回到适应大小。尽量只含目标本身与稳定背景，避开动态元素。帧条上的缩略图：**上滑或下滑**（长按同效）可删除该帧 —— 会先弹确认，删错了点底部「撤销」找回；用来清掉跑流程时顺手录下的无效帧。</string>
-    <string name="calibration_annotate_hint_icon">ⓘ</string>
+    <!-- M5-U5 文案折叠（验收 V2）：原来这枚 ⓘ 打开的是一段 ≈640 字的长文（`calibration_annotate_hint`
+         与 `calibration_annotate_hint_icon` 已删）⇒ 入口改成「用法」二字按钮，正文拆成下面六条
+         （一条一句、每条 ≤60 字），工作台右上角常驻 1 行要点由 `calibration_browse_hint_short` 承担。 -->
+    <string name="calibration_usage">用法</string>
+    <string name="calibration_browse_hint_short">左右滑换帧 · 点「框选」建框 · 双指缩放</string>
+    <string name="calibration_usage_gestures">浏览：左右滑换帧。框选：拖空白建框、拖框内移动、拖白线缩放、点左上 ✕ 清除重画。</string>
+    <string name="calibration_usage_write">「所属界面」选这个元素属于谁；「记录类型」可多选 —— 标志判界面、锚点定点击位置。</string>
+    <string name="calibration_usage_purpose">勾了锚点、而该界面有多个可点控件时，还要选「锚点用途」；两样都要就两个都勾。</string>
+    <string name="calibration_usage_color">框线颜色：标志红、锚点青、两个都勾是红青双线、都没勾是琥珀黄（还没决定写什么）。</string>
+    <string name="calibration_usage_zoom">双指缩放 / 平移画面，点下方倍数回到适应大小；尽量只框目标本身与稳定背景。</string>
+    <string name="calibration_usage_delete">帧条上滑或下滑删掉这一帧（会先问一次，删错点「撤销」找回）。</string>
     <string name="calibration_hint_close">知道了</string>
     <string name="calibration_zoom_value">画面 ×%1$s</string>
     <string name="calibration_zoom_fit">画面 ×%1$s · 适应画面</string>

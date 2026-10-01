@@ -1,5 +1,31 @@
 # M5 取证索引（界面重构：信息架构 + 文案精简）
 
+## U5「标定」页（2026-10-02 代码完成；真机标定走查待用户）
+
+**判据**：计划 U5 —— 入口页重组 / 工作台保留全屏 / `CalibrationScreen.kt` 拆分（3~4 文件、纯搬迁）/
+按 ADR-009 决策五**收编页头**（删页内返回、壳出标题栏）；**单文件 ≤60 KB**、行为零回归。
+
+| # | 判据 | 结论 | 证据 |
+| --- | --- | --- | --- |
+| 1 | **拆文件**（173.7 KB → ≤60 KB） | ✅ 4 个文件 | `CalibrationScreen.kt`（3242 行）⇒ `CalibrationRoute.kt` **46.2 KB**（路由 + 状态 + 落盘 IO）/ `CalibrationEntryScreen.kt` **46.2 KB**（入口页 + 三张卡 + 说明弹层）/ `CalibrationWorkbench.kt` **44.8 KB**（全屏工作台 + 用法弹层）/ `CalibrationCanvas.kt` **59.2 KB**（画布 / 手势 / 绘制扩展 / 缩略图）。**纯搬迁**：按顶层声明边界切（脚本 `_tmp_check/split-calibration.ps1`），顶层 `private` ⇒ `internal` 以便互相引用 |
+| 2 | 拆分**行为零回归** | ✅ | `-PfastTests` **965 例 0 失败** ＋ `assembleDebug` ✓（拆分后单独跑过一次，再改 UI 后又跑一次） |
+| 3 | 收编页头：**入口页有壳标题栏、页内无返回** | ✅（代码层） | `SHELL_APP_BAR_ROUTES` 加入 `Routes.CALIBRATION` ⇒ 壳出「标定 + 抽屉按钮」；`CalibrationScreen` 的「返回授权页」与页内大标题删除；`CalibrationRoute` 不再收 `onBack` |
+| 4 | **全屏框选态自带退出方式**，且此时壳不遮挡 | ✅（代码层） | 页面用 `onFullScreenChange` 上报 `workbenchOpen` ⇒ 壳 `fullScreenMode` 时**标题栏与底栏一起收起**；`DisposableEffect` 在离开页面时**复位**（否则栏会一直藏着）；工作台自带的「完成」按钮仍是退出方式 |
+| 5 | 文案折叠（V2）：超 60 字默认收起 | ✅ | 入口页 ≈120 字副标题（`calibration_subtitle`）⇒ 1 行要点（`calibration_one_line`）+ 「说明」弹层（流程 / 产物地位 / 无设备参数 三条）；工作台 ≈640 字长文（`calibration_annotate_hint`，原是 ⓘ + 一屏高 `AlertDialog`）⇒ 按钮改「**用法**」+ **底部弹层六条**（每条 ≤60 字）+ **浏览态常驻 1 行**（`calibration_browse_hint_short`） |
+| 6 | 死文案随之下线 | ✅ | `calibration_title` / `calibration_back` / `calibration_subtitle` / `calibration_annotate_hint` / `calibration_annotate_hint_icon` 五条删除（守卫 `StringResourcesTest` 逐条验证过零引用） |
+| 7 | 全量单测 + 编译 + 装机 | ✅ | `-PfastTests` **965 例 0 失败** ✓ ＋ `assembleDebug` ✓ ＋ `adb install -r` + `am start` ✓ |
+| 8 | **真机标定一遍**（录帧 → 框选 → 写入 → 复用） | ⏳ **待用户** | 走查：① 标定入口页**顶部有标题栏「标定」**、**页内没有返回按钮**；② 进全屏工作台 ⇒ **标题栏与底栏都消失**，退出工作台后都回来；③ 浏览态看得到 1 行要点，点「用法」从底部弹出六条；④ 录帧 / 框选 / 写入 / 复用产物全流程照旧 |
+
+**拆分时的两个坑（留给下次拆大文件的人）**：① 切片边界必须落在**上一个声明的收尾 `}`** 上 ——
+我第一次把下一段的 `@Composable` 行切进来，报 `Expecting a top level declaration`；
+② 顶层 `private` 放宽成 `internal` **会和同包其它文件撞名**（本项目实测 2 处：
+`ArtifactRow` vs `CalibrationArtifactGroups.kt`、`SwipeSettleMillis` vs `ServerListScreen.kt`）
+⇒ 撞名的保持 `private`，确需跨文件的**改名**（`CalibrationSwipeSettleMillis`）。
+
+---
+
+
+
 > 计划与验收草案：[../../plans/m5-ui-restructure.md](../../plans/m5-ui-restructure.md)
 > 口径与决策：[ADR-009 界面结构](../../decisions/ADR-009-界面结构（导航与信息架构）.md)（提议）、
 > [ADR-008 信息级别与配色](../../decisions/ADR-008-信息级别与配色.md)（不改）

@@ -8983,6 +8983,40 @@
     ⚠ 写守卫时自己先踩一次：相对路径按 `/app/src/...` 匹配 ✗（工作目录就是 app 模块）⇒ 误报壳那一处，已修 ✓。
   - 验证：`-PfastTests` **965 例 0 失败**（964 → 965，+1 守卫）✓ ＋ `assembleDebug` ✓ ＋ `adb install -r` **成功** ✓。
 
+413. **M5-U5「标定」页：拆 4 文件（173.7 KB ⇒ ≤59.2 KB）+ 页头收编进壳 + 长说明折叠**（2026-10-02）
+  - 用户："**继续下一个改造任务**" ⇒ 按计划顺序做 **U5**（U1/U2/U3 代码完成、U4 两个清单已收编）。
+  - **① 拆文件（纯搬迁、行为零回归）**：`CalibrationScreen.kt`（173.7 KB / 3242 行）⇒
+    `CalibrationRoute.kt` **46.2 KB**（路由 + 状态 + 落盘 IO）、`CalibrationEntryScreen.kt` **46.2 KB**
+    （入口页 + 三张卡 + 「说明」弹层）、`CalibrationWorkbench.kt` **44.8 KB**（全屏工作台 + 「用法」弹层）、
+    `CalibrationCanvas.kt` **59.2 KB**（画布 / 手势 / 绘制扩展 / 缩略图）。
+    **手法**（脚本 `_tmp_check/split-calibration.ps1`）：按**顶层声明边界**切片 + 每个新文件复用原 import 块 +
+    顶层 `private` ⇒ `internal`（跨文件要用）。
+    ⚠ **踩坑两条**（都写进脚本注释与取证 README）：
+    ① 边界必须落在**上一个声明的收尾 `}`** 上 —— 第一次切到下一段的 `@Composable` 行 ⇒
+       `Expecting a top level declaration`；A 段还把 import 重复了一遍 ⇒ `Conflicting import`；
+    ② 放宽成 `internal` 会**与同包其它文件撞名**（实测 2 处：`ArtifactRow` vs `CalibrationArtifactGroups.kt`、
+       `SwipeSettleMillis` vs `ServerListScreen.kt`）⇒ 写了个"包内重名比对"脚本
+       (`_tmp_check/find-name-clashes.ps1`) 先查出来：撞名但只用在一个文件的**保持 private**，
+       确需跨文件的**改名**（`CalibrationSwipeSettleMillis`）。
+  - **② 页头收编**（ADR-009 决策五）：`SHELL_APP_BAR_ROUTES` 加入 `Routes.CALIBRATION` ⇒ 壳出「标定 + 抽屉按钮」
+    （用户 2026-10-01："标定页顶部为什么没有标题栏"）；页内「返回授权页」与页内大标题删除，
+    `CalibrationRoute` 不再收 `onBack`。
+    **全屏工作台**：页面用 `onFullScreenChange` 上报 `workbenchOpen` ⇒ 壳在 `fullScreenMode` 时
+    **把标题栏 + 底栏一起收起**（框选要占满整屏、底下不能有可误触的栏）；`DisposableEffect` 在离开页面时
+    **复位**（否则壳以为还全屏、把栏一直藏着 ✗）。退出方式仍是工作台自带的「完成」。
+  - **③ 文案折叠（验收 V2）**：入口页 ≈120 字长副标题（`calibration_subtitle`）⇒ **1 行要点**
+    （`calibration_one_line` = "采样本 › 全屏框选 › 落盘为产物"）+ 「说明」弹层三条（流程 / 产物地位 / 无设备参数）；
+    工作台 ≈640 字长文（`calibration_annotate_hint`，原是 ⓘ 打开的一屏高 `AlertDialog`）⇒ 按钮改「**用法**」+
+    **底部弹层六条**（手势 / 写什么 / 用途 / 颜色 / 缩放 / 删帧，每条 ≤60 字）+ **浏览态常驻 1 行**
+    （`calibration_browse_hint_short`，原来只有框选态有）。
+    下线死文案 5 条：`calibration_title` / `calibration_back` / `calibration_subtitle` /
+    `calibration_annotate_hint` / `calibration_annotate_hint_icon`（零死文案守卫逐条验证 ✓）。
+  - 验证：`-PfastTests` **965 例 0 失败** ✓（拆分后跑一次、改 UI 后再跑一次）＋ `assembleDebug` ✓ ＋
+    `adb install -r` + `am start` ✓。文档：计划 U5 行加落地说明、`verification/m5/README.md` 新增 U5 节。
+  - ⏳ **真机走查（待用户）**：① 标定入口页**顶部有「标定」标题栏**、页内**无返回按钮**；② 进全屏工作台 ⇒
+    **标题栏与底栏都消失**，退出工作台后都回来；③ 浏览态看得到 1 行要点、点「用法」从底部弹出六条；
+    ④ 录帧 → 框选 → 写入 → 复用产物**全流程照旧**（拆分是纯搬迁）。
+
 ## 待开发（用户列，2026-09-24）
 
 1. **优化 · 悬浮窗一级菜单底部加「返回 App」**：一级菜单最下方增加一个回到我们 App 的入口（现在只能靠后台/多任务切回去）。

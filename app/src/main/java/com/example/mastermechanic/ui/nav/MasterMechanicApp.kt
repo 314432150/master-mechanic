@@ -27,6 +27,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -103,6 +105,16 @@ fun MasterMechanicApp(
 
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
 
+    /**
+     * **全屏态**（M5-U5）：标定页开着全屏工作台时，壳要把**标题栏与底栏一起收起来**
+     * （框选要占满整屏、底下不能有东西被误触）。
+     *
+     * 由 `CalibrationRoute` 用 `onFullScreenChange` 上报 —— 页面只**报告状态**，
+     * "现在有哪些栏、该不该收"由壳决定（页面的 `Scaffold` 只管自己的 Snackbar）。
+     */
+    var calibrationFullScreen by remember { mutableStateOf(false) }
+    val fullScreenMode = currentRoute == Routes.CALIBRATION && calibrationFullScreen
+
     // **一键重新授权采集**（M5-U0 那段口径）：悬浮窗菜单把 App 拉到前台并带上标记 ⇒
     // 这里只负责"**到授权页**"，系统弹窗由 `AuthorizationRoute` 在那一页拉起（授权是它的职责，壳不抢）。
     // ⚠ 只以 [reauthTick] 为键：并进别的键会在每次回前台重弹一次（`MainActivity` 里记着这个坑）。
@@ -140,7 +152,8 @@ fun MasterMechanicApp(
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             topBar = {
-                if (currentRoute in SHELL_APP_BAR_ROUTES) {
+                // 全屏态连标题栏一起收（见 [calibrationFullScreen]）
+                if (currentRoute in SHELL_APP_BAR_ROUTES && !fullScreenMode) {
                     val titleRes = titleResOf(currentRoute)
                     TopAppBar(
                         title = { if (titleRes != null) Text(stringResource(titleRes)) },
@@ -169,18 +182,21 @@ fun MasterMechanicApp(
                 }
             },
             bottomBar = {
-                NavigationBar {
-                    TopLevelDestination.entries.forEach { destination ->
-                        NavigationBarItem(
-                            selected = currentRoute == destination.route,
-                            onClick = { go(destination.route) },
-                            // 图标不带 contentDescription：底栏每一项都有文字标签，读屏念标签即可
-                            // （再给图标一个描述会念两遍；V6 的实测在真机走查里确认）。
-                            icon = { Icon(destination.icon, contentDescription = null) },
-                            // **底栏一律短名**（2 字：运行 / 拜访 / 清单 / 标定）；页面标题才是全名 ——
-                            // 用户 2026-10-01："「拜访设置」「账号与好友」作为导航栏太长了"。
-                            label = { Text(stringResource(destination.shortLabelRes)) },
-                        )
+                // 全屏态连底栏也收（同上）：框选时底下压着一排导航，容易误触
+                if (!fullScreenMode) {
+                    NavigationBar {
+                        TopLevelDestination.entries.forEach { destination ->
+                            NavigationBarItem(
+                                selected = currentRoute == destination.route,
+                                onClick = { go(destination.route) },
+                                // 图标不带 contentDescription：底栏每一项都有文字标签，读屏念标签即可
+                                // （再给图标一个描述会念两遍；V6 的实测在真机走查里确认）。
+                                icon = { Icon(destination.icon, contentDescription = null) },
+                                // **底栏一律短名**（2 字：运行 / 拜访 / 清单 / 标定）；页面标题才是全名 ——
+                                // 用户 2026-10-01："「拜访设置」「账号与好友」作为导航栏太长了"。
+                                label = { Text(stringResource(destination.shortLabelRes)) },
+                            )
+                        }
                     }
                 }
             },
@@ -217,11 +233,12 @@ fun MasterMechanicApp(
                         onTabChange = { accountsTab = it },
                     )
                 }
-                // 一级：标定（全屏工作台，页面自带页头 ⇒ 壳不出标题栏）
+                // 一级：标定（M5-U5 起**壳出标题栏**：入口页有「标定 + 抽屉按钮」，页内不再有返回；
+                // 进全屏工作台时页面会上报 `onFullScreenChange(true)` ⇒ 壳把两个栏都收起来）
                 composable(Routes.CALIBRATION) {
                     CalibrationRoute(
                         resumeTick = resumeTick,
-                        onBack = { navController.popBackStack() },
+                        onFullScreenChange = { calibrationFullScreen = it },
                     )
                 }
                 // 抽屉：诊断 / 设置 / 帮助（U6 建设）
@@ -251,6 +268,9 @@ private fun NavHostController.navigateTo(route: String) {
 private val SHELL_APP_BAR_ROUTES = setOf(
     // U2 起「运行」是新建的页面（自己不带页头）⇒ 按 ADR-009 决策五，壳给它标题栏（抽屉按钮 + 标题）
     Routes.RUN,
+    // U5 起「标定」也收编：入口页由壳出标题（用户 2026-10-01："标定页顶部为什么没有标题栏"）＋
+    // 抽屉按钮；页内那行「返回授权页」已删。全屏工作台时壳整体收起（见 [calibrationFullScreen]）。
+    Routes.CALIBRATION,
     Routes.VISIT_SETTINGS,
     Routes.ACCOUNTS,
     Routes.DIAGNOSTICS,
