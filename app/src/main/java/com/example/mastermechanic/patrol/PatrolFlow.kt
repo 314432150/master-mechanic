@@ -385,9 +385,34 @@ object PatrolFlow {
             reason = null,
             paused = false,
             stepEnteredAtMs = nowMs,
+            // **作废"本步已下过击"**（2026-10-01）：见下面暂停分支的长注释（同一个坑）。
+            lastActionAtMs = 0L,
+            stateAtLastAction = null,
         )
 
-        state.paused -> state.copy(paused = false, reason = null)
+        // ⚠ **暂停后继续：必须把"本步已下过击"一起作废，并重新起算预算**（2026-10-01 真机修）。
+        //
+        // 症状（用户原话"**暂停后切出再切回游戏，点了继续没有用**"）——真机实录：
+        // ```
+        // 20:14:30.526  跑号: 已暂停（游戏不在前台）        ← 此刻 lastActionAtMs > 0（刚点过「退出登录」）
+        // 20:14:54.912  继续：从3步接着来                    ← 「继续」其实点到了、也生效了
+        // 20:14:55.183  跑号: 第 3 步：刚点过，等画面切换，继续等（已等 28 秒）  ← 之后一直是这句
+        // 20:15:14.499  …（已等 47 秒）⇒ 一路涨到这一步的预算耗尽
+        // ```
+        // 根因：[PatrolRunner] 的 ⑤ 判据是**标志位**（`lastActionAtMs > 0 && !screenMovedOn`）
+        // ⇒ "本步已下过击：接下来只判期望画面、绝不补点"（口径 A，2026-09-24）。暂停前那一击的标记
+        // 留在状态里 ⇒ 继续后 ⑤ 立刻接手 ⇒ **既不重新定位、也不补点**，只能干等到超时 ✗。
+        // （暂停期间用户切出去又回来，画面早就该重新看一遍了 —— 那一击的上下文已经不成立。）
+        // ⚠ 同理，**暂停期间计时不该继续跑**：真机那次继续后是从"已等 28 秒"起算、只剩 32 秒，
+        //    等于把暂停的时长算进了这一步的耐心 ⇒ [nowMs] 非 0 时把预算顺延到此刻。
+        state.paused -> state.copy(
+            paused = false,
+            reason = null,
+            stepEnteredAtMs = if (nowMs > 0) nowMs else state.stepEnteredAtMs,
+            lastActionAtMs = 0L,
+            stateAtLastAction = null,
+        )
+
         else -> state
     }
 }

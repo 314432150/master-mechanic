@@ -1,5 +1,6 @@
 package com.example.mastermechanic.patrol
 
+import com.example.mastermechanic.decision.UiState
 import com.example.mastermechanic.patrol.PatrolFlow.Outcome
 import com.example.mastermechanic.patrol.PatrolFlow.Range
 import com.example.mastermechanic.patrol.PatrolFlow.Scene
@@ -161,6 +162,58 @@ class PatrolFlowTest {
     fun resumeOnARunningStateChangesNothing() {
         val running = PatrolFlow.State(range = Range.VISIT_ONLY, step = Step.VISIT_FRIEND)
         assertEquals(running, PatrolFlow.resume(running))
+    }
+
+    @Test
+    fun resumingAfterAPauseForgetsThePendingClickAndTheElapsedBudget() {
+        // 2026-10-01 真机（用户原话："**暂停后切出再切回游戏，点了继续没有用**"）：
+        // 暂停前那一击的标记 `lastActionAtMs` 留在状态里 ⇒ 继续后 `PatrolRunner` ⑤
+        //（"本步已下过击 ⇒ 只等期望画面、绝不补点"）立刻接手 ⇒ **既不重新定位也不补点** ⇒
+        // 干等到这一步的预算耗尽（真机实录：继续后从"已等 28 秒"一路涨到 47 秒+）✗
+        // ⇒ 继续时必须① 作废这一击 ② 把预算顺延到此刻（暂停的时长不该算进这一步的耐心）。
+        val paused = PatrolFlow.State(
+            range = Range.SWITCH_AND_VISIT,
+            step = Step.LOGOUT,
+            paused = true,
+            reason = "游戏不在前台，已暂停",
+            stepEnteredAtMs = 1_000L,
+            lastActionAtMs = 900L,
+            stateAtLastAction = UiState.HALL_SETTINGS,
+        )
+
+        val resumed = PatrolFlow.resume(paused, nowMs = 30_000L)
+
+        assertEquals(Outcome.RUNNING, resumed.outcome)
+        assertFalse(resumed.paused)
+        assertNull(resumed.reason)
+        assertEquals("预算顺延到此刻", 30_000L, resumed.stepEnteredAtMs)
+        assertEquals("本步已下过击的标记必须作废，否则会死在「只等画面」那一支", 0L, resumed.lastActionAtMs)
+        assertNull(resumed.stateAtLastAction)
+        assertFalse("顺延后不该立刻判超时", PatrolFlow.timedOut(resumed, 30_000L))
+    }
+
+    @Test
+    fun resumingAfterAnAbortAlsoForgetsThePendingClick() {
+        // 中止多半就发生在"等期望画面"超时的那一刻（那时同样 `lastActionAtMs > 0`）⇒ 继续后若不作废，
+        // 一样会死在 ⑤ 分支里。两条来路（暂停 / 中止）必须**一个口径**。
+        val failed = PatrolFlow.State(
+            range = Range.VISIT_ONLY,
+            step = Step.OPEN_FRIENDS,
+            outcome = Outcome.FAILED,
+            retries = 3,
+            reason = "等了 15 秒仍未识别出要等的画面",
+            stepEnteredAtMs = 1_000L,
+            lastActionAtMs = 900L,
+            stateAtLastAction = UiState.FARM,
+        )
+
+        val resumed = PatrolFlow.resume(failed, nowMs = 60_000L)
+
+        assertEquals(Outcome.RUNNING, resumed.outcome)
+        assertEquals(0, resumed.retries)
+        assertEquals(60_000L, resumed.stepEnteredAtMs)
+        assertEquals(0L, resumed.lastActionAtMs)
+        assertNull(resumed.stateAtLastAction)
     }
 
     // ---------------------------------------------------------------- 时间预算（2026-09-20 增）
