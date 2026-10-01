@@ -300,7 +300,10 @@
     <string name="auth_open_calibration">识别标定</string>
     <!-- M5-U5：入口页首屏只留 1 行要点（标题由壳给：`nav_calibration` = 标定）；原来 ≈120 字的长副标题
          （`calibration_subtitle`）拆成下面三条，搬进「说明」弹层（验收 V2：超 60 字必须默认收起）。 -->
-    <string name="calibration_one_line">采样本 › 全屏框选 › 落盘为产物</string>
+    <!-- ⚠ 这一行**不要写成分隔符串**（首版写成「采样本 › 全屏框选 › 落盘为产物」，用户 2026-10-02：
+         "看着像面包屑导航，容易引起误解" —— `›` 串起来的东西天生像"可点的层级"）。
+         ⇒ 用**一句话**说明"这页管什么"，与页面上三张卡一一对应（样本帧 / 产物 / 参数）。 -->
+    <string name="calibration_one_line">本页录样本帧、管理标定产物与匹配参数。</string>
     <string name="calibration_about">说明</string>
     <string name="calibration_about_flow">流程：先录样本帧，再进全屏工作台框选，点「写入」即落盘。</string>
     <string name="calibration_about_source">产物（模板 / 搜索窗口 / 匹配参数）是识别与点击的唯一数据源。</string>

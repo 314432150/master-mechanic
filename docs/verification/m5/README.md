@@ -12,6 +12,7 @@
 | 3 | 收编页头：**入口页有壳标题栏、页内无返回** | ✅（代码层） | `SHELL_APP_BAR_ROUTES` 加入 `Routes.CALIBRATION` ⇒ 壳出「标定 + 抽屉按钮」；`CalibrationScreen` 的「返回授权页」与页内大标题删除；`CalibrationRoute` 不再收 `onBack` |
 | 4 | **全屏框选态自带退出方式**，且此时壳不遮挡 | ✅（代码层） | 页面用 `onFullScreenChange` 上报 `workbenchOpen` ⇒ 壳 `fullScreenMode` 时**标题栏与底栏一起收起**；`DisposableEffect` 在离开页面时**复位**（否则栏会一直藏着）；工作台自带的「完成」按钮仍是退出方式 |
 | 5 | 文案折叠（V2）：超 60 字默认收起 | ✅ | 入口页 ≈120 字副标题（`calibration_subtitle`）⇒ 1 行要点（`calibration_one_line`）+ 「说明」弹层（流程 / 产物地位 / 无设备参数 三条）；工作台 ≈640 字长文（`calibration_annotate_hint`，原是 ⓘ + 一屏高 `AlertDialog`）⇒ 按钮改「**用法**」+ **底部弹层六条**（每条 ≤60 字）+ **浏览态常驻 1 行**（`calibration_browse_hint_short`） |
+| 5b | **首屏那行要点不能写成分隔符串**（用户 2026-10-02 真机："看着像**面包屑导航**，容易引起误解"） | ✅ | 首版写的是 `采样本 › 全屏框选 › 落盘为产物` ⇒ `›` 串起来的短语天生像"可点的层级" ✗ ⇒ 改成一句话「**本页录样本帧、管理标定产物与匹配参数。**」（与页面上三张卡一一对应）。全库扫过一遍：其余 `→` 都出现在**数据展示**（如「已保存：A → B」）或注释里，不误读 ✓ |
 | 6 | 死文案随之下线 | ✅ | `calibration_title` / `calibration_back` / `calibration_subtitle` / `calibration_annotate_hint` / `calibration_annotate_hint_icon` 五条删除（守卫 `StringResourcesTest` 逐条验证过零引用） |
 | 7 | 全量单测 + 编译 + 装机 | ✅ | `-PfastTests` **965 例 0 失败** ✓ ＋ `assembleDebug` ✓ ＋ `adb install -r` + `am start` ✓ |
 | 8 | **真机标定一遍**（录帧 → 框选 → 写入 → 复用） | ⏳ **待用户** | 走查：① 标定入口页**顶部有标题栏「标定」**、**页内没有返回按钮**；② 进全屏工作台 ⇒ **标题栏与底栏都消失**，退出工作台后都回来；③ 浏览态看得到 1 行要点，点「用法」从底部弹出六条；④ 录帧 / 框选 / 写入 / 复用产物全流程照旧 |
