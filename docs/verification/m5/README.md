@@ -101,6 +101,8 @@
 | 7b | 区服页**上边距缩减**（用户："服务器距离顶部太高了，适当缩减"） | ✅ 并**已找到真凶**（见 7c） | Column 的 `vertical = 8.dp` ⇒ **2.dp**（只值 6dp，所以用户第二次仍觉得宽 ✗） |
 | 7c | **顶部空白太宽的真凶 = 页面级 `Scaffold` 又吃了一遍系统栏 inset**（用户 2026-10-02 第二次报） | ✅ | 壳的 `Scaffold` 已按标题栏 + 导航栏 + 系统栏算好 `innerPadding`；页面那个只为"给 Snackbar 落脚"的 `Scaffold` **默认再按系统栏加一遍** ⇒ 顶/底各多一段 ✗ ⇒ 三个页面级 `Scaffold` 一律 **`contentWindowInsets = WindowInsets(0.dp)`**（`ServerListScreen` / `FriendListScreen` / `VisitSettingsScreen`）。📌 **通用坑：嵌套 Scaffold 时内层必须清零 inset** |
 | 7d | 好友页**列表上方的手势提示行移除**（用户："好友页好友标题下方的交互说明也移除，都说了两边交互一致"） | ✅ | 删 `friend_list_hint`（"点按一行改名；向左滑一行露出「删除」…"）—— ⚠ 上一轮删的是**另一条**（标题下长副标题 `friend_list_subtitle`），这条是列表上方那行；三个手势只保留在「说明」弹层（`friend_about_gestures`）。`friend_list_hint` 随之下线（守卫 ✓）。⚠ 用户"看着没变"的原因：**上一轮装机被设备拒**（`INSTALL_FAILED_ABORTED`），手机上还是旧版 —— 本轮已装上 ✓ |
+| 7e | **好友页顶部空白没按区服页一起改（用户当场追问）** | ✅ | 两处叠加：① `Scaffold` **漏加** `contentWindowInsets = WindowInsets(0.dp)`（只加了 import ✗）；② 页面内边距还是**全向 `padding(16.dp)`**（区服页是 `horizontal 16 + vertical 2`）⇒ 比区服页多出 14dp。**全库排查**后又揪出两处同样漏加：`CalibrationScreen` / `AuthorizationScreen` ⇒ 5 处页面级 `Scaffold` 现已统一 ✓ |
+| 7f | **新增防复发守卫** `ScaffoldInsetsGuardTest` | ✅ | 扫 `ui/` 下所有 `.kt`（**除壳** `nav/MasterMechanicApp.kt`），每处 `Scaffold(` 必须带 `contentWindowInsets`（扫前剥掉注释，免得解释性文字误报）；"已知不覆盖"写在类注释里。⚠ 写这道守卫时**自己先踩了一次**：相对路径匹配漏了"工作目录是 app 模块"⇒ 误报壳那一处，已修 ✓。`-PfastTests` **965 例 0 失败** |
 | 8 | 真机走查：增删改 / 拖动排序 / 改名同步 / 撤销 Snackbar **零回归** | ⏳ **待用户** | 走查：① 区服 Tab 顶部**没有**返回按钮、标题由壳给；② 「新增服务器」在**标题栏右侧**，点了能打开编辑页；③ 编辑 / 左滑删除 / 按住拖动排序 / 底部整体清空都照旧；④ 改名后下游同步提示照旧；⑤ 「说明」从底部滑上来、能滑走 |
 
 ---

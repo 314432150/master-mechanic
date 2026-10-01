@@ -8965,6 +8965,24 @@
   - 验证：`-PfastTests` **964 例 0 失败** ✓ ＋ `assembleDebug` ✓ ＋ **`adb install -r` ✓ 成功**（这次设备通过了）。
   - ⏳ 走查：区服 / 好友 / 拜访设置三页顶部空白应**明显变窄**（少掉≈一条状态栏）；好友页列表上方不再有提示行。
 
+412c. **好友页顶部空白没跟区服页一起改（用户当场追问）+ 全库排查 + `ScaffoldInsetsGuardTest` 守卫**（2026-10-02）
+  - 用户："**好友页顶部空白你为什么没按服务器页一样改**" —— 确实是我漏的，**两处叠加**：
+    ① `FriendListScreen` 的 `Scaffold` **只加了 `WindowInsets` 的 import、没加 `contentWindowInsets` 参数** ✗
+    （那轮我改了 `ServerListScreen` / `VisitSettingsScreen` 两处 Scaffold，好友页只改了提示行 ⇒ 漏 ✗）；
+    ② 页面内边距还是**全向 `padding(16.dp)`**，而区服页是 `padding(horizontal = 16.dp, vertical = 2.dp)`
+    ⇒ 比区服页整整多 14dp。
+  - **修法**：好友页补 `contentWindowInsets = WindowInsets(0.dp)` + 内边距改成 `horizontal 16 / vertical 2`
+    （与区服页**同一个数**）。
+  - **全库排查**（不只修被投诉的那一个）：`ui/` 下页面级 `Scaffold` 共 5 处 —— 除上面两个，
+    `CalibrationScreen` / `AuthorizationScreen` 也**同样漏加** ✗ ⇒ 一并补齐（它们也在壳里，同样会吃两遍 inset）。
+    📌 剩下三页（授权 / 标定 / 拜访设置）页面内边距保留 16dp：那是**表单页**，不是"列表页贴着标题栏"的形态 ✓。
+  - **新增守卫 `ScaffoldInsetsGuardTest`**（防复发；这个坑 10-01 / 10-02 连咬两次）：
+    扫 `ui/` 下全部 `.kt`（**除壳** `nav/MasterMechanicApp.kt` —— 它才是消费 inset 的那一个），
+    每处 `Scaffold(` 必须显式带 `contentWindowInsets`；扫描前**剥掉注释**（解释这个坑的注释里会出现
+    `Scaffold(` 字样，不剥就误报）；"已知不覆盖"（只扫 `ui/`、只认参数存在、不校验取值）写在类注释里。
+    ⚠ 写守卫时自己先踩一次：相对路径按 `/app/src/...` 匹配 ✗（工作目录就是 app 模块）⇒ 误报壳那一处，已修 ✓。
+  - 验证：`-PfastTests` **965 例 0 失败**（964 → 965，+1 守卫）✓ ＋ `assembleDebug` ✓ ＋ `adb install -r` **成功** ✓。
+
 ## 待开发（用户列，2026-09-24）
 
 1. **优化 · 悬浮窗一级菜单底部加「返回 App」**：一级菜单最下方增加一个回到我们 App 的入口（现在只能靠后台/多任务切回去）。

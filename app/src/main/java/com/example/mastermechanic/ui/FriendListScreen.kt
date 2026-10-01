@@ -680,12 +680,17 @@ private fun FriendListScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        // 与 `ServerListScreen` **同一套**：inset 一律交给壳（内层再吃一遍系统栏会多出一段空白
+        // —— 2026-10-02 用户："好友页顶部空白为什么没按服务器页一样改" ⇒ 原先这里漏加了 ✗）。
+        contentWindowInsets = WindowInsets(0.dp),
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(16.dp),
+                // 与区服清单**同一个数**（原先这里是全向 16dp ✗ ⇒ 比区服页多出 14dp 的顶部空白）：
+                // 横向 16、纵向 2 —— 壳的标题栏已经占了一条，页面再留就显出一段"什么都没写"的空白。
+                .padding(horizontal = 16.dp, vertical = 2.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             // M5-U4（ADR-009 决策五）：**标题与「返回」收进壳**（与区服清单一致）；

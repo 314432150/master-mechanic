@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
@@ -908,6 +909,10 @@ private fun CalibrationScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        // 与清单页同一套：**inset 只由壳消费一次**（内层再吃一遍系统栏 ⇒ 顶/底各多一段空白，
+        // 2026-10-02 用户报"顶部空白太宽"后的全库排查）。本页在壳里是"自带页头、壳不出标题栏"，
+        // 系统栏那一条**壳已经算进 innerPadding** 了 ⇒ 这里同样清零。
+        contentWindowInsets = WindowInsets(0.dp),
     ) { innerPadding ->
         Column(
             modifier = Modifier

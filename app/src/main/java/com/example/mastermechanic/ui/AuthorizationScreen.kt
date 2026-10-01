@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -230,7 +231,12 @@ fun AuthorizationScreen(
     onOpenServerList: () -> Unit,
     onOpenFriendList: () -> Unit,
 ) {
-    Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        // 与清单页同一套：**inset 只由壳消费一次**（这个 `Scaffold` 只为给页面一个落脚容器，
+        // 系统栏若再算一遍 ⇒ 顶部多出一段空白 ✗；2026-10-02 全库排查时补齐）。
+        contentWindowInsets = WindowInsets(0.dp),
+    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
