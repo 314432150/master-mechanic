@@ -904,6 +904,19 @@ internal fun TemplateDetailDialog(
     )
 }
 
+/**
+ * 「**识别参数（高级）**」卡（M5-U5 收尾；2026-10-02 用户："『匹配参数』藏在太靠下的位置，
+ * 而且三个输入值太过抽象，看不出来是干嘛用的，怎么改也不知道"）。
+ *
+ * 三档处置里用户选了「**保留但收进「高级」折叠**」⇒ 本卡三条口径：
+ * 1. **默认收起** —— 首屏只占一行标题（不点开就永远不占地方，也不必滑到底去"理解"它）；
+ * 2. **术语换白话** —— 「命中线 / 差距线 / 峰值间距」⇒「认出画面的门槛 / 两处相像时的辨别线 /
+ *    靠多近算同一处」，并且**每个值下面挂一行"什么时候该改"**（用户的原话是"怎么改也不知道"）；
+ * 3. 值仍然**编辑合法即写入产物**（行为零回归、产物格式不变）。
+ *
+ * ⚠ 为什么不是"删掉、只用内置默认"（用户问过）：这三个是**唯一**能调识别松紧的旋钮 ——
+ * 换设备后若出现"认不出 / 老判不可信"，没有它就只剩改代码重装一条路（见 `progress.md` 第 415 条）。
+ */
 @Composable
 internal fun ParamsCard(
     thresholdText: String,
@@ -915,53 +928,102 @@ internal fun ParamsCard(
     onMarginChange: (String) -> Unit,
     onMinDistanceChange: (String) -> Unit,
 ) {
+    // 只有"展开没展开"是本卡的私有 UI 状态；三个值仍由调用方持有（落盘时机不变）
+    var open by remember { mutableStateOf(false) }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                text = stringResource(R.string.calibration_param_title),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ParamField(
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.calibration_param_title),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = stringResource(R.string.calibration_param_subtitle),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(onClick = { open = !open }) {
+                    Text(
+                        stringResource(
+                            if (open) {
+                                R.string.calibration_param_collapse
+                            } else {
+                                R.string.calibration_param_expand
+                            },
+                        ),
+                    )
+                }
+            }
+            if (open) {
+                // 三个值**竖排 + 各自一行说明**（原来挤在一行里，正是"看不出是干嘛用的"的来源之一）
+                ParamWithHint(
                     label = stringResource(R.string.calibration_param_threshold),
                     value = thresholdText,
                     onValueChange = onThresholdChange,
                     keyboardType = KeyboardType.Decimal,
-                    modifier = Modifier.weight(1f),
+                    hint = stringResource(R.string.calibration_param_threshold_hint),
                 )
-                ParamField(
+                ParamWithHint(
                     label = stringResource(R.string.calibration_param_margin),
                     value = marginText,
                     onValueChange = onMarginChange,
                     keyboardType = KeyboardType.Decimal,
-                    modifier = Modifier.weight(1f),
+                    hint = stringResource(R.string.calibration_param_margin_hint),
                 )
-                ParamField(
+                ParamWithHint(
                     label = stringResource(R.string.calibration_param_min_distance),
                     value = minDistanceText,
                     onValueChange = onMinDistanceChange,
                     keyboardType = KeyboardType.Number,
-                    modifier = Modifier.weight(1f),
+                    hint = stringResource(R.string.calibration_param_min_distance_hint),
                 )
-            }
-            if (!paramsValid) {
-                Text(
-                    text = stringResource(R.string.calibration_param_invalid),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            } else if (!hasArtifact) {
-                Text(
-                    text = stringResource(R.string.calibration_param_pending),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (!paramsValid) {
+                    Text(
+                        text = stringResource(R.string.calibration_param_invalid),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                } else if (!hasArtifact) {
+                    Text(
+                        text = stringResource(R.string.calibration_param_pending),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
+}
+
+/** 一个参数 = 输入框 + 它下面那行「什么时候该改」（见 [ParamsCard] 的口径）。 */
+@Composable
+private fun ParamWithHint(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    keyboardType: KeyboardType,
+    hint: String,
+) {
+    ParamField(
+        label = label,
+        value = value,
+        onValueChange = onValueChange,
+        keyboardType = keyboardType,
+    )
+    Text(
+        text = hint,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable

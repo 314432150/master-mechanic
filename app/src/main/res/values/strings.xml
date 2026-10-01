@@ -433,11 +433,21 @@
     <string name="calibration_signal_deleted">已删除信号：%1$s</string>
     <string name="calibration_signal_remove">删除</string>
     <string name="calibration_template_title">模板详情</string>
-    <string name="calibration_param_title">匹配参数（产物级；编辑合法即写入产物）</string>
-    <string name="calibration_param_threshold">命中线</string>
-    <string name="calibration_param_margin">差距线</string>
-    <string name="calibration_param_min_distance">峰值间距</string>
-    <string name="calibration_param_invalid">参数非法：命中线需在 (0,1]，差距线 ≥ 0，峰值间距 ≥ 1</string>
+    <!-- M5-U5 收尾（2026-10-02 用户："『匹配参数』藏在太靠下的位置…三个输入值太过抽象，看不出来是干嘛用的，
+         怎么改也不知道"）⇒ 用户拍板「**保留但收进「高级」折叠**」：
+         ① 默认收起（首屏只占一行标题）；② 术语换**白话**；③ 每个值下面写清「**什么时候该改**」。
+         ⚠ 不要删掉这三项：它们是**唯一**能调识别松紧的旋钮（换设备后若"认不出 / 老判不可信"就靠它）。 -->
+    <string name="calibration_param_title">识别参数（高级）</string>
+    <string name="calibration_param_subtitle">一般不用动；认不出画面、或老是判「不可信」时才调。</string>
+    <string name="calibration_param_expand">展开</string>
+    <string name="calibration_param_collapse">收起</string>
+    <string name="calibration_param_threshold">认出画面的门槛</string>
+    <string name="calibration_param_threshold_hint">相似度低于它就当没认出。认不出画面时先试 0.80；误认变多就调回 0.85。</string>
+    <string name="calibration_param_margin">两处相像时的辨别线</string>
+    <string name="calibration_param_margin_hint">画面里两处都像时，差距不到它就判「不可信」⇒ 宁可不点。老判不可信就调低。</string>
+    <string name="calibration_param_min_distance">靠多近算同一处</string>
+    <string name="calibration_param_min_distance_hint">相隔小于它（像素）的两个候选算同一处。算法细节，一般别动。</string>
+    <string name="calibration_param_invalid">参数非法：门槛需在 (0,1]，辨别线 ≥ 0，判定半径 ≥ 1</string>
     <string name="calibration_param_pending">尚无产物：参数将随首个信号一并写入。</string>
     <string name="calibration_param_applied">参数已写入产物。</string>
     <string name="calibration_delete">删除整个产物</string>
