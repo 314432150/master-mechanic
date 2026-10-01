@@ -968,6 +968,12 @@ class CaptureService : Service() {
     /** 推迟 resize 的截止时刻（0 = 还没推迟过；成功应用后清零）。仅帧线程访问，常量见 [RESIZE_DEFER_LIMIT_MS]。 */
     private var resizeDeferDeadlineMs = 0L
 
+    /** 上一次"跳过 resize"的那句话（同一条只记一次，避免逐帧刷屏）。仅帧线程访问。 */
+    private var lastResizeSkipNote: String? = null
+
+    /** "目标不在前台 ⇒ 不动镜像"那句话（见 [applyMirrorResize]）。 */
+    private val resizeSkipNotForegroundNote = "目标不在前台，这时动镜像是白做"
+
     /**
      * 把镜像调整到新尺寸（**帧线程**调用，2026-09-23 起；转屏走这里，不重建 projection）。
      *
@@ -999,6 +1005,31 @@ class CaptureService : Service() {
             )
             return
         }
+        // **目标不在前台 ⇒ 不动镜像**（2026-10-01；相关性实证后的第 1 步验证，见 progress 第 401 条）。
+        //
+        // 依据：
+        // ① 17 天日志统计 —— 19 个"停更簇"里 **17 个（89.5%）** 在停更前 30 秒内出现过
+        //    `捕获内容尺寸变化 / 镜像 resize` 事件，而全时段基线只有 ~20%（**≈4~5 倍**）⇒ 强相关；
+        // ② `09-13 ~ 09-22` 那十天**从不**在会话中途 resize ⇒ **一次停更都没有**；
+        // ③ 真机实录里真正"应用"掉的那几次，恰恰都发生在**我们的 App 在前台**的时候
+        //    （`20:21:09 镜像 resize 推迟到期（本次会话只收到 0 帧）⇒ 照常应用`），
+        //    而那正是"目标不在前台、我们根本不识别"的时刻 ⇒ 这一 resize **纯属白做** ✗，
+        //    还正好踩在那个高风险窗口里。
+        // ⇒ 不在前台就**原样返回**。代价为零：口径 A 下镜像本来就是横屏，而游戏回到前台时报的也是
+        //    横屏 3168×1440 ⇒ 与当前缓冲一致，走下面的"去重"直接返回 —— 本来也不需要 resize ✓。
+        // （真转屏的竖屏内容由上面那条"竖屏内容 ⇒ 跳过"接住，两条合起来 = "只在游戏前台且横屏时才动镜像"。）
+        if (!ForegroundSignal.isForeground) {
+            if (lastResizeSkipNote != resizeSkipNotForegroundNote) {
+                lastResizeSkipNote = resizeSkipNotForegroundNote
+                MmLog.i(
+                    TAG,
+                    "镜像 resize 跳过：目标不在前台（${width}x$height）⇒ 不动镜像 —— " +
+                        "这时我们根本不识别，动镜像只会白踩高风险窗口（见 progress 401 的相关性实证）",
+                )
+            }
+            return
+        }
+        lastResizeSkipNote = null
         // ⚠ **先等帧流真正建立，再 resize**（2026-09-24 真机三次复现后的根因缓解）。
         //
         // 现象：会话建立后 ~1 秒内就收到"内容尺寸变化 ⇒ resize"，而 `resize()` + `setSurface()` 成功之后
