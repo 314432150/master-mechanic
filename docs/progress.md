@@ -8622,6 +8622,27 @@
   - 验证：`-PfastTests` **951 例 0 失败**（950 → 951，+1 `FriendSearchTest.oneMissedReadIsNotEnoughToLeaveTheCurrentScreen`）✓
     ＋ `assembleDebug` ✓ ＋ `adb install -r` + `am start` ✓。
 
+407. **第 9 步删掉「滑屏找人」整套（用户口径：常用好友置顶，搜索链够用）**（2026-10-01）
+  - 用户："**目前常用好友置顶，现在当前屏找，没找到再去点搜索框，这个搜索链已经够用了，可以去掉滑屏搜索的部分**"。
+  - **删了什么**（`CaptureService`）：① `friendScan` 实例（`ServerListScan` 的第二个）+ `lastFriendScanNote`；
+    ② 好友专属滑动调参 `FRIEND_SCROLL_EDGE_RATIO` / `FRIEND_SCROLL_DRAG_MS` / `FRIEND_SETTLE_MS`；
+    ③ `friendPlanOf` 的 ⑥「退回跨屏扫描器」整段（含回顶 / 到顶记忆 / 逐屏读 / GiveUp 分支）；
+    ④ 滑动回告路由里 `if (step == VISIT_FRIEND) friendScan else serverScan` 的分支；
+    ⑤ `scrollPlanOf` 的 `step` 参数与"好友一套调参"分支；⑥ `friendScan.reset()` 的两处调用。
+    位置留下了"**为什么删 / 历史坑在 progress 第 365·368·369·370·398 条**"的说明（防再加回来）。
+  - **改了什么行为**：搜索链走不了（① 三个搜索锚点没标齐 ② 写文字连试 2 次都没进框）⇒
+    **如实停下并说明**（原来会退回滑屏）。文案要求：说清"是锚点没标定（去标定页补框）"还是
+    "写不进搜索框（可稍后重试）"，并把本轮读到的行摊出来 ✓（沿用 2026-09-24 那条口径）。
+  - **保留了什么**：`ServerListScan` **类本体**（第 5 步「选服」在用 —— 区服列表没有搜索功能）、
+    FR-04 硬性要求 #4「逐屏滚动查找」、3 个搜索锚点照旧要标定；第 9 步的"开火前复眼"（`friendFireRecheck`）**不动** ✓。
+  - **口径文档**：`requirements.md` 新增 **口径修订十三**（并给修订十二那条"退回滑屏"标了"已被十三取消"）；
+    `verification/m4/t4-10-friend-search/README.md` 顶部加口径续变说明（原取证记录仍有效）；
+    `FriendSearch` 类注释 / `Phase.UNAVAILABLE` / `note()`、`PatrolAnchors.FRIEND_SEARCH_ENTRY` 同步改口径。
+  - **遗留（不影响运行，留待 M5/M6 清理）**：`ServerListScan` 里为第 9 步加的 `noteScope` / `noteEntryAtTop`
+    两个 API 与 `targetNoun` / `targetHint` 两个构造参数**现在没有生产调用者**（纯逻辑 + 单测还在）。
+    不急于删：它是共用类、删会牵动 `ServerListScanTest`；记在这里免得下次看到时当成"有人用"。
+  - 验证：`-PfastTests` **951 例 0 失败** ✓ ＋ `assembleDebug` ✓ ＋ `adb install -r` + `am start` ✓。
+
 ## 待开发（用户列，2026-09-24）
 
 1. **优化 · 悬浮窗一级菜单底部加「返回 App」**：一级菜单最下方增加一个回到我们 App 的入口（现在只能靠后台/多任务切回去）。

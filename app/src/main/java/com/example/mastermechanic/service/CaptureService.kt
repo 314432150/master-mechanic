@@ -344,34 +344,13 @@ class CaptureService : Service() {
     /** 上一次"新读"之后是否下发过滑动（只测量用：没有滑动就不必量位移）。仅帧线程访问。 */
     private var serverScrollSinceRead = false
 
-    /**
-     * **第 9 步「逐屏滚动查找」的扫描状态**（2026-10-01，T4-10 刀 2；需求硬性要求 #4 已扩到好友列表）。
-     *
-     * 与第 5 步**各持一个实例**：同一套纯逻辑 [ServerListScan]，但"学到的顶部那一屏 / 已滑几下"各自独立
-     * （两个列表的内容与位置毫无关系，共用会把一方的状态当成另一方的）。
-     *
-     * ⚠ **好友这条现在是"兜底"，不是主路径**（2026-10-01 两次口径变更后）：
-     * 第 9 步的主路径是「**当前屏先找一次 → 没有就搜索**」（[friendSearch] + `friendPlanOf` ⑤），
-     * 滑屏只在**搜索链走不了**时才会用到 —— 即 [FriendSearch.start] 给出 `UNAVAILABLE`
-     * （三个搜索锚点没标定）或 `onTextWritten(false)`（写文字失败）。
-     * ⚠ 而"**搜索没结果**"按用户口径是**如实停下**、**不**回退滑屏（见 [friendPlanOf] 里那段说明）。
-     * 📌 同日的旧口径"命中前必须先回顶"（`atTopConfirmed` 拦命中）**已被用户推翻**（口径修订十一：
-     * "每次都滑到顶再找有点费事")—— 它还会毁掉用户称赞的"**回顶路上看到就点**"手感，别再加回来。
-     * 仅帧线程访问。
-     */
-    private val friendScan = ServerListScan(
-        targetNoun = "好友",
-        targetHint = "请确认好友的**备注名**（括号里那一段）与游戏里一致",
-        // ⚠ **好友这一步要等更久**（2026-10-01 实测对齐）：点击门禁的间隔是从**手势结束**算的
-        //（`ClickGate.spacingSatisfied` 用 `lastFinishedMs`），而好友的拖动时长是
-        // [FRIEND_SCROLL_DRAG_MS] = 600ms ⇒ "手势结束 + 间隔 300ms" ≈ 900ms 之后才允许下一次手势。
-        // 若仍用默认 800ms，**每一枪都会被门禁拒一次**（真机实录：`滑动拒绝（与上一次点击间隔不足）`
-        // —— 那一下被拒本身没危险，但它会白等一轮，还曾因回告写漏把扫描卡死）。取 1200ms 留足余量。
-        settleMs = FRIEND_SETTLE_MS,
-    )
-
-    /** 上一次打过的"第 9 步扫描"那一行的依据（同一句只记一次，免得刷屏）。仅帧线程访问。 */
-    private var lastFriendScanNote: String? = null
+    // ⚠ **第 9 步曾经有一套"逐屏滑屏找人"**（[ServerListScan] 的第二个实例 `friendScan`、三个好友专属
+    //   调参常量 `FRIEND_SCROLL_EDGE_RATIO` / `FRIEND_SCROLL_DRAG_MS` / `FRIEND_SETTLE_MS`、
+    //   以及滑动回告的路由分支）—— **2026-10-01 按用户口径整套删除**：
+    //    "**常用好友置顶，现在当前屏找、没找到再去点搜索框，这个搜索链已经够用了，可以去掉滑屏搜索的部分**"。
+    //    ⇒ 第 9 步只剩两条路径：**当前屏命中**（④）与**搜索链**（⑤）；搜索链走不了就**如实停下**（⑥）。
+    //    `ServerListScan` 本体**保留**（第 5 步「选服」在用 —— 区服列表没有搜索功能，那条能力不动）。
+    //    历史坑见 `docs/progress.md` 第 365 / 368 / 369 / 370 / 398 条，别再加回来。
 
     /**
      * 第 9 步**搜索式查找**的状态机（2026-10-01 用户拍板"当前屏没有就搜索"；顺序与口径见
@@ -2293,10 +2272,8 @@ class CaptureService : Service() {
         // 第 9 步的跨屏扫描状态：同样只在"正在这一步 + 画面确实是好友列表"时有效
         //（离开列表 / 点完拜访 / 换一步 ⇒ 复位；下次进列表重新从"当前这一屏"开始，再按口径回顶）
         if (current.step != PatrolFlow.Step.VISIT_FRIEND || state != UiState.FRIEND_LIST) {
-            friendScan.reset()
-            lastFriendScanNote = null
-            // 「当前屏没有」的连读确认计数也要一起复位（见 [friendMissConfirm]）：否则上一轮攒够的
-            // 次数会"继承"到下一轮 ⇒ 新的一轮只要读一次没有就直接进搜索链（护栏形同虚设）。
+            // 「当前屏没有」的连读确认计数要复位（见 [friendMissConfirm]）：否则上一轮攒够的次数会
+            // "继承"到下一轮 ⇒ 新的一轮只要读一次没有就直接进搜索链（护栏形同虚设）。
             friendMissConfirm = 0
         }
         return when (current.step) {
@@ -2548,10 +2525,10 @@ class CaptureService : Service() {
                 when (scanStep) {
                     ServerListScan.Step.Wait -> PatrolRunner.NamePlan.Waiting
                     ServerListScan.Step.ScrollTowardsTop ->
-                        scrollPlanOf(listArea, towardsTop = true, step = PatrolFlow.Step.PICK_SERVER)
+                        scrollPlanOf(listArea, towardsTop = true)
 
                     ServerListScan.Step.ScrollDown ->
-                        scrollPlanOf(listArea, towardsTop = false, step = PatrolFlow.Step.PICK_SERVER)
+                        scrollPlanOf(listArea, towardsTop = false)
                     is ServerListScan.Step.GiveUp -> PatrolRunner.NamePlan.Failed(
                         "${scanStep.reason}｜帧：${frameTag()}｜" + judged.detail + readNamesHint(candidates),
                     )
@@ -2570,17 +2547,14 @@ class CaptureService : Service() {
     private fun scrollPlanOf(
         listArea: PixelBounds,
         towardsTop: Boolean,
-        step: PatrolFlow.Step,
     ): PatrolRunner.NamePlan.Scroll {
-        // **第 9 步（好友列表）的滑动更短、更慢**（2026-10-01 真机实测，见 [FRIEND_SCROLL_EDGE_RATIO]）：
-        // 同样 546px 的手指位移，在好友列表里内容**走了一屏多**（日志实录"与上一屏重合 0/3 行（0%）"
-        // ⇒ 目标好友容易被整屏跳过）；而 300ms 太快还会被当甩动。
-        val friend = step == PatrolFlow.Step.VISIT_FRIEND
+        // （2026-10-01：原先这里按 `step` 分成"好友一套 / 区服一套"调参，好友那套已随"滑屏找人"删除 ——
+        //   现在只剩第 5 步「选服」在用。）
         val drag = NameLocating.scrollDragOf(
             listArea = listArea,
             towardsTop = towardsTop,
-            edgeRatio = if (friend) FRIEND_SCROLL_EDGE_RATIO else SCROLL_EDGE_RATIO,
-            durationMs = if (friend) FRIEND_SCROLL_DRAG_MS else SCROLL_DRAG_MS,
+            edgeRatio = SCROLL_EDGE_RATIO,
+            durationMs = SCROLL_DRAG_MS,
         )
         return PatrolRunner.NamePlan.Scroll(
             fromFrameX = drag.fromX,
@@ -2588,10 +2562,10 @@ class CaptureService : Service() {
             toFrameX = drag.toX,
             toFrameY = drag.toY,
             durationMs = drag.durationMs,
-            detail = when {
-                towardsTop -> "向上滚回列表顶部（手指向下划）"
-                friend -> "向下滚一段继续找（手指向上划）"
-                else -> "向下滚一屏继续找（手指向上划）"
+            detail = if (towardsTop) {
+                "向上滚回列表顶部（手指向下划）"
+            } else {
+                "向下滚一屏继续找（手指向上划）"
             },
         )
     }
@@ -2932,13 +2906,12 @@ class CaptureService : Service() {
                 return PatrolRunner.NamePlan.Waiting
             }
             lastFriendRowFireNote = null
-            friendScan.reset() // 动手：这一段跨屏扫描结束（下次进列表重新从"当前这一屏"开始）
-            friendSearch.reset() // 同一道理：这一轮（含可能走过的搜索链）整段结束
+            friendSearch.reset() // 动手：这一轮（含可能走过的搜索链）整段结束
             friendMissConfirm = 0 // 命中即清零：下一轮重新从"第一读"开始算连读（见 [friendMissConfirm]）
             return PatrolRunner.NamePlan.Click(
                 frameX = icon.frameX,
                 frameY = icon.frameY,
-                detail = "「$target」在 y=${hit.centerY.toInt()}（当前屏就命中，未回顶），" +
+                detail = "「$target」在 y=${hit.centerY.toInt()}（当前屏就命中），" +
                     "图标在 (${icon.frameX.toInt()}, ${icon.frameY.toInt()})" +
                     recheck?.note.orEmpty(),
             )
@@ -2948,9 +2921,9 @@ class CaptureService : Service() {
         //    顺序见 [PatrolAnchors.FRIEND_SEARCH_ENTRY]：点「搜好友」→ 点「请输入好友昵称」→
         //    **原生写文字**（[TextInjector]：`ACTION_SET_TEXT`，不弹键盘）→ 点「搜索」
         //    ⇒ 结果页交给 ④ 的那套名称定位判（同名仍取最上面）。
-        //    ⚠ 三个锚点没标定、或写文字失败 ⇒ [FriendSearch.Phase.UNAVAILABLE] ⇒ **退回原来的滑屏找**
-        //      （不因缺锚点把整步卡死；这条也是"不回归"的保险）。
-        //    ⚠ **搜索之后不再滑屏**（用户口径）：搜索都找不到 ⇒ 如实停下。
+        //    ⚠ 三个锚点没标定、或写文字失败 ⇒ [FriendSearch.Phase.UNAVAILABLE] ⇒ **如实停下并说明**
+        //      （2026-10-01 用户口径：**"滑屏找人"这条路已删除** —— "常用好友置顶，当前屏找 + 搜索链已经够用"）。
+        //    ⚠ **搜索之后不再滑屏**（同一条口径）：搜索都找不到 ⇒ 如实停下。
         val rowKeys = NameLocating.friendRowKeysOf(candidates)
         if (friendSearch.phase == FriendSearch.Phase.IDLE) {
             // **连读两次都没有才走搜索**（2026-10-01 刀 4，用户报"列表里已经出现了却还点了搜索入口"）：
@@ -2970,7 +2943,13 @@ class CaptureService : Service() {
             val started = friendSearch.start()
             MmLog.i(TAG, "第 9 步：连读 ${friendMissConfirm} 次都没有「$target」⇒ ${friendSearch.note()}")
             if (started == FriendSearch.Phase.UNAVAILABLE) {
-                MmLog.w(TAG, "第 9 步：搜索链走不了（三个搜索锚点没标定？）⇒ 退回滑屏找")
+                // 三个搜索锚点不齐 ⇒ **如实停下**（不再有滑屏这条退路，理由见本函数 ⑥ 那段说明）。
+                // 这是**配置问题**（标定产物里缺框）⇒ 说清"缺哪个、去哪儿补"比默默换个方式找更有用。
+                return PatrolRunner.NamePlan.Failed(
+                    "搜索式查找用不了：三个搜索锚点没标齐（「搜好友」/「搜索框」/「搜索按钮」）" +
+                        "｜按 2026-10-01 口径**不再滑屏找人** ⇒ 请到标定页把这 3 个框好" +
+                        "｜目标「$target」｜帧：${frameTag()}",
+                )
             }
         }
         // ①②④：该点哪个锚点就点它。
@@ -3019,7 +2998,9 @@ class CaptureService : Service() {
             // 写的是**当前活动窗口**那棵树 —— 用户切出去的那一两秒里根节点是**桌面**
             //（真机日志实证：`21:11:58.366 … 没找到可编辑控件（整棵树里没有 isEditable 节点）｜根节点包名=com.bbk.launcher2`）
             // ⇒ 必然失败 ✗。这种时刻**不算搜索链的失败**，等下一轮（前台恢复 / 可疑解除）再写。
-            // 真机后果（用户报"**继续后没有继续搜索，而是进行了滑屏**"）：那一次失败把整条链降级成滑屏。
+            // 真机后果（用户报"**继续后没有继续搜索，而是进行了滑屏**"）：那一次失败把整条链降级成滑屏
+            // —— 那条"降级成滑屏"的退路**已于 2026-10-01 按用户口径删除**（见 ⑥），所以这条护栏更关键：
+            // 现在写失败会**如实停下**，而不再"换个方式继续找"。
             if (!ForegroundSignal.isForeground || ClickDispatch.foregroundSuspect) {
                 if (lastFriendSearchWaitingNote != searchWaitForegroundNote) {
                     lastFriendSearchWaitingNote = searchWaitForegroundNote
@@ -3078,50 +3059,22 @@ class CaptureService : Service() {
             )
         }
 
-        // ⑥ **搜索链走不了** ⇒ 退回**跨屏扫描器**（原来的滑屏找；FR-04 硬性要求 #4）：
-        //    先回顶（除非已知自己在顶部）、再自上而下逐屏找；到底了就如实停下。
-        //    ⚠ **不在这里报 Failed**：那会走 `PatrolFlow.fail` 计重试，3 屏就把这一步耗成中止；
-        //    真正的"找不到"由 [ServerListScan] 在"滑动后画面不再动"或超上限时给出（与第 5 步同一口径）。
-        // **行键 → 纵坐标**一并交给扫描器：判"这次滑动动没动"不能只看行键重合度 ——
-        // 一次拖动不足一屏时共同行很多（看着像"没动"），而共同行的**位移**才是直接证据
-        // （2026-10-01 用户报："每次滑动的距离其实不够一屏，导致过早结束了，还是没有滑到顶"）。
-        val rowYs = NameLocating.friendRowYsOf(candidates)
-        // **刀 4：到顶记忆绑定当前登录服务器**（用户 2026-10-01 口径：不同小号的好友列表可能不同）——
-        // 换了账号就作废学到的"顶部那一屏"，否则会把中途某一屏误认成顶部、把上面的条目整段漏掉。
-        // ⚠ 「只拜访」时 `targetServer` 为 null（用户自己登的号，我们不知道是哪个）⇒ 本次不采信，老实回顶。
-        friendScan.noteScope(PatrolSession.targetServer)
-        // **换号流程（targetServer 非空）= 我们刚登录进这个号** ⇒ 按用户 2026-10-01 的观察
-        // （"每次重新登录服务器，好友列表都会回到顶部"），**进来这一屏就是列表顶部** ⇒ 不必再空滑那一下
-        // （省约 1.5~2s，也免得刚被 [noteScope] 清掉的记忆还没来得及重建）。「只拜访」不算：那是用户自己
-        // 登的号，列表停在哪儿由他决定 ⇒ 老实回顶。
-        friendScan.noteEntryAtTop(PatrolSession.targetServer != null)
-        val scanStep = friendScan.onMiss(rowKeys, SystemClock.elapsedRealtime(), rowYs)
-        // 走到这里一定是"**当前屏没命中**"（命中在 ④ 就点了，见那里的口径变更）⇒ 日志只写这一句
-        val scanNote = "目标不在这一屏；" + friendScan.lastDecisionNote
-        // 打日志的两种情形：① 有实质结论（回顶 / 往下 / 放弃）；② **卡在"等上一次滑动的回告"**
-        //（2026-10-01：那种卡死在日志里原本完全看不见 —— 用户报"根本没滑屏"时只能靠翻代码找。
-        //  `Wait` 的另外两种（稳定等待 / 等回告）里，稳定等待那条带着毫秒数、会逐轮变 ⇒ 不记它，免得刷屏）。
-        val noteChanged = scanNote != lastFriendScanNote
-        if (noteChanged && (scanStep !is ServerListScan.Step.Wait || friendScan.waitingForOutcome)) {
-            lastFriendScanNote = scanNote
-            MmLog.i(TAG, "第 9 步扫描: $scanNote｜帧：${frameTag()}")
-        }
-        return when (scanStep) {
-            ServerListScan.Step.Wait -> PatrolRunner.NamePlan.Waiting
-            ServerListScan.Step.ScrollTowardsTop ->
-                scrollPlanOf(listArea, towardsTop = true, step = PatrolFlow.Step.VISIT_FRIEND)
-
-            ServerListScan.Step.ScrollDown ->
-                scrollPlanOf(listArea, towardsTop = false, step = PatrolFlow.Step.VISIT_FRIEND)
-
-            // 如实停下并**把这一路读到的备注名摊出来**（2026-09-24 的老教训：只说"没找到"分不清是
-            // "真不在列表里"还是"备注名被读歪了"；有这串名字，用户一眼就能对上）
-            is ServerListScan.Step.GiveUp -> PatrolRunner.NamePlan.Failed(
-                "${scanStep.reason}｜本轮读到的行：" +
-                    rowKeys.take(NAME_HINT_LIMIT).joinToString("、").ifEmpty { "（一个都没读到）" } +
-                    "｜帧：${frameTag()}",
-            )
-        }
+        // ⑥ **搜索链走不了** ⇒ **如实停下**（2026-10-01 用户口径："常用好友置顶；当前屏找 + 搜索链已经够用，
+        //    去掉滑屏搜索的部分"）。原来这里会退回**跨屏扫描器**逐屏滑找（FR-04 硬性要求 #4 那套，
+        //    第 5 步「选服」仍在用它 —— 区服列表**没有**搜索功能，那套能力整体保留）。
+        //    ⚠ 旧理由"不在这里报 Failed，免得 `PatrolFlow.fail` 计重试把这一步耗成中止"**已作废**：
+        //    走到这里只剩两种情形，都是"配置 / 环境"而不是"运气"，多滑两屏救不了 ——
+        //      ① 三个搜索锚点没标定（连搜索面板都打不开）；
+        //      ② 写文字连试 [searchWriteMaxAttempts] 次都没进搜索框（面板开着、字就是进不去）。
+        //    ⇒ 如实摊给用户（去标定页补框 / 过一会儿重试）才是正解；**不猜位置、不滑屏**（红线 3）。
+        return PatrolRunner.NamePlan.Failed(
+            "搜索式查找这一轮没走通（${friendSearch.note()}）" +
+                "｜按 2026-10-01 口径**不再滑屏找人** ⇒ 若是「锚点没标定」请到标定页补齐那 3 个框，" +
+                "若是「写不进搜索框」可稍后重试" +
+                "｜目标「$target」｜本轮读到的行：" +
+                rowKeys.take(NAME_HINT_LIMIT).joinToString("、").ifEmpty { "（一个都没读到）" } +
+                "｜帧：${frameTag()}",
+        )
     }
 
     /**
@@ -3458,9 +3411,10 @@ class CaptureService : Service() {
                 gameForeground = !result.frozen,
                 state = result.state,
             )
-            // 这一次滑动属于**哪一步**的扫描状态：第 9 步（好友列表）与第 5 步（区服列表）各持一个实例
-            // （关键：被门禁拒时要撤回到**那一个**扫描器上，否则"没滑成"会被当成"滑了、画面没动"⇒ 误判到底）
-            val scan = if (current.step == PatrolFlow.Step.VISIT_FRIEND) friendScan else serverScan
+            // 这一次滑动属于**哪一个**扫描状态（2026-10-01 起只剩第 5 步「选服」一个 —— 第 9 步的
+            // 滑屏找人已按用户口径删除，见 [friendSearch] 上方那段说明）：
+            // 关键是被门禁拒时要撤回到**那一个**扫描器上，否则"没滑成"会被当成"滑了、画面没动"⇒ 误判到底。
+            val scan = serverScan
             if (verdict.allowed) {
                 PatrolSession.markClick(now)
                 scan.onScrollDispatched(now)
@@ -4255,46 +4209,6 @@ class CaptureService : Service() {
 
         /** 一次列表拖动的手势时长（ms），见 [SCROLL_EDGE_RATIO]。 */
         private const val SCROLL_DRAG_MS = 300L
-
-        /**
-         * **好友列表**的滑动边距比（2026-10-01 真机实测后单独一套，取 **0.35**：0.35↔0.65 = 区域高的 30%）。
-         *
-         * ## ⚠ 这个数是"距离边缘多远"，**越小 = 手指行程越长**（行程 = 高 ×(1-2×ratio)）
-         *
-         * 演变（都记下来，免得再踩）：
-         * - **0.35**（配慢划 600ms）：由"同样 546px 手指位移、内容却走了一屏多"推出，怕**跳屏漏人**；
-         *   2026-10-01 用新加的**共同行位移**日志量出来：这一档**只走 79~539px**，而**一屏 ≈ 1119px**
-         *   ⇒ 一次拖动不足半屏（用户两次报："每次滑动的距离其实不够一屏"）；
-         * - **0.6**（同日试图放长 ✗）：**搞反了方向** —— 行程 = 高 ×(1-2×ratio)，>0.5 起止点交叉、
-         *   手势方向直接翻过来（真机实录：回顶那一枪变成 `(2551,853) -> (2551,631)` 手指**向上**划，
-         *   列表反而往下走，用户报"**好友列表根本没有往上移动**"）；
-         * - **0.25（本条）**：行程 = 半个区域高 ≈ 560px ⇒ 内容位移预期 ≈ 0.6~0.8 屏（第 5 步一直用的就是 0.25）。
-         * - ⚠ 目标是"**一次拖动 ≈ 一屏**"：既能少滑几下，又不会跳屏（每滑一下都会重读整屏）。
-         *   下轮看日志 `共同行位移 Npx`：偏小（<600）再往下调（0.2），偏大（>1200，有跳屏风险）就收（0.3~0.35）。
-         *   `NameLocating.scrollDragOf` 现在对 0.05~0.45 之外的值**当场报错**，不会再安静地反向划屏。
-         */
-        private const val FRIEND_SCROLL_EDGE_RATIO = 0.25
-
-        /**
-         * **好友列表**的拖动时长（ms，取 **700**；服务器列表是 [SCROLL_DRAG_MS] = 300）。
-         *
-         * 依据：真机实测 300ms 那一下在好友列表里明显带了惯性（滑完内容还在跑，日志里"两次读数一致"
-         * 常常要等两轮才成立）。慢划 ≈ 人用手慢慢翻一页，既不带甩动，也给游戏时间把这一屏画完。
-         * 2026-10-01 把 [FRIEND_SCROLL_EDGE_RATIO] 从 0.35 放长到 0.6 时，时长同时 600 → **700**：
-         * **手指走得更远时要再慢一点**，否则"又快又远"会变成甩动（甩动会让位移不可控、可能跳屏）。
-         */
-        private const val FRIEND_SCROLL_DRAG_MS = 700L
-
-        /**
-         * **好友列表**滑完等画面稳定的时长（ms，取 **1200**；服务器列表用 [ServerListScan.SETTLE_MS] = 800）。
-         *
-         * 依据（2026-10-01 实测）：点击门禁的"两次手势之间的间隔"是从**上一次手势结束**算起的
-         * （`ClickGate` 的 `lastFinishedMs` + 300ms），而好友的拖动时长是 600ms
-         * ⇒ 从"滑动下发"到"允许下一次手势"实际是 600 + 300 ≈ **900ms**。
-         * 800ms 会在**每一枪**都撞上「与上一次点击间隔不足」（真机日志实录过一次），
-         * 白等一轮；取 1200ms 既过了门禁，也给游戏时间把这一屏画完。
-         */
-        private const val FRIEND_SETTLE_MS = 1_200L
 
         /**
          * 第 5 步**开火前复眼**那条窄带的半高（运行帧像素，取 **56**），见 [rowRecheckBand]。

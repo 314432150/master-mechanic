@@ -19,10 +19,15 @@ import com.example.mastermechanic.decision.UiState
  * - 搜索结果里**多个同名小号仍取最上面那一个**（沿用老口径，命中判定一个字没改）；
  * - **搜索之后不再滑屏**：搜索都找不到 ⇒ **如实停下并提示**（不许"再滑滑看"）。
  *
- * ## 与"滑屏找"的关系
+ * ## 与"滑屏找"的关系（2026-10-01 用户口径变更后：**没有关系了**）
  *
- * 搜索链只在"**当前屏先找一次没命中**"之后才启动；三个锚点**没标定**时 [start] 直接给
- * [Phase.UNAVAILABLE] ⇒ 调用方退回原来的滑屏找（不因缺锚点把整步卡死）。
+ * 第 9 步现在只有两条路径：**当前屏命中** → 点行尾拜访图标；**没命中** → 本搜索链。
+ * 用户原话："**常用好友置顶，现在当前屏找、没找到再去点搜索框，这个搜索链已经够用了，
+ * 可以去掉滑屏搜索的部分**" ⇒ 「逐屏滚动查找」那套（`ServerListScan` 的第二个实例）**已整套删除**，
+ * 所以 [Phase.UNAVAILABLE]（三个锚点没标定 / 写文字失败）时调用方**如实停下并说明**，
+ * **不再退回去滑屏**（`ServerListScan` 本体保留给第 5 步「选服」用 —— 区服列表没有搜索功能）。
+ *
+ * 搜索链只在"**当前屏先找一次没命中**"之后才启动（且要连读两次都没看到，见 [MISS_CONFIRM_READS]）。
  */
 class FriendSearch(
     /** 三个锚点（顺序：入口 → 输入框 → 搜索按钮）；默认取声明表 [PatrolAnchors.searchFlowAnchors]。 */
@@ -58,7 +63,7 @@ class FriendSearch(
         /** 搜索已发出 ⇒ 交给现有的名称定位去判结果页。 */
         SENT,
 
-        /** 走不了（三个锚点没标定 / 写文字失败）⇒ 调用方退回滑屏或如实停下。 */
+        /** 走不了（三个锚点没标定 / 写文字失败）⇒ 调用方**如实停下并说明**（2026-10-01 起没有滑屏退路）。 */
         UNAVAILABLE,
     }
 
@@ -108,7 +113,7 @@ class FriendSearch(
     var anchorMisses: Int = 0
         private set
 
-    /** 开始搜索链。三个锚点不齐 ⇒ [Phase.UNAVAILABLE]（调用方退回滑屏找）。 */
+    /** 开始搜索链。三个锚点不齐 ⇒ [Phase.UNAVAILABLE]（调用方**如实停下**：没有滑屏退路）。 */
     fun start(): Phase {
         phase = if (anchors.size >= 3 && anchors.none { it.isBlank() }) Phase.ENTRY else Phase.UNAVAILABLE
         clicks = 0
@@ -141,7 +146,7 @@ class FriendSearch(
     /**
      * **写文字的结果**（调用方把 [TextInjectorLike] 的诊断传进来）：
      * 成功 ⇒ 先去 [Phase.DISMISS]**收输入法**（不然「搜索」按钮不在画面上）；
-     * 失败 ⇒ **先用现有额度重写一次**，额度用完才走不了（[Phase.UNAVAILABLE] ⇒ 调用方退回滑屏）。
+     * 失败 ⇒ **先用现有额度重写一次**，额度用完才走不了（[Phase.UNAVAILABLE] ⇒ 调用方**如实停下并说明**）。
      *
      * ⚠ **失败不再立刻降级**（2026-10-01 真机缺陷修，用户报"**本来已经触发搜索好友的流程，继续后
      * 却没有继续搜索，而是进行了滑屏**"）：原来一步失败就 `UNAVAILABLE` ⇒ 整条搜索链**永久降级**
@@ -206,7 +211,7 @@ class FriendSearch(
         Phase.DISMISS -> "搜索链 ③.5 收输入法（系统返回；它把游戏切成了全屏编辑、搜索按钮看不到）"
         Phase.GO -> "搜索链 ④ 点「搜索」（第 3/3 下）"
         Phase.SENT -> "搜索已发出 ⇒ 等结果页（**不再滑屏**；结果里同名取最上面）"
-        Phase.UNAVAILABLE -> "搜索链走不了（三个锚点没标定，或写文字失败）⇒ 退回滑屏找"
+        Phase.UNAVAILABLE -> "搜索链走不了（三个锚点没标定，或写文字失败）⇒ 如实停下（不再滑屏找人）"
     }
 
     companion object {
