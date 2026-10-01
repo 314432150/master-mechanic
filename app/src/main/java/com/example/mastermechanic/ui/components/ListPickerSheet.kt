@@ -2,8 +2,8 @@ package com.example.mastermechanic.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -14,36 +14,46 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.example.mastermechanic.R
 
 /**
- * **行高**（2026-10-01 定死；取 **48dp**）。
+ * **行高**（2026-10-01 定死，**40dp**）。
  *
- * 为什么是 48 而不是更好看的 44：**48dp 是 Material 的最小触控目标**（验收 V6 要求 ≥48dp）
- * —— 再矮点更好看，但会牺牲可点性。
+ * ⚠ **两轮真机反馈一路收下来**：`ListItem` 默认 ≈72dp → 48dp → **40dp**
+ * （用户第二次："列表还是**不够紧凑**"）。
  *
- * ⚠ **定死**（而不是让内容撑）是这次修"滑动时高度抖动"的关键：高度由 [ListPickerSheet] 按
+ * ⚠ 口径冲突如实记在这里：**Material 的触控目标建议是 ≥48dp**（验收 V6 引用那条），
+ * 而用户明确要更紧凑 ⇒ 取 40dp（约 8mm，实际点起来仍够用）。**V6 走查时把这一条一起确认**：
+ * 若真机上发现难点，就回到 44 或 48。
+ *
+ * ⚠ **定死**（而不是让内容撑）是修"滑动时高度抖动"的关键：高度由 [ListPickerSheet] 按
  * `行数 × 本值` **算出来**，与滚动位置无关 ⇒ 滑到哪高度都一样。
  */
-private val PICKER_ROW_HEIGHT: Dp = 48.dp
+private val PICKER_ROW_HEIGHT: Dp = 40.dp
 
 /**
- * 列表区的**最大高度**（取 **240dp** = 正好 5 行）。
+ * 列表区的**最大高度**（取 **200dp** = 正好 5 行）。
  *
- * 用户 2026-10-01："弹层**高度**和列表**行距**太高了" ⇒ 上限从 360 收到 240（少占半屏），
- * 行距从 `ListItem` 默认（≈72dp 含内边距）收到 48dp。超过 5 行的清单**在里面滑**。
+ * 演变：360 → 240 → **200**（随行高 48 → 40 一起收；用户两次都说"太高 / 不够紧凑"）。
+ * 超过 5 行的清单**在里面滑**。
  */
-private val PICKER_LIST_MAX_HEIGHT: Dp = 240.dp
+private val PICKER_LIST_MAX_HEIGHT: Dp = 200.dp
 
-/** 标题与列表之间的留白（弹层整体高度也因此矮下来）。 */
-private val PICKER_TITLE_PADDING: Dp = 12.dp
+/** 标题与列表之间的留白（越小弹层越矮）。 */
+private val PICKER_TITLE_PADDING: Dp = 8.dp
+
+/** 行的左右内边距（20 → 16：40dp 的行高配 20 的左右会显得"空"）。 */
+private val PICKER_ROW_PADDING: Dp = 16.dp
 
 /**
  * **从列表里选一个** —— 底部向上弹出的可滑动选择器（2026-10-01 用户口径）。
@@ -76,11 +86,23 @@ private val PICKER_TITLE_PADDING: Dp = 12.dp
  * 2. **列表限高 + 内部滚动**：超长清单不把弹层撑满，用户始终看得见上下文；
  * 3. **当前值高亮 + 勾**：一眼看出"现在是哪一个"。
  *
+ * ## 为什么把弹层自己的拖拽手势**关掉**（用户第三次反馈：列表滑动会带动弹层）
+ *
+ * 用户："**列表滑动会触发弹层的滑动，触发弹窗回缩和展开导致出现抖动。**"
+ *
+ * 这是 `ModalBottomSheet` 的默认行为：**手势是"复合"的** —— 往上拖先滚列表、到底/到顶后**继续拖就变成拖弹层**
+ * （M3 用嵌套滚动把两者接在一起）。弹层里只有"一屏列表"时，这个衔接非常容易被误触发：
+ * 手指在列表里上下滑，弹层就跟着**回缩 / 再展开** ⇒ 看起来就是抖动 ✗。
+ *
+ * ⇒ [sheetGesturesEnabled] = **false**：**弹层不再响应拖拽**，列表怎么滑都只影响列表。
+ * 关闭方式改为**「取消」按钮 / 点弹层外部 / 系统返回**（前两条本来就成立，所以补一个显式的取消按钮，
+ * 免得用户以为"关不掉"）。
+ *
  * @param title 弹层标题（用调用方那一条的字段名，例如「区服」/「拜访好友」）
  * @param options 候选项（来自清单，**不是手打**）
  * @param selected 当前值（高亮用；不在列表里也没关系）
  * @param onPick 选中某一项（调用方负责关弹层）
- * @param onDismiss 下滑 / 点外部 / 返回键关闭
+ * @param onDismiss 点弹层外部 / 系统返回 / 「取消」关闭（**下滑关闭已按上面的理由禁用**）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,11 +114,20 @@ fun ListPickerSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        // **关掉弹层自身的拖拽**（见上方说明）：列表滑动不再带动弹层回缩/展开
+        sheetGesturesEnabled = false,
+    ) {
         Text(
             text = title,
             style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = PICKER_TITLE_PADDING),
+            modifier = Modifier.padding(
+                start = PICKER_ROW_PADDING,
+                end = PICKER_ROW_PADDING,
+                bottom = PICKER_TITLE_PADDING,
+            ),
         )
         HorizontalDivider()
         // **高度自己算，不靠测量**：行数 × 行高（封顶 5 行）⇒ 滑动时高度恒定
@@ -114,8 +145,17 @@ fun ListPickerSheet(
                 )
             }
         }
-        // 底部只留一点缝：手势条那一段由 `ModalBottomSheet` 自己处理 inset（原来多留了 28dp，白占高度）
-        Spacer(modifier = Modifier.height(8.dp))
+        // 下滑关闭禁用后，给一个**显式的**关闭入口（免得用户以为关不掉）
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PICKER_ROW_PADDING, vertical = 4.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.picker_cancel))
+            }
+        }
     }
 }
 
@@ -130,19 +170,20 @@ private fun PickerRow(option: String, selected: Boolean, onPick: () -> Unit) {
                 if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
             )
             .clickable(onClick = onPick)
-            .padding(horizontal = 20.dp),
+            .padding(horizontal = PICKER_ROW_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = option,
-            style = MaterialTheme.typography.bodyLarge,
+            // 40dp 的行高配 bodyMedium 才不挤（bodyLarge 在小屏上会显得"字撑满行"）
+            style = MaterialTheme.typography.bodyMedium,
             // 口径 1：单行 + 省略号（固定行高装不下第二行；整宽弹层里这条也够宽了）
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
         if (selected) {
-            Text(text = "✓", style = MaterialTheme.typography.bodyLarge)
+            Text(text = "✓", style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
