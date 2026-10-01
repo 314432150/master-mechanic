@@ -617,7 +617,9 @@ fun ServerListScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                // 上边距从 8dp 收到 **2dp**（用户 2026-10-01："服务器距离顶部太高了，适当缩减"）：
+                // 壳的标题栏本来就占着一条，页面再留 8dp 会显出一段"什么都没写"的空白。
+                .padding(horizontal = 16.dp, vertical = 2.dp),
         ) {
 
             message?.let { text ->

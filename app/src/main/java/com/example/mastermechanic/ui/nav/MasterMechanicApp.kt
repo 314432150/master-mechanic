@@ -154,11 +154,14 @@ fun MasterMechanicApp(
                         },
                         actions = {
                             // M5-U4（ADR-009 决策五）：列表页的**「新增」统一住在壳的标题栏**（一处一个）。
-                            // ⚠ 目前只在「区服清单」这个 Tab 出 —— 「好友清单」还在用自己的页内新增按钮，
-                            // 等它一并收编后再打开这一支（**不能先出按钮再做空动作**：那是个点了没反应的假按钮）。
-                            if (currentRoute == Routes.ACCOUNTS && accountsTab == 0) {
+                            // 两个 Tab 都已收编 ⇒ 按当前 Tab 决定加服务器还是加好友。
+                            if (currentRoute == Routes.ACCOUNTS) {
                                 TextButton(onClick = { accountsAddTick++ }) {
-                                    Text(stringResource(R.string.server_add))
+                                    Text(
+                                        stringResource(
+                                            if (accountsTab == 0) R.string.server_add else R.string.friend_add,
+                                        ),
+                                    )
                                 }
                             }
                         },
@@ -208,7 +211,6 @@ fun MasterMechanicApp(
                 // 一级：账号与好友 —— 两个 Tab，复用手上真正的两个清单页
                 composable(Routes.ACCOUNTS) {
                     AccountsDestination(
-                        navController = navController,
                         resumeTick = resumeTick,
                         addTick = accountsAddTick,
                         tab = accountsTab,
@@ -279,7 +281,6 @@ private fun AuthorizationDestination(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AccountsDestination(
-    navController: NavHostController,
     resumeTick: Int,
     addTick: Int,
     tab: Int,
@@ -299,10 +300,9 @@ private fun AccountsDestination(
             )
         }
         when (tab) {
-            // 区服清单：U4 起标题栏与「新增」都由壳给（页内不再有返回 / 新增）
+            // 两个清单页都已收编：标题栏与「新增」都由壳给（页内不再有返回 / 新增）
             0 -> ServerListRoute(resumeTick = resumeTick, addTick = addTick)
-            // 好友清单：**还没收编**（下一步做）⇒ 仍带自己的页头与新增按钮
-            else -> FriendListRoute(resumeTick = resumeTick, onBack = { navController.popBackStack() })
+            else -> FriendListRoute(resumeTick = resumeTick, addTick = addTick)
         }
     }
 }

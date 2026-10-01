@@ -538,10 +538,16 @@
 
     <!-- 好友清单（M3-T3-8 / FR-07「拜访 → 指定好友」三级列表的数据源，2026-09-15 用户口径「独立维护」） -->
     <string name="auth_open_friend_list">好友</string>
-    <string name="friend_list_title">好友</string>
-    <string name="friend_list_subtitle">悬浮窗菜单「拜访 → 指定好友」从这里挑目标；名字会直接用于在好友列表里定位。</string>
     <string name="friend_list_count">好友（%1$d 条）</string>
     <string name="friend_add">添加好友</string>
+    <!-- 「说明」（M5-U4，与区服清单同一个版式）：**一段一句 + 行首标签 + 每句 ≤60 字**，
+         取代原先常驻的那行长副标题（`friend_list_subtitle` 已删）。顺序：引用 → 判重 → 定位 → 名字 → 手势。 -->
+    <string name="friend_about">说明</string>
+    <string name="friend_about_key">引用：拜访预设与标定产物都按这个名字找你 ⇒ 改名会一起改</string>
+    <string name="friend_about_unique">判重：同一条名字只能有一条</string>
+    <string name="friend_about_locate">定位：只认括号里的备注名，且要求完全一致</string>
+    <string name="friend_about_name">名字：不能含「|」或换行（它会直接用于界面定位）</string>
+    <string name="friend_about_gestures">手势：双击 = 编辑 ｜ 按住拖动 = 排序 ｜ 左滑出「删除」</string>
     <string name="friend_empty">还没有好友。点「添加好友」录入想拜访的人。</string>
     <string name="friend_clear">整体清空</string>
     <string name="friend_clear_title">清空好友清单？</string>
@@ -554,7 +560,6 @@
     <string name="friend_load_failed">读清单失败：%1$s</string>
     <string name="friend_load_failed_hint">已经保存过的好友没有被动过（文件是唯一数据源）。确认不再需要里面的内容了，再点「清空重建」。</string>
     <string name="friend_rebuild">清空重建</string>
-    <string name="friend_back_to_auth">返回</string>
     <string name="friend_row_edit">编辑</string>
     <string name="friend_row_delete">删除</string>
     <string name="friend_row_desc">第 %1$d 位，共 %2$d 位：%3$s</string>
