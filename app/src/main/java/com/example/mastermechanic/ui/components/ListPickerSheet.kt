@@ -52,6 +52,14 @@ private val PICKER_LIST_MAX_HEIGHT: Dp = 200.dp
 /** 标题与列表之间的留白（越小弹层越矮）。 */
 private val PICKER_TITLE_PADDING: Dp = 8.dp
 
+/**
+ * 标题的**上边距**。
+ *
+ * 为什么要它：**拖手已去掉**（[ListPickerSheet] 里 `dragHandle = null`）—— 原来那一截高度由拖手占着，
+ * 去掉后标题会贴着弹层顶边 ⇒ 看起来像被裁掉。这段留白就是补这一块（比拖手矮，弹层因此还更紧凑了一点）。
+ */
+private val PICKER_TITLE_TOP_PADDING: Dp = 16.dp
+
 /** 行的左右内边距（20 → 16：40dp 的行高配 20 的左右会显得"空"）。 */
 private val PICKER_ROW_PADDING: Dp = 16.dp
 
@@ -119,6 +127,11 @@ fun ListPickerSheet(
         sheetState = sheetState,
         // **关掉弹层自身的拖拽**（见上方说明）：列表滑动不再带动弹层回缩/展开
         sheetGesturesEnabled = false,
+        // **顶部的"拖手"也一并去掉**（用户 2026-10-01 第三次反馈："现在弹层已经完全不会滑动了，
+        // 那个顶部的滑动拖手也无法触发弹层回缩和展开，应该移除"）：
+        // 拖手是"可以拖"的视觉暗示 ⇒ 拖不动了还留着，就是在**骗人去拖**（拉一下没反应，只会让人以为卡了）。
+        // 去掉之后标题自带一点上边距，免得贴着顶边显得被裁掉。
+        dragHandle = null,
     ) {
         Text(
             text = title,
@@ -126,6 +139,7 @@ fun ListPickerSheet(
             modifier = Modifier.padding(
                 start = PICKER_ROW_PADDING,
                 end = PICKER_ROW_PADDING,
+                top = PICKER_TITLE_TOP_PADDING,
                 bottom = PICKER_TITLE_PADDING,
             ),
         )
