@@ -233,4 +233,15 @@ class FriendSearchTest {
         search.onAnchorPracticed() // 已发出 ⇒ 再点也不推进
         assertEquals(FriendSearch.Phase.SENT, search.phase)
     }
+
+    @Test
+    fun oneMissedReadIsNotEnoughToLeaveTheCurrentScreen() {
+        // 2026-10-01 真机（用户报"列表里已经出现了，却还去点了底部搜索入口"）：目标行**就在当前屏**，
+        // 但首次读屏把行尾读残了（`Boss~~喵(阿娜)` 少个「雅」）⇒ 按括号内全等判"没有" ⇒ 白走一整条
+        // 搜索链；1.8 秒后同一区域再读就读全了。⇒ **一次没读到不足以离开当前屏**。
+        assertFalse("第 1 次没读到：先再看一帧，不进搜索链", FriendSearch.missConfirmed(1))
+        assertTrue("连续 2 次都没读到：才认「当前屏没有」⇒ 进搜索链", FriendSearch.missConfirmed(2))
+        assertTrue("（第 3 次当然也算）", FriendSearch.missConfirmed(3))
+        assertEquals("阈值就是 2（与 UiStateTracker 的「连续 2 次命中」同源）", 2, FriendSearch.MISS_CONFIRM_READS)
+    }
 }

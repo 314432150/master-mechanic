@@ -2295,6 +2295,9 @@ class CaptureService : Service() {
         if (current.step != PatrolFlow.Step.VISIT_FRIEND || state != UiState.FRIEND_LIST) {
             friendScan.reset()
             lastFriendScanNote = null
+            // 「当前屏没有」的连读确认计数也要一起复位（见 [friendMissConfirm]）：否则上一轮攒够的
+            // 次数会"继承"到下一轮 ⇒ 新的一轮只要读一次没有就直接进搜索链（护栏形同虚设）。
+            friendMissConfirm = 0
         }
         return when (current.step) {
             PatrolFlow.Step.PICK_SERVER -> serverPlanOf(gray, state)
@@ -2628,6 +2631,21 @@ class CaptureService : Service() {
     private var lastFriendRowFireNote: String? = null
 
     /**
+     * **「当前屏没有目标好友」被连读确认了几次**（2026-10-01 刀 4；仅帧线程访问）。
+     *
+     * 为什么需要它（真机实录 2026-10-01 21:58，用户报"列表里已经出现了，却还去点了底部搜索入口"）：
+     * 目标好友**就在当前屏里**，但首次读屏把行尾读残了 —— 日志原文
+     * `Boss~~喵(阿娜)`（少「雅」；同一帧 `永恒钻石` 也掉了 V）⇒ 按括号内全等判"当前屏没有" ⇒
+     * 白走一整条搜索链（3 次点击 + 写文字 + 等结果 ≈2 秒）；**1.8 秒后同一区域再读就读全了** ✓。
+     * ⇒ 现在按"**连读 [FriendSearch.MISS_CONFIRM_READS] 次都没有才进搜索链**"（与 `UiStateTracker`
+     * 的"连续 2 次命中才改判"同源：单帧结论不可采信）。
+     *
+     * ⚠ 只在**新读**（`reading.fresh`）时累计（代码位置在那道门之后）—— 复用来的候选可能来自 1 秒前
+     * 那张画面，拿它凑数等于把护栏架空。
+     */
+    private var friendMissConfirm = 0
+
+    /**
      * **第 5 步的开火前复眼**（2026-09-30 用户口径"现在补复眼"；判据本体是纯逻辑
      * [ServerListScan.stillOnSameRow]，有单测）：下发这一击之前**现取一张当时最新的画面**，
      * 只在**目标那一行所在的那条窄带**上再读一次，确认"还是同一行、还在原来那条纵线上"。
@@ -2916,6 +2934,7 @@ class CaptureService : Service() {
             lastFriendRowFireNote = null
             friendScan.reset() // 动手：这一段跨屏扫描结束（下次进列表重新从"当前这一屏"开始）
             friendSearch.reset() // 同一道理：这一轮（含可能走过的搜索链）整段结束
+            friendMissConfirm = 0 // 命中即清零：下一轮重新从"第一读"开始算连读（见 [friendMissConfirm]）
             return PatrolRunner.NamePlan.Click(
                 frameX = icon.frameX,
                 frameY = icon.frameY,
@@ -2934,8 +2953,22 @@ class CaptureService : Service() {
         //    ⚠ **搜索之后不再滑屏**（用户口径）：搜索都找不到 ⇒ 如实停下。
         val rowKeys = NameLocating.friendRowKeysOf(candidates)
         if (friendSearch.phase == FriendSearch.Phase.IDLE) {
+            // **连读两次都没有才走搜索**（2026-10-01 刀 4，用户报"列表里已经出现了却还点了搜索入口"）：
+            // 单帧结论不可采信 —— 真机 21:58 那轮首次读屏把目标行读残（`Boss~~喵(阿娜)` 少个「雅」）⇒
+            // 白走一整条搜索链；1.8 秒后再读就读全了。判据是纯逻辑 [FriendSearch.missConfirmed]，
+            // 与 `UiStateTracker` 的"连续 2 次命中才改判"同源。⚠ 只统计**新读**（上面 `reading.fresh` 那道门之后）。
+            friendMissConfirm++
+            if (!FriendSearch.missConfirmed(friendMissConfirm)) {
+                MmLog.i(
+                    TAG,
+                    "第 9 步：这一读没看到「$target」（第 ${friendMissConfirm}/" +
+                        "${FriendSearch.MISS_CONFIRM_READS} 次）⇒ 先再看一帧、确认了才进搜索链" +
+                        "（单帧 OCR 偶发漏字 / 画面还在动，真机 2026-10-01 21:58 实录）",
+                )
+                return PatrolRunner.NamePlan.Waiting
+            }
             val started = friendSearch.start()
-            MmLog.i(TAG, "第 9 步：当前屏没有「$target」⇒ ${friendSearch.note()}")
+            MmLog.i(TAG, "第 9 步：连读 ${friendMissConfirm} 次都没有「$target」⇒ ${friendSearch.note()}")
             if (started == FriendSearch.Phase.UNAVAILABLE) {
                 MmLog.w(TAG, "第 9 步：搜索链走不了（三个搜索锚点没标定？）⇒ 退回滑屏找")
             }
