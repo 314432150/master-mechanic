@@ -25,6 +25,17 @@ enum class ClickDenyReason(val label: String) {
     GUARD_NOT_RUNNING("常驻守护服务未启动（自动化整体不动作）"),
     NOT_FOREGROUND("游戏不在前台"),
     STALE_FRAMES("画面采集已停（手上那张画面是旧的，点出去等于照着旧画面点）"),
+    /**
+     * **焦点刚被别的窗口抢走、但还不确定游戏真的离开了**（2026-10-01 加）。
+     *
+     * 真机实录（用户报"**游戏在前台，却提示不在前台**"）：`com.bbk.launcher2`（vivo 桌面）会
+     * **短暂抢走"活动窗口"**（`20:35:36.776` 判不在前台 ⇒ `20:35:39.478` 又回来，共 **2.7 秒**；
+     * 另一次 2.99 秒），而那段时间**游戏窗口一直在屏上** ⇒ "暂停跑号 + 摘悬浮窗"全是白挨的
+     * （用户还得手动点「继续」）。
+     * ⇒ 复核判"不在前台"时**先闸住点击**（本原因），等下一次复核确认后才真的改判
+     * （两段式见 `MasterMechanicAccessibilityService.refreshForeground`）。正常路径不会出现它。
+     */
+    FOREGROUND_SUSPECT("前台焦点刚被别的窗口抢走（先不放行点击，等复核确认）"),
     STATE_UNKNOWN("状态未知"),
     OUT_OF_SCREEN("点击点落在屏幕外（坐标换算结果异常）"),
     IN_FLIGHT("上一个手势仍在途（串行约束）"),
@@ -112,6 +123,17 @@ data class ClickEnvironment(
      * 默认 false ⇒ 既有调用路径（含全部单测）行为不变。
      */
     val framesStalled: Boolean = false,
+    /**
+     * **前台"可疑"**（2026-10-01 加）：复核判"不在前台"，但**游戏的窗口还在屏上且可见**
+     * ⇒ 更可能是"别的窗口（桌面 / 系统弹窗）短暂抢走焦点"而不是"游戏被切走了"。
+     *
+     * 置位期间点击一律被拒（[ClickDenyReason.FOREGROUND_SUSPECT]）—— 安全侧不加延迟：
+     * 万一游戏真的被盖住，我们**一枪都不会打出去**；而"暂停跑号 / 摘悬浮窗"这些**用户可见的后果**
+     * 要等下一次复核确认才发生（见 `MasterMechanicAccessibilityService.refreshForeground`）。
+     *
+     * 默认 false ⇒ 既有调用路径（含全部单测）行为不变。
+     */
+    val foregroundSuspect: Boolean = false,
 )
 
 /** 门禁判定结果。 */

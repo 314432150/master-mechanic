@@ -69,6 +69,21 @@ object ClickDispatch {
         framesStalled = stalled
     }
 
+    /**
+     * **前台"可疑"**（2026-10-01 加）：复核判"不到前台"，但游戏的窗口还在屏上（见
+     * `ClickEnvironment.foregroundSuspect` 的说明与 `ClickDenyReason.FOREGROUND_SUSPECT`）。
+     *
+     * 置位期间**任何来源的点击都会被拒** —— 与 [framesStalled] 同一套路：安全侧立刻生效，
+     * 而"暂停跑号 / 摘悬浮窗"那些用户可见的后果等下一次复核确认（两段式）。
+     */
+    @Volatile
+    var foregroundSuspect: Boolean = false
+        private set
+
+    fun setForegroundSuspect(suspect: Boolean) {
+        foregroundSuspect = suspect
+    }
+
     /** 服务连接时安装（重复安装 = 重建，间隔计时随之清零：服务重启后不可能有在途手势）。 */
     fun install(
         injector: GestureInjector,
@@ -97,6 +112,7 @@ object ClickDispatch {
                 state,
                 guardRunning = guardRunning,
                 framesStalled = framesStalled,
+                foregroundSuspect = foregroundSuspect,
             ),
         )
     }
@@ -114,6 +130,7 @@ object ClickDispatch {
                 state,
                 guardRunning = guardRunning,
                 framesStalled = framesStalled,
+                foregroundSuspect = foregroundSuspect,
             ),
         )
     }

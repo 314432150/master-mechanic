@@ -19,12 +19,14 @@ class ClickGateTest {
         onScreen: Boolean = true,
         guard: Boolean = true,
         stalled: Boolean = false,
+        suspect: Boolean = false,
     ) = ClickEnvironment(
         gameForeground = foreground,
         state = state,
         targetOnScreen = onScreen,
         guardRunning = guard,
         framesStalled = stalled,
+        foregroundSuspect = suspect,
     )
 
     @Test
@@ -62,6 +64,31 @@ class ClickGateTest {
         )
 
         assertEquals(ClickDenyReason.STALE_FRAMES, verdict.reason)
+    }
+
+    @Test
+    fun deniesWhileTheForegroundIsMerelySuspect() {
+        // 2026-10-01（用户报"**游戏在前台，却提示不在前台**"）：复核看到"游戏窗口还在屏上、只是焦点
+        // 被 vivo 桌面抢走"时，**先不放行点击**（安全侧不允许有任何延迟），等下一次复核确认才改判
+        // 前台状态（用户可见的后果不白挨）。真机那两次各持续 **2.70 / 2.99 秒** ⇒ 那两秒里不该
+        // 有半枪打出去，但也不该把跑号暂停掉（用户还得手动点「继续」）。
+        val verdict = ClickGate().decide(environment(suspect = true), nowMs = 1_000L)
+
+        assertFalse(verdict.allowed)
+        assertEquals(ClickDenyReason.FOREGROUND_SUSPECT, verdict.reason)
+    }
+
+    @Test
+    fun suspectOutranksStalledFramesButNotTheRealNotForeground() {
+        // 判定顺序：真「不在前台」> **可疑** > 停更 —— 可疑是"还没定论的前台问题"，比"画面停更"更前置
+        assertEquals(
+            ClickDenyReason.FOREGROUND_SUSPECT,
+            ClickGate().decide(environment(suspect = true, stalled = true), nowMs = 1_000L).reason,
+        )
+        assertEquals(
+            ClickDenyReason.NOT_FOREGROUND,
+            ClickGate().decide(environment(foreground = false, suspect = true), nowMs = 1_000L).reason,
+        )
     }
 
     @Test
