@@ -43,6 +43,7 @@ import com.example.mastermechanic.ui.AuthorizationRoute
 import com.example.mastermechanic.ui.CalibrationRoute
 import com.example.mastermechanic.ui.FriendListRoute
 import com.example.mastermechanic.ui.ServerListRoute
+import com.example.mastermechanic.ui.run.RunRoute
 import kotlinx.coroutines.launch
 
 /**
@@ -167,15 +168,9 @@ fun MasterMechanicApp(
                 startDestination = Routes.START,
                 modifier = Modifier.padding(innerPadding),
             ) {
-                // 一级：运行 —— U1 先接现有授权页（U2 会长成"状态 + 停止/继续"的正式运行页）
+                // 一级：运行 —— **U2 起是本页自己的内容**（状态卡 + 停止/继续；不含"发起执行"，用户拍板）
                 composable(Routes.RUN) {
-                    AuthorizationDestination(
-                        resumeTick = resumeTick,
-                        reauthTick = reauthTick,
-                        onReauthHandled = onReauthHandled,
-                        onOpenCalibration = { go(Routes.CALIBRATION) },
-                        onOpenAccounts = { tab -> accountsTab = tab; go(Routes.ACCOUNTS) },
-                    )
+                    RunRoute(resumeTick = resumeTick, onOpenAuth = { go(Routes.AUTH) })
                 }
                 // 抽屉：授权与权限 —— 同样先接现有授权页（U6 会拆成引导式四步）
                 composable(Routes.AUTH) {
@@ -232,6 +227,8 @@ private fun NavHostController.navigateTo(route: String) {
 
 /** 壳上给标题栏的目的地（见 [MasterMechanicApp] 顶部说明第 1 条）。 */
 private val SHELL_APP_BAR_ROUTES = setOf(
+    // U2 起「运行」是新建的页面（自己不带页头）⇒ 按 ADR-009 决策五，壳给它标题栏（抽屉按钮 + 标题）
+    Routes.RUN,
     Routes.VISIT_SETTINGS,
     Routes.ACCOUNTS,
     Routes.DIAGNOSTICS,

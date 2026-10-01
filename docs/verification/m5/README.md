@@ -59,3 +59,23 @@
 7. **一键重新授权采集**照旧可用：悬浮窗菜单点它 ⇒ App 到前台并弹系统采集授权窗（现在落到 `授权与权限`）；
 8. 已知的两处**过渡态**属正常，不算 bug：① 占位页只写"本页在 M5-U3/U6 建设"；
    ② 「运行」与抽屉「授权与权限」现在长得一样（U2 / U6 会各自长出来）。
+   ⤷ **2026-10-01 起第 ② 条已兑现一半**：U2 完成后「运行」是自己的页（三张状态卡 + 停止/继续），
+   只有抽屉的「授权与权限」还是老授权页（U6 收拾）。
+
+---
+
+## U2「运行」页（2026-10-01 代码完成；真机走查待用户）
+
+**判据**：计划 U2 —— 状态卡（授权是否齐 / 画面在不在来 / 流程第几步或结局）+ **停止 / 继续**；
+**复用现有信号、不新造状态**；⚠ **不含"发起执行"**（用户 2026-10-01 拍板：发起只在悬浮窗）。
+
+| # | 判据 | 结论 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 三块读数**全部来自现有信号**（本页不持有状态） | ✅（代码层） | 授权 = `AuthorizationChecks.collect`；画面 = `CaptureSessionSignal` + `FrameFreshness`；流程 = `PatrolSession` + `PatrolStatus` + `PatrolResultSignal.displayState`（与悬浮窗标签同一处） |
+| 2 | **画面这一项从最严重往下说**（会话不在 > 没被投喂 > 停更 > 正常） | ✅ | 纯逻辑 `RunPageLogic.frameState` + 用例 `RunPageLogicTest.theMostSevereFrameProblemWins`（三种毛病的**处置不同**，说错用户就白折腾） |
+| 3 | 停止 / 继续**与悬浮窗同一条判据** | ✅ | `RunPageLogic.buttons` 直接借 `PatrolStatus.showsControlRow` / `canResume` + 用例 `buttonsFollowTheSameRuleAsTheFloatingControlRow`（无流程 / 运行中 / 暂停 / 中止 / 已完成五种） |
+| 4 | 停止 / 继续走**同一条消费链** | ✅（代码层） | 两个按钮发 `PatrolRequestSignal.Request(Kind.STOP / Kind.RESUME)` ⇒ `PatrolRequestConsumer`（与悬浮窗控制行完全一致，日志 `MM-Patrol` 同一句） |
+| 5 | 授权摘要（缺几项） | ✅ | `RunPageLogic.authReady` / `missingAuthCount`（借 `AuthorizationSummary`）+ 用例 |
+| 6 | 无"发起执行"入口 | ✅ | 页面只有「去授权与权限 / 重新授权采集 / 停止 / 继续」四个动作，无换号或拜访按钮 |
+| 7 | 全量单测 + 编译 + 装机 | ✅ | `-PfastTests` **960 例 0 失败**（+3 `RunPageLogicTest`）✓ ＋ `assembleDebug` ✓ ＋ `adb install -r` + `am start` ✓ |
+| 8 | **真机走查**：跑号中本页与悬浮窗标签说**同一句话** | ⏳ **待用户** | 走查：① 空态（没跑）⇒ 流程卡写「当前没有进行中的流程」、两个按钮都灰；② 跑号中 ⇒ 进度行与悬浮窗标签一致，只有「停止」可按；③ 暂停（切出去 >3.5 秒）⇒ 出现「继续」，点了真能接着跑；④ 停更时 ⇒ 画面卡说「已停更 N 秒」，点「重新授权采集」能重建；⑤ 走查前先重新授权（`-r` 重装会重置） |

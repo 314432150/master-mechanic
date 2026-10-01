@@ -8736,6 +8736,27 @@
   - ⚠ 实施范围仅文档（**未改代码**）：`decisions/ADR-009…`（新增决策五 + 修订）、
     `plans/m5-ui-restructure.md`（U3 / U4 / U5 卡 + §5#3）、本条。
 
+409b. **M5-U2「运行」页代码完成：三张状态卡 + 停止/继续（无发起入口）**（2026-10-01）
+  - **新增 `ui/run/`**：
+    ① `RunPageLogic.kt`（**纯逻辑，可单测**）—— `frameState`（画面四态**从最严重往下**：
+    **会话不在 > 没被投喂 > 停更 > 正常**；三种毛病**处置不同**，顺序说错用户就白折腾）、
+    `buttons`（**直接借** `PatrolStatus.showsControlRow` / `canResume` —— 那是"能不能按"的唯一出处）、
+    `authReady` / `missingAuthCount`（借 `AuthorizationSummary`）；
+    ② `RunScreen.kt` —— 三张卡：**授权**（四项就绪/缺 N 项 + 「去授权与权限」）、
+    **画面**（四态文案 + 出事时才给「重新授权采集」）、**流程**（`PatrolStatus.progressLine` + `statusLine`，
+    含 `PatrolResultSignal` 的 3 秒快照；+ **停止 / 继续**）。
+  - **三个刻意的取舍**（都写在 `RunScreen` 顶部注释）：① **本页不持有任何状态**（三块读数全来自现有信号
+    ⇒ 不可能与悬浮窗标签说出两句不同的话）；② **500ms 轮询**读现场，不为此给四个纯对象加观察者接口
+    （代价：最多晚 0.5 秒看到变化）；③ **没有发起按钮**（用户拍板）—— 停止 / 继续发
+    `PatrolRequestSignal.Request(Kind.STOP / Kind.RESUME)`，**与悬浮窗控制行同一条消费链**
+    （日志 `MM-Patrol`、留痕、`canResume` 准入、那句"没有进行中的流程"全都不必重写）。
+  - **壳接线**：`Routes.RUN` 从"暂借授权页"改成**自己的页面**；并按 ADR-009 决策五把 `Routes.RUN`
+    加进 `SHELL_APP_BAR_ROUTES`（一级目的地 = 壳给标题栏「运行」+ 抽屉按钮）。抽屉「授权与权限」仍是老授权页（U6 收拾）。
+  - 验证：`-PfastTests` **960 例 0 失败**（957 → 960，+3 `RunPageLogicTest`：画面四态优先级 /
+    按钮五态 / 授权摘要）✓ ＋ `assembleDebug` ✓ ＋ 装机 ✓。
+  - ⏳ **待真机走查**：空态 / 跑号中（与悬浮窗标签逐项一致）/ 暂停后「继续」真能接着跑 / 停更时画面卡与
+    重建入口；步骤见 `verification/m5/README.md` 的 U2 一节。
+
 ## 待开发（用户列，2026-09-24）
 
 1. **优化 · 悬浮窗一级菜单底部加「返回 App」**：一级菜单最下方增加一个回到我们 App 的入口（现在只能靠后台/多任务切回去）。
