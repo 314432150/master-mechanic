@@ -1283,7 +1283,25 @@ class CaptureService : Service() {
         //   10:44:06 重授权后又来一次）。
         // 这条判据的本来目的就是"帧没跟上**游戏画面**"；游戏不在前台时屏幕方向是我们 App 的，
         // 帧保持横屏是**设计预期**，不是故障。产物那条（calibrationMismatch）不依赖屏幕方向，仍旧照判。
+        // ⚠ **2026-10-01 真机再补两条**（"需要重新采集"的真凶）：
+        // 上面那道"目标在前台"的闸**挡不住"桌面抢焦点"那几秒** —— 那时 `ForegroundSignal` 还是 true
+        //（新加的"前台可疑"要 3.5 秒才改判，比这里的 3 秒宽限**还晚**），而屏幕已经报竖屏、
+        // 镜像按口径 A 保持横屏 ⇒ **3 秒宽限一到就主动结束会话** ✗：
+        // ```
+        // 21:43:02.327  前台**可疑**（窗口事件复核：活动窗口 com.bbk.launcher2｜游戏窗口 1 个（不可见））
+        // 21:43:02.710  帧几何与屏幕不一致：帧 3168x1440｜屏幕 1440x3168（等 3 秒确认）
+        // 21:43:02.839  镜像 resize 跳过：平台报的是竖屏内容（本 App 锁竖屏）⇒ 镜像保持横屏
+        // 21:43:05.899  帧几何持续 3 秒与屏幕不一致 ⇒ **主动结束会话** ✗ ← "需要重新采集"就是这么来的
+        // ```
+        // ⇒ 两条补充判据：
+        //   ① **屏幕是竖屏 ⇒ 不判**（竖屏 = 我们的 App / 别的竖屏窗口在前台，帧保持横屏正是**设计预期**，
+        //      见 [attachMirror] 的口径 A；那时该做的事是"别动它"，resize 那条也早就跳过了）；
+        //   ② **前台可疑期间 ⇒ 不判**（`isForeground` 还没改判，但我们已经知道自己看不清了）。
+        // 真·"resize 没跟上"（屏幕横屏、帧却是别的几何）**照旧会被抓** ✓ 判据本身没有被削弱。
+        val screenPortrait = metrics.heightPixels > metrics.widthPixels
         val screenMismatch = ForegroundSignal.isForeground &&
+            !screenPortrait &&
+            !ClickDispatch.foregroundSuspect &&
             frameWidth > 0 && frameHeight > 0 &&
             (frameWidth != metrics.widthPixels || frameHeight != metrics.heightPixels)
         // **T4-6 增补**：帧还必须与**标定产物**同几何 —— 方向归一拆掉后，这是模板尺度成立的前提。
