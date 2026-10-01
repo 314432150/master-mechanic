@@ -312,6 +312,32 @@ class PatrolFlowTest {
     }
 
     @Test
+    fun theBudgetRestartsWhenThePictureComesBack() {
+        // 2026-10-01 真机缺陷：点「重新授权采集」把采集会话换掉，画面回来的**那一轮**，
+        // 「停更期间累计的等待」被当成"这一步等超时"⇒ 立刻中止（文案写"等了 36 秒"，而预算只有 15 秒），
+        // 而期望的画面在 1 秒后就出现了 ✗。
+        // 口径（`PatrolRunner.RoundInput.framesStalled` 的注释一直这么写）：**画面一回来，
+        // 从那时起重新给足这一步的预算** —— 这个函数就是那件事的入口（帧线程解除闸时调用）。
+        val running = PatrolFlow.State(
+            range = Range.VISIT_ONLY,
+            step = Step.OPEN_FRIENDS,
+            stepEnteredAtMs = 1_000L,
+        )
+
+        val rebased = PatrolFlow.rebaseStepBudget(running, 100_000L)
+        assertEquals("预算从「画面回来」这一刻重新起算", 100_000L, rebased.stepEnteredAtMs)
+        assertFalse("刚恢复 ⇒ 不该立刻判超时", PatrolFlow.timedOut(rebased, 100_000L))
+        assertTrue(
+            "但要给足一整份预算",
+            PatrolFlow.timedOut(rebased, 100_000L + PatrolFlow.STEP_TIMEOUT_MS),
+        )
+
+        // 没在跑的（暂停 / 已中止 / 已完成）不动它 —— 那些状态的预算归「继续」管，别在这里替用户决定
+        val paused = running.copy(paused = true)
+        assertEquals(paused, PatrolFlow.rebaseStepBudget(paused, 100_000L))
+    }
+
+    @Test
     fun resumeRestartsTheTimeBudgetForTheFailedStep() {
         // 「继续」= 重新给这一步一次完整预算，不拿"之前等了多久"立刻再判超时
         val failed = PatrolFlow.State(

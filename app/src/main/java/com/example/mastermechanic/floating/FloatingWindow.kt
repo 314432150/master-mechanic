@@ -2980,17 +2980,26 @@ class FloatingWindow(private val context: Context) {
     /**
      * 继续（T4-5 / FR-05）：从**失败或暂停的那一步**接着来，不重跑前面的步骤。
      *
-     * 与其他动作不同，它**保持展开**：用户点完就想看见"真的接着跑了"（状态行从"已中止"变回第 N 步），
-     * 收起来等于逼他再点一次手柄去确认。
+     * ⚠ **必须收起面板**（2026-10-01 真机缺陷，用户报"重新授权后点继续，没能完成流程"）：
+     * 它原先特意 `keepExpanded = true`（理由："用户点完就想看见真的接着跑了"），但那条理由撞上了
+     * **物理事实** —— 面板就画在游戏画面上，而恢复后这一步要点的锚点**正好落在面板矩形内**：
+     * ```
+     * 20:37:03.663  用户请求继续 ⇒ 面板仍展开（(2036,32) 1072x869 ⇒ 覆盖 x∈[2036,3108] y∈[32,901]）
+     * 20:37:04.303  第 8 步点 farm_friends (2914,431) ⇒ **落在面板里** ⇒ 被自己的面板吃掉 ✗
+     * 20:37:13.932  等了 9.6 秒毫无动静 ⇒ 用户手动停止
+     * （对照同一分钟重新发起：20:37:17.482 悬浮窗已收起 ⇒ 20:37:18.558 同一击 ⇒ 2 秒切到好友列表 ✓）
+     * ```
+     * "真的接着跑了"这件事**由顶部状态标签承接**（跑号中它一直写着 `打开好友列表` 这类当前动作），
+     * 不需要面板在场；面板留着只会挡住自己的手。顺带与 FR-07「收起时机：操作成功结束后立即收起」一致。
      */
     private fun onResume() {
         if (!ensureReady()) return
         val resumable = PatrolSession.canResume
-        sendRequest(PatrolRequestSignal.Kind.RESUME, keepExpanded = true)
+        // **没有**可继续的流程时保持展开说明原因（同 [onStop]：那种情况只是"告知"，不是动作）
+        sendRequest(PatrolRequestSignal.Kind.RESUME, keepExpanded = !resumable)
         if (resumable) {
-            // 成功：把上一次的原因条清掉，面板只剩进度（失败原因已经不再是"当前状态"）
+            // 收起已由 [sendRequest] 完成；把上一次的原因条清掉（下次展开时只剩进度）
             menuState = FloatingMenu.State()
-            rerender()
         } else {
             // 同「停止」：没有可继续的流程只是**告知**，不是失败 ⇒ 中性提示色
             note(context.getString(R.string.floating_menu_nothing_to_resume))

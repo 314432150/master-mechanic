@@ -1941,6 +1941,19 @@ class CaptureService : Service() {
         if (ClickDispatch.framesStalled) {
             ClickDispatch.setFramesStalled(false)
             MmLog.i(TAG, "画面采集已恢复（收到新帧）⇒ 解除「画面采集已停」的点击闸")
+            // **正在跑的那一步：预算从这里重新起算**（2026-10-01 真机缺陷修，见
+            // [PatrolFlow.rebaseStepBudget]）：停更期间照着"看不见"数出来的等待时间不算数 ——
+            // 否则"画面回来的那一轮"会拿累计的等待直接判超时中止（真机 `20:36:57.407`：
+            // 文案写"等了 36 秒"⇒ 中止，而期望的画面在 1 秒后就出现了 ✗）。
+            // ⚠ 必须放在**闸刚解除、本轮编排之前**：放晚了那一轮已经把中止算出来了。
+            if (PatrolSession.isActive) {
+                PatrolSession.rebaseStepBudget(nowMs)
+                MmLog.i(
+                    TAG,
+                    "画面恢复 ⇒ 第 ${PatrolSession.current?.step?.number} 步的预算重新起算" +
+                        "（停更期间那些等待不算数）",
+                )
+            }
         }
         // 新帧到了 ⇒ "停更自救"的计数归零（以后再停更可以从头再试，见 checkSurfaceRetry）
         if (surfaceRetries != 0) {

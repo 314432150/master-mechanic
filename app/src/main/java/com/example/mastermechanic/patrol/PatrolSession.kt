@@ -196,6 +196,19 @@ object PatrolSession {
         }
     }
 
+    /**
+     * **画面刚恢复 ⇒ 这一步的预算重新起算**（见 [PatrolFlow.rebaseStepBudget] 里的真机证据）。
+     *
+     * 调用点在**帧线程**：`CaptureService.processFrame` 解除「画面采集已停」那道闸的那一刻
+     * （收到停更后的第一帧）。与 [commit] 同一条规矩：代次变了（用户按了停止 / 又开了一轮）就不写回。
+     */
+    fun rebaseStepBudget(nowMs: Long) {
+        val snapshot = state ?: return
+        val generation = this.generation
+        val next = PatrolFlow.rebaseStepBudget(snapshot, nowMs)
+        if (next !== snapshot) commit(next, generation)
+    }
+
     /** 记下这一句给人看的话。 */
     fun note(text: String?) {
         lastNote = text
