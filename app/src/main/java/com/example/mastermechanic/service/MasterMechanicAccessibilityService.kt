@@ -252,23 +252,37 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
                 if (since == 0L) {
                     foregroundSuspectSinceMs = nowMs
                     ClickDispatch.setForegroundSuspect(true)
+                    // **视觉上立刻收起悬浮窗**（2026-10-01 用户报"切到后台后顶部标签不会立即消失、
+                    // 停留了一会儿"）：那 3.5 秒确认窗是为了**不误暂停跑号**而加的，但它顺手把
+                    // "标签收起"也一起延后了 ✗ —— 用户已经切走了，标签留在别人屏幕上只会碍事。
+                    // ⇒ 拆开：**看得见的后果**（收窗）**立刻**发生；**状态改判**（暂停跑号）等确认。
+                    // ⚠ 不会回到 2026-09-29 那次"每 1.4 秒挂载 / 移除 ⇒ ANR"的循环：那条路径是
+                    // "我们自己的覆盖窗事件被反复当成非前台"；这里只在真的出现非游戏窗口时发生一次，
+                    // 且下一次复核（1.5 秒）就会纠正 ⇒ 最多"收起 → 挂回"一次。
+                    handler.post { floatingWindow.hide() }
                     MmLog.w(
                         TAG,
-                        "前台**可疑**（$source：$detail）⇒ 先不放行任何点击，等下一次复核确认" +
-                            "（2026-10-01 加的护栏：桌面抢焦点 2.7 / 2.99 秒、以及「游戏窗口 0 个」这种" +
-                            "一次性的瞬时结论，都不能只凭一票就暂停跑号）",
+                        "前台**可疑**（$source：$detail）⇒ 立刻收起悬浮窗、先不放行任何点击，" +
+                            "等下一次复核确认是否真的离开（2026-10-01 加的护栏：桌面抢焦点 2.7 / 2.99 秒、" +
+                            "以及「游戏窗口 0 个」这种一次性的瞬时结论，都不能只凭一票就暂停跑号）",
                     )
                 } else if (nowMs - since >= FOREGROUND_SUSPECT_CONFIRM_MS) {
-                    val heldMs = nowMs - since
-                    MmLog.w(
-                        TAG,
-                        "前台可疑持续 ${heldMs}ms ⇒ **认下「不在前台」**（$source：$detail）" +
-                            "：暂停跑号 + 摘悬浮窗（点击闸保持）",
-                    )
-                    ForegroundSignal.update(
-                        ForegroundStatus.NOT_FOREGROUND,
-                        "$source（持续 ${heldMs}ms：$detail）",
-                    )
+                    // ⚠ **只在"真的还没改判"时记一次**（2026-10-01 真机日志刷屏修）：
+                    // 复核每 1.5 秒一轮，而确认之后 `since` 一直不为 0 ⇒ 不加这道判断就会
+                    // **每轮都重打一行 + 重复改判**（真机实录：`认下「不在前台」` 从"持续 4252ms"
+                    // 一路刷到"持续 44767ms"，把日志淹掉、真出故障时反而不好查）。
+                    if (ForegroundSignal.status != ForegroundStatus.NOT_FOREGROUND) {
+                        val heldMs = nowMs - since
+                        MmLog.w(
+                            TAG,
+                            "前台可疑持续 ${heldMs}ms ⇒ **认下「不在前台」**（$source：$detail）" +
+                                "：暂停跑号 + 摘悬浮窗（点击闸保持）",
+                        )
+                        ForegroundSignal.update(
+                            ForegroundStatus.NOT_FOREGROUND,
+                            "$source（持续 ${heldMs}ms：$detail）",
+                        )
+                    }
                 }
             }
             handler.post { foregroundQueryBusy = false }
@@ -287,6 +301,9 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
         val heldMs = if (since == 0L) 0L else SystemClock.elapsedRealtime() - since
         if (ClickDispatch.foregroundSuspect) {
             ClickDispatch.setForegroundSuspect(false)
+            // 可疑期间**立刻收起过悬浮窗**（见上面那条说明）⇒ 解除时要把**看得见的那部分还回去**：
+            // 信号没变过（那时不会触发变更监听）⇒ 这里必须显式挂回，否则游戏还在前台却一直没标签。
+            if (ForegroundSignal.isForeground) handler.post { floatingWindow.show() }
             MmLog.i(TAG, "前台可疑已解除（$reason）⇒ 恢复放行点击（可疑共持续 ${heldMs}ms）")
         }
     }
