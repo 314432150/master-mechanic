@@ -311,6 +311,7 @@ internal fun effectiveAnchorPurpose(
 fun CalibrationRoute(
     resumeTick: Int,
     onFullScreenChange: (Boolean) -> Unit,
+    onRequestReauth: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -463,6 +464,8 @@ fun CalibrationRoute(
                 message = context.getString(R.string.calibration_frames_restored, restored)
             }
         },
+        // 没有采集会话时那颗主按钮：一键建立（App 内直接拉起系统采集授权，不必自己去授权页）
+        onRequestReauth = onRequestReauth,
         onOpenWorkbench = {
             selectedFrame = selectedFrame ?: frames.firstOrNull()
             selection = null

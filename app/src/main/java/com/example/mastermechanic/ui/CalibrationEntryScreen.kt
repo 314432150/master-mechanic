@@ -42,7 +42,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
@@ -152,6 +159,30 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+/** 首屏那句"下一步做什么"的四个状态（见 [calibrationTodoOf]）。 */
+internal enum class CalibrationTodo { AUTH, RECORD, WORKBENCH, REVIEW }
+
+/**
+ * **首屏指令句的状态判据**（纯逻辑；M5-U5 收尾，2026-10-02 UX 评审 P3）。
+ *
+ * 为什么要有这个函数（而不是在组合里直接写 `when`）：这四句是"用户该点哪儿"的**唯一提示**，
+ * 判错就把人指向错的按钮 ⇒ 值得像 `VisitSettingsLogic` / `RunPageLogic` 那样单独钉一条单测。
+ * 顺序即优先级：**没有会话**什么都做不了（先授权）→ **一帧都没有**先录 → **没有结果**去框选 → 否则去查看。
+ *
+ * ⚠ "标定结果有内容"用 [artifactCount] 判，而不是"文件存在"：损坏的标定结果也会解析成空集合，
+ * 那种情况应该继续提示"去工作台框选"（配合标定结果卡里那条解析失败提示）。
+ */
+internal fun calibrationTodoOf(
+    captureActive: Boolean,
+    frameCount: Int,
+    artifactCount: Int,
+): CalibrationTodo = when {
+    !captureActive -> CalibrationTodo.AUTH
+    frameCount == 0 -> CalibrationTodo.RECORD
+    artifactCount == 0 -> CalibrationTodo.WORKBENCH
+    else -> CalibrationTodo.REVIEW
+}
+
 @Composable
 internal fun CalibrationScreen(
     captureActive: Boolean,
@@ -163,6 +194,7 @@ internal fun CalibrationScreen(
     onClearFrames: () -> Unit,
     restorableCount: Int,
     onRestoreFrames: () -> Unit,
+    onRequestReauth: () -> Unit,
     onOpenWorkbench: () -> Unit,
     onViewSignal: (String, SignalRole) -> Unit,
     onRemoveSignal: (String, SignalRole) -> Unit,
@@ -190,14 +222,36 @@ internal fun CalibrationScreen(
         ) {
             // M5-U5（ADR-009 决策五）：**标题与返回都收进壳**（用户 2026-10-01："标定页顶部为什么没有
             // 标题栏"）⇒ 页内不再有「返回授权页」，标题由壳的 `TopAppBar` 出（`nav_calibration` = 标定）。
-            // 原来那行长副标题（`calibration_subtitle` ≈120 字）压成 **1 行要点 + 「说明」弹层**（验收 V2）。
+            //
+            // 这一行原来是"要点式"的静态说明（"本页录样本帧、管理标定结果与匹配参数。"）—— UX 评审
+            // （2026-10-02）判为 **P3：信息量为零，真正的"下一步"被藏在「说明」弹层里**：
+            // 那句话说到底只是"本页做本页的事"，而用户需要的是"**我现在该点哪儿**"。
+            // ⇒ 改成**状态驱动的指令句**（四态见 [calibrationTodoOf]，每句 ≤24 字），
+            //   长说明照旧在「说明」弹层里（V2：超 60 字必须默认收起）。
+            val artifactCount = artifact.data?.signals?.size ?: 0
+            val todo = calibrationTodoOf(
+                captureActive = captureActive,
+                frameCount = frames.size,
+                artifactCount = artifactCount,
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = stringResource(R.string.calibration_one_line),
+                    text = when (todo) {
+                        CalibrationTodo.AUTH -> stringResource(R.string.calibration_todo_auth)
+                        CalibrationTodo.RECORD -> stringResource(R.string.calibration_todo_record)
+                        CalibrationTodo.WORKBENCH ->
+                            stringResource(R.string.calibration_todo_workbench, frames.size)
+
+                        CalibrationTodo.REVIEW ->
+                            stringResource(R.string.calibration_todo_review, artifactCount)
+                    },
                     style = MaterialTheme.typography.bodyMedium,
+                    // ⚠ 不要设 maxLines = 1：大字号下会被截断（UX 评审明确点到）
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
@@ -221,6 +275,7 @@ internal fun CalibrationScreen(
                 onToggleRecord = onToggleRecord,
                 onClearFrames = onClearFrames,
                 onRestoreFrames = onRestoreFrames,
+                onRequestReauth = onRequestReauth,
             )
 
             ArtifactCard(
@@ -286,7 +341,11 @@ internal fun FramesCard(
     onToggleRecord: () -> Unit,
     onClearFrames: () -> Unit,
     onRestoreFrames: () -> Unit,
+    onRequestReauth: () -> Unit,
 ) {
+    /** 卡头溢出菜单（UX 评审 P2：危险动作从动作行移出去，别跟主流程按钮挤一排）。 */
+    var menuOpen by remember { mutableStateOf(false) }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -294,28 +353,66 @@ internal fun FramesCard(
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     text = stringResource(R.string.calibration_frames_title),
                     style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
                 )
                 Text(
                     text = stringResource(R.string.calibration_frames_count, frames.size),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // 「清空帧池」「恢复上次清空的 N 帧」都收进这里（UX 评审 P2）：
+                // 它们**不可逆 / 低频**，原来跟「开始录制」并排且同色同形 ⇒ 用户滚到底顺手就点到 ✗。
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = stringResource(R.string.calibration_more),
+                        )
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = stringResource(R.string.calibration_frames_clear),
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            },
+                            enabled = frames.isNotEmpty(),
+                            onClick = {
+                                menuOpen = false
+                                onClearFrames()
+                            },
+                        )
+                        // 回收站非空才出现（2026-09-20 用户口径：Snackbar 只活几秒，
+                        // 而"清错了 49 帧"这件事可能过一会儿才发现 ⇒ 需要一个常驻入口）
+                        if (restorableCount > 0) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(stringResource(R.string.calibration_frames_restore, restorableCount))
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    onRestoreFrames()
+                                },
+                            )
+                        }
+                    }
+                }
             }
+            // **唯一主 CTA**（UX 评审：一次点击只做一件事）——
+            // 没有采集会话时不再是"灰着的开始录制"（哑按钮 ⇒ 用户只能自己跑去授权页），
+            // 而是**可点的一键建立**（App 内直接拉起系统采集授权；用户 2026-10-02："以免反复切换上下文"）。
             if (!captureActive) {
-                Text(
-                    text = stringResource(R.string.calibration_capture_missing),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onToggleRecord, enabled = recording || captureActive) {
+                Button(onClick = onRequestReauth, modifier = Modifier.fillMaxWidth()) {
+                    Text(text = stringResource(R.string.calibration_capture_grant))
+                }
+            } else {
+                Button(onClick = onToggleRecord, modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = stringResource(
                             if (recording) R.string.calibration_record_stop
@@ -323,25 +420,12 @@ internal fun FramesCard(
                         ),
                     )
                 }
-                OutlinedButton(onClick = onClearFrames, enabled = frames.isNotEmpty()) {
-                    Text(text = stringResource(R.string.calibration_frames_clear))
-                }
             }
-            // 回收站非空 → 卡片上常驻一个「恢复」入口（2026-09-20 用户口径）：
-            // Snackbar 只活几秒，而"清错了 49 帧"这件事可能过一会儿才发现。
-            if (restorableCount > 0) {
-                TextButton(onClick = onRestoreFrames, modifier = Modifier.align(Alignment.Start)) {
-                    Text(text = stringResource(R.string.calibration_frames_restore, restorableCount))
-                }
-            }
-            Text(
-                text = stringResource(R.string.calibration_frames_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (frames.isEmpty()) {
+            // 采样说明**只在"有会话但一帧都还没有"时出现**（UX 评审 P3：它是写给第一次采样的人看的；
+            // 常驻会把首屏吃掉近一半）—— 原来那行"暂无样本帧"随之删掉（与本行重复）。
+            if (captureActive && frames.isEmpty()) {
                 Text(
-                    text = stringResource(R.string.calibration_frames_empty),
+                    text = stringResource(R.string.calibration_frames_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -402,13 +486,25 @@ internal fun ArtifactCard(
                 text = stringResource(R.string.calibration_artifact_title),
                 style = MaterialTheme.typography.titleMedium,
             )
-            // T1-5m：工作台入口属标定产物操作，移入本卡
-            Button(
-                onClick = onOpenWorkbench,
-                enabled = framesExist,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(text = stringResource(R.string.calibration_workbench_open))
+            // T1-5m：工作台入口属标定结果操作，移入本卡。
+            // UX 评审（2026-10-02）：**还没有结果时它是这一页的主 CTA**（filled）；
+            // 已经有结果时降为 tonal —— 那时用户多半是回来看清单的，重心不该被按钮抢走。
+            if (data == null) {
+                Button(
+                    onClick = onOpenWorkbench,
+                    enabled = framesExist,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(text = stringResource(R.string.calibration_workbench_open))
+                }
+            } else {
+                FilledTonalButton(
+                    onClick = onOpenWorkbench,
+                    enabled = framesExist,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(text = stringResource(R.string.calibration_workbench_open))
+                }
             }
             when {
                 artifact.broken -> Text(
@@ -594,9 +690,25 @@ internal fun ArtifactCard(
                             }
                         }
                     }
-                    OutlinedButton(onClick = onDeleteArtifact) {
+                    // 危险动作（UX 评审 P2）：与上方清单**隔开 16dp** + error 描边 + 写明不可撤销。
+                    // 原来它跟清单最后一行**零间隔**，而且和普通次要按钮长得一样 ——
+                    // 用户单手滚到底想点最后一行，落点正好在"删除整个标定结果"上 ✗。
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedButton(
+                        onClick = onDeleteArtifact,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error,
+                        ),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                    ) {
                         Text(text = stringResource(R.string.calibration_delete))
                     }
+                    Text(
+                        text = stringResource(R.string.calibration_delete_irreversible),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
             }
             Text(

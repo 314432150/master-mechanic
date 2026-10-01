@@ -116,6 +116,20 @@ fun MasterMechanicApp(
     var calibrationFullScreen by remember { mutableStateOf(false) }
     val fullScreenMode = currentRoute == Routes.CALIBRATION && calibrationFullScreen
 
+    /**
+     * **App 内发起的"建立 / 重建采集会话"请求**（2026-10-02 用户："画面样本采集模块，若没有开启采集，
+     * 应当直接提供一键开启采集的入口，以免反复切换上下文"）。
+     *
+     * 复用的就是 U0 那条已经打通的通路：悬浮窗菜单把 App 拉到前台并带一个 `reauthTick`
+     * ⇒ 授权页**自动**拉起系统采集授权弹窗（[AuthorizationRoute] 里的 `LaunchedEffect`）。
+     * 这里让**页面内**也能发起同一条请求 ⇒ 用户不必"自己跑去授权页 → 找按钮 → 再点一次"。
+     *
+     * 为什么要跟 Activity 那个计数相加：两者是**同一种请求**的两种来源（Intent 带来 / App 内点出来），
+     * 授权页只认一个"待处理计数"；[onReauthHandled] 兑现后两边一起清零。
+     */
+    var localReauthTick by remember { mutableIntStateOf(0) }
+    val effectiveReauthTick = reauthTick + localReauthTick
+
     // **一键重新授权采集**（M5-U0 那段口径）：悬浮窗菜单把 App 拉到前台并带上标记 ⇒
     // 这里只负责"**到授权页**"，系统弹窗由 `AuthorizationRoute` 在那一页拉起（授权是它的职责，壳不抢）。
     // ⚠ 只以 [reauthTick] 为键：并进别的键会在每次回前台重弹一次（`MainActivity` 里记着这个坑）。
@@ -125,6 +139,12 @@ fun MasterMechanicApp(
 
     fun go(route: String) {
         navController.navigateTo(route)
+    }
+
+    /** 一键建立 / 重建采集会话：**先到授权页**（系统弹窗只能由 Activity 拉起），再由它自动弹出。 */
+    fun requestReauth() {
+        localReauthTick++
+        go(Routes.AUTH)
     }
 
     ModalNavigationDrawer(
@@ -209,14 +229,20 @@ fun MasterMechanicApp(
             ) {
                 // 一级：运行 —— **U2 起是本页自己的内容**（状态卡 + 停止/继续；不含"发起执行"，用户拍板）
                 composable(Routes.RUN) {
-                    RunRoute(resumeTick = resumeTick, onOpenAuth = { go(Routes.AUTH) })
+                    // 「重新授权采集」也走同一条一键通路（原来只是"跳到授权页"，用户还得自己再点一次）
+                    RunRoute(resumeTick = resumeTick, onOpenAuth = { requestReauth() })
                 }
                 // 抽屉：授权与权限 —— 同样先接现有授权页（U6 会拆成引导式四步）
                 composable(Routes.AUTH) {
                     AuthorizationDestination(
                         resumeTick = resumeTick,
-                        reauthTick = reauthTick,
-                        onReauthHandled = onReauthHandled,
+                        // 两个来源合流（Intent 带来的 + App 内点出来的），见 [localReauthTick]
+                        reauthTick = effectiveReauthTick,
+                        // 兑现后**两边一起清零**：不清本地这份，切走再切回授权页会又弹一次
+                        onReauthHandled = {
+                            localReauthTick = 0
+                            onReauthHandled()
+                        },
                         onOpenCalibration = { go(Routes.CALIBRATION) },
                         onOpenAccounts = { tab -> accountsTab = tab; go(Routes.ACCOUNTS) },
                     )
@@ -240,6 +266,8 @@ fun MasterMechanicApp(
                     CalibrationRoute(
                         resumeTick = resumeTick,
                         onFullScreenChange = { calibrationFullScreen = it },
+                        // 「画面样本采集」卡上没有会话时的那颗主按钮（一键建立，别再让用户自己跑授权页）
+                        onRequestReauth = { requestReauth() },
                     )
                 }
                 // 抽屉：诊断（U6 建设 —— 只放**只读读数**：画面在不在来 / 识别结果 / 耗时 / 日志）

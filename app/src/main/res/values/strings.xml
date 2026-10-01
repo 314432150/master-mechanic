@@ -305,18 +305,33 @@
     <!-- ⚠ 这一行**不要写成分隔符串**（首版写成「采样本 › 全屏框选 › 落盘为产物」，用户 2026-10-02：
          "看着像面包屑导航，容易引起误解" —— `›` 串起来的东西天生像"可点的层级"）。
          ⇒ 用**一句话**说明"这页管什么"，与页面上三张卡一一对应（样本帧 / 产物 / 参数）。 -->
-    <string name="calibration_one_line">本页录样本帧、管理标定结果与匹配参数。</string>
+    <!-- ⚠ `calibration_one_line` **已删**（2026-10-02 UX 评审 P3：那句话说到底只是"本页做本页的事"，
+         信息量为零）⇒ 首屏改成状态驱动的指令句 `calibration_todo_*`（见上面那组）。 -->
     <string name="calibration_about">说明</string>
+    <!-- M5-U5 收尾（2026-10-02 UX 评审 P3）：首屏那一行改成**状态驱动的指令句**（≤24 字），
+         四态由纯逻辑 `calibrationTodoOf` 决定（`ui/CalibrationEntryScreen.kt` + 单测）。
+         原来的静态要点 `calibration_one_line` 已删（"信息量为零"）。 -->
+    <string name="calibration_todo_auth">需要先授予屏幕采集权限，才能录样本帧。</string>
+    <string name="calibration_todo_record">开启录制后切到游戏，各界面停留 2~3 秒。</string>
+    <string name="calibration_todo_workbench">已有 %1$d 帧，去全屏工作台框选标志与锚点。</string>
+    <string name="calibration_todo_review">标定结果 %1$d 条已生效，可在下方查看或删除。</string>
+    <!-- 没有采集会话时那颗主按钮（一键建立，取代原来那颗"灰着的开始录制"哑按钮） -->
+    <string name="calibration_capture_grant">去授予屏幕采集权限</string>
+    <string name="calibration_more">更多操作（采集）</string>
+    <string name="calibration_delete_irreversible">此操作不可撤销。</string>
     <string name="calibration_about_flow">流程：先录样本帧，再进全屏工作台框选，点「写入」即落盘。</string>
     <string name="calibration_about_source">标定结果（模板 / 搜索窗口 / 匹配参数）是识别与点击的唯一数据源。</string>
     <string name="calibration_about_params">代码不含任何设备绑定参数 —— 换设备或换分辨率都要重新标定。</string>
-    <string name="calibration_capture_missing">尚未建立采集会话：请先回到「授权状态」页授予屏幕采集权限，否则无法录制画面样本。</string>
+    <!-- ⚠ `calibration_capture_missing` **已删**（2026-10-02）：没有会话时不再只给一行红字
+         —— 那颗主按钮直接变成可点的「calibration_capture_grant」（一键建立），红字是多余的重复。 -->
     <string name="calibration_frames_title">画面样本采集</string>
     <string name="calibration_record_start">开始录制</string>
     <string name="calibration_record_stop">停止录制</string>
     <string name="calibration_frames_count">已存 %1$d 帧</string>
     <string name="calibration_frames_clear">清空帧池</string>
     <string name="calibration_frames_hint">录制开启后切到游戏：在各界面停留 2~3 秒即可采到样本（每秒 1 帧，只录目标前台时的画面）。回到本页关闭录制。</string>
+    <!-- ⚠ 入口页 2026-10-02 起不再用这条（空态改由 `calibration_frames_hint` 承担，见 `FramesCard`），
+         但**工作台的帧列表空态仍在用**（`CalibrationWorkbench`）⇒ 保留，别误删。 -->
     <string name="calibration_frames_empty">暂无样本帧</string>
     <!-- 清空帧池 = 二次确认 + 可恢复（2026-09-20 用户口径：帧是在游戏里跑一遍才录得到的素材，清错代价高） -->
     <string name="calibration_clear_frames_title">清空帧池？</string>
