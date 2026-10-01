@@ -38,6 +38,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -199,8 +201,9 @@ private data class ServerDeleteAsk(
  *
  * 只做**格式**校验：区服名称必填（它是换号时唯一用于定位的字段），角色名与等级可留空。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ServerListRoute(resumeTick: Int, onBack: () -> Unit) {
+fun ServerListRoute(resumeTick: Int, addTick: Int = 0) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -409,12 +412,20 @@ fun ServerListRoute(resumeTick: Int, onBack: () -> Unit) {
         renameNotice = null
     }
 
+    // M5-U4：**「新增」搬进壳的标题栏**（ADR-009 决策五）⇒ 壳用 tick 通知本页"用户点了新增"。
+    // 编辑状态**仍留在页面**（不往上提升：那是页面的私有状态，提升只会让壳越来越重）。
+    LaunchedEffect(addTick) {
+        if (addTick > 0) {
+            editingIndex = null
+            editorOpen = true
+        }
+    }
+
     ServerListScreen(
         state = state,
         entries = entries,
         message = message,
         snackbarHostState = snackbarHostState,
-        onBack = onBack,
         onAbout = { aboutOpen = true },
         onAdd = {
             editingIndex = null
@@ -527,30 +538,30 @@ fun ServerListRoute(resumeTick: Int, onBack: () -> Unit) {
         )
     }
 
-    // 「说明」：原来常驻的 4 行长副标题挪进这里（读一次就够的信息不该一直占着列表的高度）
+    // 「说明」：原来常驻的 4 行长副标题挪进这里（读一次就够的信息不该一直占着列表的高度）。
+    // M5-U4：从 `AlertDialog` 换成**底部弹层**（ADR-009 决策二：行内说明一律走 `ModalBottomSheet`）
+    // —— 一屏高的对话框会压住上下文；弹层从底部上来、随时滑走，"我在看的是哪个列表"一直看得见。
     if (aboutOpen) {
-        AlertDialog(
-            onDismissRequest = { aboutOpen = false },
-            title = { Text(stringResource(R.string.server_about)) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = stringResource(R.string.server_subtitle),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        text = stringResource(R.string.server_hint),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { aboutOpen = false }) {
-                    Text(stringResource(R.string.server_about_close))
-                }
-            },
-        )
+        ModalBottomSheet(onDismissRequest = { aboutOpen = false }) {
+            Column(
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.server_about),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = stringResource(R.string.server_subtitle),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = stringResource(R.string.server_hint),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 
@@ -582,7 +593,6 @@ fun ServerListScreen(
     state: ServerListState,
     entries: List<ServerEntry>,
     message: String?,
-    onBack: () -> Unit,
     onAbout: () -> Unit,
     onAdd: () -> Unit,
     onEdit: (Int) -> Unit,
@@ -603,17 +613,19 @@ fun ServerListScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
+            // M5-U4（ADR-009 决策五）：**标题与「返回」收进壳**（一级目的地不给返回箭头；壳出标题「账号与好友」）
+            // ⇒ 本页从"**一行要点 + 说明入口**"开始。首屏永远只有 1 行（验收 V2），长文进「说明」弹层。
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = stringResource(R.string.server_title),
-                    style = MaterialTheme.typography.titleLarge,
+                    text = stringResource(R.string.server_one_line),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(onClick = onAbout) {
                     Text(stringResource(R.string.server_about))
-                }
-                TextButton(onClick = onBack) {
-                    Text(stringResource(R.string.server_back))
                 }
             }
 
@@ -649,19 +661,12 @@ fun ServerListScreen(
                     }
                 }
                 is ServerListState.Loaded -> {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = stringResource(R.string.server_list_title, entries.size),
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Button(
-                            onClick = onAdd,
-                            modifier = Modifier.heightIn(min = 48.dp),
-                        ) {
-                            Text(stringResource(R.string.server_add))
-                        }
-                    }
+                    // M5-U4：「新增」已搬进**壳的标题栏**（ADR-009 决策五：列表页的新增统一放 `TopAppBar.actions`，
+                    // 一处一个、不再各页自造）⇒ 这里只剩条数。
+                    Text(
+                        text = stringResource(R.string.server_list_title, entries.size),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                     // 手势提示：按钮全删掉之后，这三个手势唯一的"发现入口"（空态另有教学文案）
                     if (entries.isNotEmpty()) {
                         Text(

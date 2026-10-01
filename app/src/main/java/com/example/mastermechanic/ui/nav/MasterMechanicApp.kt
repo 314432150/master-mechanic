@@ -20,6 +20,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -93,6 +94,13 @@ fun MasterMechanicApp(
      */
     var accountsTab by rememberSaveable { mutableIntStateOf(0) }
 
+    /**
+     * **「新增」请求的计数**（M5-U4）：壳的标题栏那个按钮点一次 +1 ⇒ 对应页面的 `LaunchedEffect` 接住并打开新增。
+     *
+     * 为什么用"计数"而不是布尔：连点两次要各打开一次；而页面自己关掉后**不会**因为"值还是 true"再弹一遍。
+     */
+    var accountsAddTick by rememberSaveable { mutableIntStateOf(0) }
+
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
 
     // **一键重新授权采集**（M5-U0 那段口径）：悬浮窗菜单把 App 拉到前台并带上标记 ⇒
@@ -144,6 +152,16 @@ fun MasterMechanicApp(
                                 )
                             }
                         },
+                        actions = {
+                            // M5-U4（ADR-009 决策五）：列表页的**「新增」统一住在壳的标题栏**（一处一个）。
+                            // ⚠ 目前只在「区服清单」这个 Tab 出 —— 「好友清单」还在用自己的页内新增按钮，
+                            // 等它一并收编后再打开这一支（**不能先出按钮再做空动作**：那是个点了没反应的假按钮）。
+                            if (currentRoute == Routes.ACCOUNTS && accountsTab == 0) {
+                                TextButton(onClick = { accountsAddTick++ }) {
+                                    Text(stringResource(R.string.server_add))
+                                }
+                            }
+                        },
                     )
                 }
             },
@@ -192,6 +210,7 @@ fun MasterMechanicApp(
                     AccountsDestination(
                         navController = navController,
                         resumeTick = resumeTick,
+                        addTick = accountsAddTick,
                         tab = accountsTab,
                         onTabChange = { accountsTab = it },
                     )
@@ -262,6 +281,7 @@ private fun AuthorizationDestination(
 private fun AccountsDestination(
     navController: NavHostController,
     resumeTick: Int,
+    addTick: Int,
     tab: Int,
     onTabChange: (Int) -> Unit,
 ) {
@@ -279,7 +299,9 @@ private fun AccountsDestination(
             )
         }
         when (tab) {
-            0 -> ServerListRoute(resumeTick = resumeTick, onBack = { navController.popBackStack() })
+            // 区服清单：U4 起标题栏与「新增」都由壳给（页内不再有返回 / 新增）
+            0 -> ServerListRoute(resumeTick = resumeTick, addTick = addTick)
+            // 好友清单：**还没收编**（下一步做）⇒ 仍带自己的页头与新增按钮
             else -> FriendListRoute(resumeTick = resumeTick, onBack = { navController.popBackStack() })
         }
     }

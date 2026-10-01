@@ -463,9 +463,11 @@
 
     <!-- 服务器清单（M3-T3-9 / FR-10） -->
     <string name="auth_open_server_list">服务器</string>
-    <string name="server_title">服务器</string>
+    <!-- ⚠ `server_title` / `server_back` / `server_about_close` 三条**已删**（M5-U4）：
+         页头（标题 + 返回）收进壳（ADR-009 决策五），「说明」改成底部弹层后也不需要"知道了"按钮。
+         零死文案守卫生效时会盯着这一类。 -->
+
     <string name="server_subtitle">每条 = 平台（微信 / QQ，可留空）+ 区号（可留空）+ 区服名称 + 角色名（可留空）+ 等级（可留空）。一个区服只有一个小号，所以同一区服只能有一条（按区服名称判重，平台与区号算不算都一样）。换号时只按「区服名称」到界面上找它；平台、区号、角色名与等级只是帮你认出这是哪个号（平台与区号显示在每行开头，一眼就能对上），不参与定位（找不到或不止一个就停下，不会猜着点）。这里的顺序也就是「按顺序切下一个」的顺序。</string>
-    <string name="server_back">返回授权页</string>
     <string name="server_list_title">服务器（%1$d 条）</string>
     <string name="server_empty">还没有服务器。点右上角「新增服务器」加第一条。
 
@@ -477,6 +479,9 @@
     <string name="server_field_optional_hint">可留空</string>
     <string name="server_field_server_hint">必填</string>
     <string name="server_add">新增服务器</string>
+    <!-- M5-U4：清单页首屏**只留 1 行要点**（验收 V2：超 60 字的说明一律折叠）——
+         其余规则（判重口径、只按区服名称定位、顺序含义）都在「说明」弹层里。 -->
+    <string name="server_one_line">顺序即「下一个」的顺序</string>
     <string name="server_gesture_hint">双击 = 编辑 ｜ 按住拖动 = 排序 ｜ 左滑出「删除」，点它直接删</string>
     <string name="server_edit">编辑</string>
     <string name="server_move_up">前移</string>
@@ -490,7 +495,6 @@
     <string name="server_clear_confirm">清空</string>
     <string name="server_cancel">取消</string>
     <string name="server_about">说明</string>
-    <string name="server_about_close">知道了</string>
     <string name="server_dialog_add">新增服务器</string>
     <string name="server_dialog_edit_indexed">编辑服务器（第 %1$d 条）</string>
     <string name="server_field_platform">平台</string>
