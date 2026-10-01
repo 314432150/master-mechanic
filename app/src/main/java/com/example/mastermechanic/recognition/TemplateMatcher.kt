@@ -35,9 +35,140 @@ object TemplateMatcher {
     private const val COARSE_TOP_K = 64
 
     /**
+     * 估算一次 [findPeaks] 的**粗搜乘加次数**（成本模型的**唯一实现**，供排障日志与"该不该重框"的判断共用）。
+     *
+     * 口径严格对齐实现：位置数与 [gridPositions] 同步长（[COARSE_STEP]，末点必被计入），
+     * 每位置采样点数与 [SampleView] 同口径（交错半采样 ⇒ 约 `w·h/2`）。
+     * 精搜（`COARSE_TOP_K × 9` 个位置的全精度重算）与它相比恒小两个数量级，故只算粗搜。
+     *
+     * ## 怎么用它（真机实测：≈ 6~10ms / 百万次乘加）
+     *
+     * 排查"识别变慢 / 跑号超时"时，拿 `信号耗时统计` 里最慢那条的**模板尺寸与窗口尺寸**套这个公式：
+     * ```
+     * tutorial_guide_e1: 模板 155×168、窗口 466×487 ⇒ 3.25e8 ⇒ 实测 2064ms  ✓ 与实测吻合
+     * tutorial_hall_e1:  模板 248×80、 窗口 744×167 ⇒ 1.09e8 ⇒ 实测  766ms  ✓
+     * activity_popup_e1: 模板  82×89、 窗口 147×154 ⇒ 3.97e6 ⇒ 实测   70ms  ✓
+     * ```
+     * ⚠ 2026-09-29 之后窗口余量固定（标志 48 / 锚点 64 px/边）⇒ 位置数恒定（≈49×49），
+     * 于是**成本正比于模板面积** —— 想变快就只剩"把模板框小"这一个杠杆
+     * （真机：框小一半约快一半）。见 `CalibrationStore.logStillHeavy` 与 `docs/progress.md` 第 288 条。
+     */
+    fun estimateCoarseOps(
+        window: SearchWindow,
+        templateWidth: Int,
+        templateHeight: Int,
+        frameWidth: Int,
+        frameHeight: Int,
+    ): Long {
+        if (templateWidth <= 0 || templateHeight <= 0 || frameWidth <= 0 || frameHeight <= 0) return 0L
+        val bounds = window.pixelBounds(frameWidth, frameHeight)
+        val spanX = bounds.x1 - bounds.x0
+        val spanY = bounds.y1 - bounds.y0
+        if (spanX < templateWidth || spanY < templateHeight) return 0L
+        val positionsX = (spanX - templateWidth) / COARSE_STEP + 1
+        val positionsY = (spanY - templateHeight) / COARSE_STEP + 1
+        val samples = (templateWidth.toLong() * templateHeight + 1) / 2
+        return positionsX.toLong() * positionsY * samples
+    }
+
+    /**
+     * **单条信号单轮匹配的粗搜乘加上限**（成本护栏预算）。
+     *
+     * 8M ≈ 单条 50~80ms（实测 ≈6~10ms / 百万次乘加）。健康信号都远低于它
+     * （`activity_popup` ≈4M、`launch_login` ≈3M），只有"窗口相对模板大得离谱"的那几条才会吃到这一刀。
+     *
+     * 为什么要有它：固定余量口径（标志 48 / 锚点 64 px/边）**不看计算量** —— 大模板配上这点余量后
+     * 单条就要 ~20M（真机：整轮从 ~0.2s 掉到 ~0.8s，用户报障"识别速度很明显慢了很多"）
+     * ⇒ 固定余量给足之后，再按这个预算兜一道（见 `CalibrationData.costCapped`）。
+     */
+    const val MATCH_OPS_BUDGET = 8_000_000L
+
+    /**
+     * **成本护栏**：把 [window] 朝**自己的中心**收窄到"粗搜乘加 ≤ [maxOps]"，但**永不收到
+     * "模板四周不足 [SearchWindow.MIN_ABSOLUTE_MARGIN_PX] 像素"**；不超预算时**原样返回同一个对象**。
+     *
+     * 两条硬边界：① **只收紧、不放大**（半宽只在 `[模板半宽+32px, 现有半宽]` 之间走）；
+     * ② **余量下限优先于预算** —— 模板本身就大时到下限仍超预算 ⇒ 取下限、不硬凑
+     * （32px 是本项目真机实测的安全余量：`hall_settings` 命中位置比窗口中心偏 ≈20px，8px 会把它挤出窗口）。
+     * 两个轴按**同一比例**收（尽量保形状）⇒ 不改变"框在哪就搜哪"的语义，也不动产物文件。
+     */
+    fun cappedByCost(
+        window: SearchWindow,
+        templateWidth: Int,
+        templateHeight: Int,
+        frameWidth: Int,
+        frameHeight: Int,
+        maxOps: Long = MATCH_OPS_BUDGET,
+    ): SearchWindow {
+        if (frameWidth <= 0 || frameHeight <= 0 || templateWidth <= 0 || templateHeight <= 0) return window
+        if (estimateCoarseOps(window, templateWidth, templateHeight, frameWidth, frameHeight) <= maxOps) {
+            return window
+        }
+        val bounds = window.pixelBounds(frameWidth, frameHeight)
+        val centerX = (bounds.x0 + bounds.x1) / 2.0
+        val centerY = (bounds.y0 + bounds.y1) / 2.0
+        val minHalfWidth = templateWidth / 2.0 + SearchWindow.MIN_ABSOLUTE_MARGIN_PX
+        val minHalfHeight = templateHeight / 2.0 + SearchWindow.MIN_ABSOLUTE_MARGIN_PX
+        val maxHalfWidth = (bounds.x1 - bounds.x0) / 2.0
+        val maxHalfHeight = (bounds.y1 - bounds.y0) / 2.0
+        if (minHalfWidth >= maxHalfWidth && minHalfHeight >= maxHalfHeight) return window
+
+        fun windowAt(ratio: Double): SearchWindow {
+            val halfWidth = minHalfWidth + (maxHalfWidth - minHalfWidth) * ratio
+            val halfHeight = minHalfHeight + (maxHalfHeight - minHalfHeight) * ratio
+            return SearchWindow(
+                left = ((centerX - halfWidth) / frameWidth).coerceIn(0.0, 1.0),
+                top = ((centerY - halfHeight) / frameHeight).coerceIn(0.0, 1.0),
+                right = ((centerX + halfWidth) / frameWidth).coerceIn(0.0, 1.0),
+                bottom = ((centerY + halfHeight) / frameHeight).coerceIn(0.0, 1.0),
+            )
+        }
+
+        // 二分找"估算量刚好 ≤ 预算"的最大比例（估算量随比例单调不减）。固定 24 次 ⇒ 确定性（§5-4）。
+        var lo = 0.0
+        var hi = 1.0
+        repeat(24) {
+            val mid = (lo + hi) / 2
+            val ops = estimateCoarseOps(
+                windowAt(mid), templateWidth, templateHeight, frameWidth, frameHeight,
+            )
+            if (ops <= maxOps) lo = mid else hi = mid
+        }
+        return windowAt(lo)
+    }
+
+    /**
+     * 峰值抑制半径的分母：**短边 / 此值**（见 [effectiveSuppressRadius]）。
+     *
+     * 取 3 的依据是真机实录（2026-09-29，`139×74` 的锚点模板，帧 3168×1440）：
+     * ```
+     * 抑制半径 5px（当时口径）:  最高 0.9752 @ (74,13) / 次高 0.9033 @ (76,13)  ← 仅相距 2px
+     * 抑制半径 40px:             最高 0.9752 @ (74,13) / 次高 0.4213 @ (60,13)  ← 真正的别处
+     * ```
+     * ⇒ 那个"次高分"根本不是别处，而是**同一个峰的肩膀**（NCC 峰顶平坦，模板越大越平）；
+     * 而它 ≥ 命中线 0.85 ⇒ `judge` 判「多处高分」⇒ **一条实际匹配到 0.975 的锚点被判成认不出**。
+     * 短边 / 3 = 24px 已足以吃掉这个肩宽（实测肩部在 12px 内仍 ≥ 0.85），
+     * 而画面里**真正重复出现的图案**相距都在几百像素量级 ⇒ 仍会被当成竞争位置（红线 7 不破）。
+     */
+    const val PEAK_SUPPRESS_DIVISOR = 3
+
+    /**
+     * **实际使用的峰值抑制半径** = max([MatchParams.peakMinDistance], 模板短边 / [PEAK_SUPPRESS_DIVISOR])。
+     *
+     * 为什么不直接用标定里的 [MatchParams.peakMinDistance]：那是个**与模板尺寸无关**的固定像素数（产物里 5），
+     * 而 NCC 峰顶的**平坦程度随模板变大而变宽** —— 大模板用 5px 抑制，等于把"自己身边的肩部"
+     * 当成了"第二处位置"（真机实测见 [PEAK_SUPPRESS_DIVISOR]）。这是**设备无关**的算法特性
+     * （只与模板尺寸有关，不引入设备绑定参数，红线 4 不破）。
+     */
+    fun effectiveSuppressRadius(params: MatchParams, templateWidth: Int, templateHeight: Int): Int {
+        if (templateWidth <= 0 || templateHeight <= 0) return params.peakMinDistance
+        return maxOf(params.peakMinDistance, minOf(templateWidth, templateHeight) / PEAK_SUPPRESS_DIVISOR)
+    }
+
+    /**
      * 在 [image] 的 [window] 范围内扫描 [template]，返回候选峰值（分数降序、彼此分离）。
      *
-     * 峰值 = 经非极大抑制的局部最优位置：抑制半径 [MatchParams.peakMinDistance] 内的
+     * 峰值 = 经非极大抑制的局部最优位置：抑制半径 [effectiveSuppressRadius] 内的
      * 候选视为同一处、只保留最高分——最高与次高分构成「竞争位置」审计基础（§5-1/§5-2）。
      */
     fun findPeaks(image: GrayImage, template: Template, window: SearchWindow, params: MatchParams): List<MatchPeak> {
@@ -87,7 +218,7 @@ object TemplateMatcher {
                 }
             }
         }
-        return suppressPeaks(candidates, params.peakMinDistance)
+        return suppressPeaks(candidates, effectiveSuppressRadius(params, template.width, template.height))
     }
 
     /**

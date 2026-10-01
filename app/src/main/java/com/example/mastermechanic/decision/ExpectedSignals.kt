@@ -72,10 +72,33 @@ class FixedExpectedSignals(private val names: Set<String>) : ExpectedSignals {
  * 守护模式下除 FR-01 外不产生任何点击（需求 §4-5），功能无损失。
  * 收益：待命期 4 条（≈490ms，其中大窗口 `launch_start` 单轮 ≈283ms）→ **3 条（≈207ms）**。
  *
+ * ## 2026-09-20 补记：本类自己不管"起点画面"，但别的地方必须管
+ *
+ * 上面那条代价在真机上撞出了**死锁**：状态恒「未知」→ 而"用户点菜单那一刻起点成不成立"
+ * 必须先知道画面（`PatrolFlow.firstStep`）→ **菜单点了永远不启动**。
+ * 修法不在本类（本类只管弹窗那一组，恒定不变），而在包着它的
+ * [PatrolDrivenExpectedSignals]：**待命期额外搜"能当起点的 5 屏"**（`standbyStates`）。
+ *
+ * 成本账随之变了 —— 但**不是因为多搜那几条，而是因为状态终于能收敛**：
+ * - 修之前：待命期状态恒「未知」→ `RoundResult.settled` 恒 false → **节流永远停在 200ms 快档**
+ *   （真机日志里一条「节流间隔切换」都没有，1 条弹窗标志 ≈80ms/轮，单核占用 ≈29%）；
+ * - 修之后：状态稳定命中 → 降到 1000ms 慢档（+5 条 ≈ +350~500ms/轮，单核占用 ≈33%）。
+ *
+ * 结论：**净代价约 +4 个百分点（单核）**，买的是"点菜单即刻判定起点、零延迟、同步"。
+ *
  * 产物里没有活动弹窗记录（未标定）→ 空集 = **不搜**（不会退化成全扫）。
+ *
+ * ## 2026-09-29：从"只管活动弹窗"扩到**全部遮挡屏**（FR-02 恢复）
+ *
+ * 用户口径：新手引导 / 新手大厅**只在新手号出现**、登录后出现在活动弹窗之前，要"看到就点掉"。
+ * 与活动弹窗同理 —— 能不能管它们，只取决于"**它们自己出现了没有**"，不依赖任何阶段推断。
+ * 所以这里改成取 [UiState.guardedOverlays]（活动弹窗 + 新手两页）**各自的全部标志名并集**。
+ *
+ * ⚠ **名字里的 `Popup` 是历史叫法**（改名的成本是 4 个实现文件 + 3 个测试 + 若干文档里的引用，
+ * 与其为名字翻一遍，不如在这里说清楚）：本类现在覆盖的是**遮挡屏守护集合**，不只是弹窗。
  */
 class PopupWatchExpectedSignals private constructor(
-    /** 活动弹窗的全部标志记录（产物声明顺序无关，作为集合使用）。 */
+    /** 守护遮挡屏的全部标志记录（产物声明顺序无关，作为集合使用）。 */
     private val popupNames: Set<String>,
 ) : ExpectedSignals {
 
@@ -83,12 +106,16 @@ class PopupWatchExpectedSignals private constructor(
 
     companion object {
 
-        /** 由标定产物的状态—信号规则构造：取「活动弹窗」状态在产物里的**全部**标志名。 */
+        /**
+         * 由标定产物的状态—信号规则构造：取 [UiState.guardedOverlays] **每一个**状态在产物里的
+         * **全部**标志名（任一命中即命中，§2.1）。
+         */
         fun fromRules(rules: List<SignalStateMapping.Rule>): PopupWatchExpectedSignals =
             PopupWatchExpectedSignals(
-                popupNames = rules.firstOrNull { it.state == UiState.ACTIVITY_POPUP }
-                    ?.signalNames
-                    .orEmpty(),
+                popupNames = rules
+                    .filter { it.state in UiState.guardedOverlays }
+                    .flatMap { it.signalNames }
+                    .toSet(),
             )
     }
 }

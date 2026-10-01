@@ -7,11 +7,16 @@ import com.example.mastermechanic.decision.UiState
  * 红线 6（相邻点击间隔 ≥ 300ms）的**唯一实现点**——不依赖任何调用方自觉。
  *
  * 判定顺序（固定，审计里能看出"最先拦在哪一条"）：
- * 1. 演练模式 → 拒绝；
+ * 1. **常驻守护服务未启动** → 拒绝（2026-09-20 用户口径：它是自动化的**必备项**，
+ *    没起就整体不动作——避免"看着在跑、其实没人接单"的假运行态）；
  * 2. 游戏不在前台 → 拒绝；
- * 3. 状态未知 → 拒绝；
- * 4. 已有手势在途（串行）→ 拒绝；
- * 5. 距上次手势**完成**不足 [spacingMs] → 拒绝（该口径比"开始到开始"更保守，兼容 NFR-06 的任何解释）。
+ * 3. **画面采集已停** → 拒绝（2026-09-29 增：手上那张画面是旧的，点出去就是"照着旧画面点"；
+ *    排在前台之后、状态之前，是因为那时**状态本身也是旧画面读出来的**，报"状态未知"会引偏）；
+ * 4. 状态未知 → 拒绝；
+ * 5. **换算后的落点在屏幕外** → 拒绝（2026-09-20 增：与上面几条同属"硬性不许点"，
+ *    排在串行 / 间隔之前，是因为它是**坐标系问题**，不是"等一会儿就能点"的时序问题）；
+ * 6. 已有手势在途（串行）→ 拒绝；
+ * 7. 距上次手势**完成**不足 [spacingMs] → 拒绝（该口径比"开始到开始"更保守，兼容 NFR-06 的任何解释）。
  *
  * 调用约定：[decide] 只读不写；真正下发前后由 [onGestureStarted] / [onGestureFinished] 推进计时。
  * 时间一律由外部注入（单调时钟），本类不读系统时间——便于单测，也避免墙钟跳变影响间隔。
@@ -34,9 +39,14 @@ class ClickGate(private val spacingMs: Long = MIN_SPACING_MS) {
 
     /** 判定是否允许下发（无副作用，可重复调用）。 */
     fun decide(environment: ClickEnvironment, nowMs: Long): ClickVerdict = when {
-        environment.mode != ClickMode.LIVE -> ClickVerdict(false, ClickDenyReason.DRILL_MODE)
+        !environment.guardRunning -> ClickVerdict(false, ClickDenyReason.GUARD_NOT_RUNNING)
         !environment.gameForeground -> ClickVerdict(false, ClickDenyReason.NOT_FOREGROUND)
+        // **画面采集已停 ⇒ 一格都不许点**（2026-09-29，紧跟前台之后、排在"状态未知"之前）：
+        // 这时手上那张画面是旧的，而**状态本身也是从旧画面读出来的** —— 报"状态未知"会把人引偏，
+        // 真正的原因是"眼睛停了"（真机：5 分钟没新帧，程序照着旧坐标点了一枪）。
+        environment.framesStalled -> ClickVerdict(false, ClickDenyReason.STALE_FRAMES)
         environment.state == UiState.UNKNOWN -> ClickVerdict(false, ClickDenyReason.STATE_UNKNOWN)
+        !environment.targetOnScreen -> ClickVerdict(false, ClickDenyReason.OUT_OF_SCREEN)
         inFlightDecisionId != null -> ClickVerdict(false, ClickDenyReason.IN_FLIGHT)
         !spacingSatisfied(nowMs) -> ClickVerdict(false, ClickDenyReason.TOO_SOON)
         else -> ClickVerdict(true)

@@ -11,18 +11,37 @@ android {
 
     defaultConfig {
         applicationId = "com.example.mastermechanic"
-        minSdk = 28
+        // 34（Android 14）是 `MediaProjection.Callback.onCapturedContentResize` 的起点 ——
+        // 转屏跟随（VirtualDisplay.resize）依赖它，低于 34 会退化成"几何不一致 ⇒ 结束会话"。
+        // 2026-09-23 用户口径：本工具的目标设备就是本机（Android 16），不值得为老设备背两套几何代码。
+        minSdk = 34
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        /**
+         * 只打 **arm64-v8a**（2026-09-21，T4-3）：ML Kit 中文 OCR 的原生库
+         * `libmlkit_google_ocr_pipeline.so` 每个 ABI 约 **11MB**，四个 ABI 合计 41MB ——
+         * 不裁剪会让安装包从 22.36MB 涨到 45.09MB（NFR-03 要求 ≤25MB）。
+         * 目标设备 vivo V2463A 是 64 位 ARM；**代价**：32 位 ARM（armeabi-v7a）设备装不上。
+         * 将来要覆盖 32 位设备，就得回到"不装 OCR"或换更轻的方案。
+         */
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildTypes {
         release {
+            /**
+             * 2026-09-21 起**开启压缩**：T4-3 要引入 ML Kit 中文模型（捆绑式，约 +5~8MB），
+             * 而 NFR-03 要求安装包 ≤25MB —— 未压缩的 release 包已是 22.36MB，不压缩会直接超线。
+             * 开启后由 R8 收缩代码与资源，把模型那部分体积省回来（实测见 progress.md）。
+             */
             optimization {
-                enable = false
+                enable = true
             }
         }
     }
@@ -61,6 +80,19 @@ if (project.hasProperty("fastTests")) {
     }
 }
 
+/**
+ * 单测 JVM 的堆上限（2026-10-01 加）。
+ *
+ * 依据：里程碑口径的真全量 `:app:test` 里 `NameLocateProbeTest`（真机帧池回放）
+ * 以 `java.lang.OutOfMemoryError: Java heap space` 挂掉 —— 一帧 3168×1440 RGBA ≈ **18MB**，
+ * 默认堆（Gradle 默认 512MB）放不下几十帧。抬到 4GB。
+ *
+ * ⚠ 只影响**测试 JVM**，不进 APK、不影响包体（NFR-03 那 25MB 与此无关）。
+ */
+tasks.withType<Test>().configureEach {
+    maxHeapSize = "4g"
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
@@ -70,6 +102,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    // T4-3 名称定位（第 5 / 9 步）：区服名 / 好友名的文字识别，**捆绑模型**（无需 Google Play 服务）
+    implementation(libs.mlkit.text.recognition.chinese)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

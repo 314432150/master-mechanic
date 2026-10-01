@@ -1,6 +1,7 @@
 package com.example.mastermechanic.action
 
 import com.example.mastermechanic.decision.UiState
+import kotlin.random.Random
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -16,8 +17,8 @@ class ClickForwarderTest {
         val calls = mutableListOf<Pair<Double, Double>>()
         private var onResult: ((Boolean) -> Unit)? = null
 
-        override fun click(frameX: Double, frameY: Double, onResult: (Boolean) -> Unit): Boolean {
-            calls += frameX to frameY
+        override fun click(x: Double, y: Double, onResult: (Boolean) -> Unit): Boolean {
+            calls += x to y
             this.onResult = onResult
             return accepted
         }
@@ -40,13 +41,18 @@ class ClickForwarderTest {
     ) = ClickRequest(decisionId, source, anchorName, frameX, frameY)
 
     private fun environment(
-        mode: ClickMode = ClickMode.LIVE,
         foreground: Boolean = true,
         state: UiState = UiState.ACTIVITY_POPUP,
-    ) = ClickEnvironment(foreground, state, mode)
+    ) = ClickEnvironment(foreground, state)
 
-    private fun forwarder(injector: GestureInjector, gate: ClickGate = ClickGate()) =
-        ClickForwarder(gate, injector, clock = { now }, audit = events::add)
+    private fun forwarder(
+        injector: GestureInjector,
+        gate: ClickGate = ClickGate(),
+        screenSize: ScreenSize = ScreenSize.UNKNOWN,
+    ) = ClickForwarder(gate, injector, clock = { now }, audit = events::add, screenSize = { screenSize })
+
+    /** 今天真机的屏幕几何（3168×1440）。T4-6 之后帧与屏幕同尺寸，它只用于**越界判定**。 */
+    private val phoneScreen = ScreenSize(3168, 1440)
 
     @Test
     fun dispatchesAtJudgedPointAndAuditsLifecycle() {
@@ -128,5 +134,45 @@ class ClickForwarderTest {
         injector.endGesture(completed = false)
 
         assertFalse((events[1] as ClickEvent.GestureEnded).completed)
+    }
+
+    @Test
+    fun dispatchPointIsJitteredButStaysBounded() {
+        // 2026-09-21 用户口径（输入拟人化）：落点要抖 —— 但**必须在 ±半径内**（红线 3/7：不能因为抖动点偏）
+        // T4-6 起不再换算（帧 == 屏幕），抖动直接作用在识别判定给出的落点上。
+        val injector = FakeInjector()
+        val forwarder = ClickForwarder(
+            gate = ClickGate(),
+            injector = injector,
+            clock = { now },
+            audit = events::add,
+            screenSize = { phoneScreen },
+            jitter = InputJitter(Random(5)),
+        )
+
+        forwarder.submit(request(frameX = 1324.0, frameY = 726.0), environment())
+
+        val (x, y) = injector.calls.single()
+        val radius = InputJitter.DEFAULT_RADIUS_PX.toDouble()
+        assertTrue("落点应在判定点 ±${radius}px 内：($x, $y)", x >= 1324.0 - radius && x <= 1324.0 + radius)
+        assertTrue(y >= 726.0 - radius && y <= 726.0 + radius)
+        val audit = (events[0] as ClickEvent.Decided).audit
+        assertEquals("审计记的应是**实际下发**的落点", x.toInt(), audit.screenX)
+        assertEquals(y.toInt(), audit.screenY)
+    }
+
+    @Test
+    fun refusesClickWhosePointIsOffScreen() {
+        // 落点落在屏幕外 = 坐标链有问题（几何错配）：宁可不点（NFR-05），且必须留痕说明原因
+        val injector = FakeInjector()
+
+        val verdict = forwarder(injector, screenSize = phoneScreen)
+            .submit(request(frameX = 1324.0, frameY = 3000.0), environment())
+
+        assertFalse(verdict.allowed)
+        assertEquals(ClickDenyReason.OUT_OF_SCREEN, verdict.reason)
+        assertTrue(injector.calls.isEmpty())
+        val audit = (events.single() as ClickEvent.Decided).audit
+        assertEquals(ClickDenyReason.OUT_OF_SCREEN, audit.reason)
     }
 }

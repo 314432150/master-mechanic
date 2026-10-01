@@ -27,11 +27,20 @@ class SignalDetector(private val signals: List<SignalSpec>, private val params: 
         (if (names == null) signals else signals.filter { it.name in names })
             .map { detectSignal(image, it) }
 
-    /** 单信号判定：多模板峰值合并后按规则给出结论。 */
+    /**
+     * 单信号判定：多模板峰值合并后按规则给出结论。
+     *
+     * ⚠ 合并用的抑制半径走 [TemplateMatcher.effectiveSuppressRadius]（**不是**直接用 [MatchParams.peakMinDistance]）：
+     * 多模板信号的各模板尺寸一致（标定侧强约束），跨模板的"同一处"同样是**峰肩**，半径必须随模板尺寸走
+     * —— 否则与单模板路径口径不一致（真机故障与依据见 [TemplateMatcher.PEAK_SUPPRESS_DIVISOR]）。
+     */
     fun detectSignal(image: GrayImage, signal: SignalSpec): DetectionRecord {
+        val radius = signal.templates.maxOf {
+            TemplateMatcher.effectiveSuppressRadius(params, it.width, it.height)
+        }
         val peaks = signal.templates
             .flatMap { TemplateMatcher.findPeaks(image, it, signal.window, params) }
-            .let { TemplateMatcher.suppressPeaks(it, params.peakMinDistance) }
+            .let { TemplateMatcher.suppressPeaks(it, radius) }
         return DetectionRecord(signal.name, judge(peaks), peaks.firstOrNull(), peaks.getOrNull(1))
     }
 

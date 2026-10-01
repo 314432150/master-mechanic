@@ -1,9 +1,13 @@
 package com.example.mastermechanic.calibration
 
 import com.example.mastermechanic.capture.RgbaToGray
+import com.example.mastermechanic.recognition.SyntheticImages
+import com.example.mastermechanic.recognition.Template
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -92,6 +96,47 @@ class TemplateExtractorTest {
         }
         assertThrows(IllegalArgumentException::class.java) {
             TemplateExtractor.extract(rgba, 4, 3, 16, -1, 0, 3, 3)
+        }
+    }
+
+    // ---------------------------------------------------------------- 缩略模板（2026-09-29）
+
+    @Test
+    fun previewLeavesSmallTemplatesUntouched() {
+        // 长边已经不超过上限 ⇒ **原样返回同一个对象**（调用方据此判断"要不要落盘"）
+        val template = Template(40, 30, ByteArray(40 * 30) { it.toByte() })
+        assertSame(template, TemplateExtractor.preview(template, maxSide = 64))
+    }
+
+    @Test
+    fun previewShrinksTheLongSideToTheCap() {
+        // 只圈区域的锚点不再存整块：真机 `server_list_area` 2532×1118 把产物撑到 5.4MB，
+        // 重载解码 OOM、把帧线程读崩过（progress 第 258 条）
+        val template = Template(2532, 1118, SyntheticImages.pattern(2532, 1118, seed = 7L))
+        val preview = TemplateExtractor.preview(template, maxSide = 64)
+
+        assertEquals(64, preview.width)
+        assertEquals(28, preview.height) // 按比例缩（2532/1118 ≈ 2.26 ⇒ 64/28.3）
+        assertEquals(64 * 28, preview.pixels.size)
+        // 最近邻抽样 ⇒ 每个点都来自原图某个**真实位置**（没插值出来的假像素）
+        val sourceValues = template.pixels.toSet()
+        assertTrue(preview.pixels.all { it in sourceValues })
+    }
+
+    @Test
+    fun previewKeepsAspectRatioAndCoversTheWholeArea() {
+        // 8×1 缩到 4×1：四个点应均匀覆盖整条（首尾都要沾到，不能只取前半段）
+        val wide = Template(8, 1, byteArrayOf(10, 20, 30, 40, 50, 60, 70, 80))
+        val preview = TemplateExtractor.preview(wide, maxSide = 4)
+        assertEquals(4, preview.width)
+        assertEquals(1, preview.height)
+        assertArrayEquals(byteArrayOf(10, 30, 50, 70), preview.pixels)
+    }
+
+    @Test
+    fun previewRejectsNonPositiveCap() {
+        assertThrows(IllegalArgumentException::class.java) {
+            TemplateExtractor.preview(Template(8, 8, ByteArray(64)), maxSide = 0)
         }
     }
 }

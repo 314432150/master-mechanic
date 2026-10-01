@@ -44,6 +44,12 @@
   这是验收取证口径。**不必每次推送都跑**，切片收尾用上面那条 `-PfastTests` 即可）
 - `.\gradlew.bat :app:assembleDebug` — 构建调试包
 - `.\gradlew.bat :app:assembleRelease` — 构建发布包（包体验收用）
+- **改动了代码/资源时，收尾必做**（顺序固定，缺一不可）：
+  ① `adb devices -l` 确认在线 → ② `assembleDebug` → ③ `adb install -r app\build\outputs\apk\debug\app-debug.apk`（期望 `Success`）
+  → ④ `adb shell am start -n com.example.mastermechanic/.MainActivity` **自动拉起应用**。
+  **只到"构建通过"不算收尾**；装完提醒用户：`-r` 重装会重置无障碍授权、并使屏幕采集授权失效，需重新授权。
+  **改动范围以 `app/src/**` 为准（含界面上的文案字符串）**；**只改 `docs/**`、`.codebuddy/memory/**`、`AGENTS.md`、
+  `_tmp_check/**` 这类非代码文件时，不打包、不装机**（2026-09-22 用户口径：**代码没改动的情况不需要重新打包装机**）。
 - `powershell -ExecutionPolicy Bypass -File tools\t1-13b-device-signal-cost.ps1 -UpdateDoc` — 采真机逐信号耗时并回填证据表（需真机；应用已跑过对应界面）
 
 取证 / 采集脚本放 `tools\`，**源码必须纯 ASCII**（含注释）：Windows PowerShell 5.1 会把无 BOM 的 UTF-8

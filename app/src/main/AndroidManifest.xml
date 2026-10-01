@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
+    <!-- android:largeHeap="true"（2026-09-29 加）：本 App 常驻一个屏幕镜像（ImageReader 缓冲 ≈88MB，
+         一帧 3168×1440×4 ≈18MB），再叠上标定页的全屏预览 / 缩略图 / 产物解码，
+         真机量到 268MB 的默认堆上限被打爆 ⇒ 黑屏 + ANR + 被杀（TOTAL 237MB 时即死）。
+         这是"要吃大画面"的 App 的标准做法；它只抬高上限，不改变任何行为。 -->
     <application
         android:name=".MasterMechanicApp"
         android:allowBackup="true"
@@ -16,6 +20,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
+        android:largeHeap="true"
         android:theme="@style/Theme.MasterMechanic">
         <activity
             android:name=".MainActivity"

@@ -85,6 +85,90 @@ class RecognitionLoopTest {
     }
 
     @Test
+    fun parallelMatchingProducesIdenticalResults() {
+        // 2026-09-24 提速（压单轮识别耗时）：一轮里的各条信号是互相独立的纯计算，分到几个线程跑，
+        // **墙钟按并行度下降、判定必须逐字段一致** —— 结果按信号声明顺序收集，谁先算完不影响结论（§5-4）。
+        val image = SyntheticImages.background(400, 300, seed = 81)
+        val signals = (1..4).map { index ->
+            val pattern = SyntheticImages.pattern(20, 16, seed = 90L + index)
+            SyntheticImages.drawPattern(image, 20 * index, 30, 20, 16, pattern)
+            val template = SyntheticImages.crop(image, 20 * index, 30, 20, 16)
+            SignalSpec("信号$index", fullWindow, listOf(template))
+        }
+        val mapping = SignalStateMapping(
+            listOf(SignalStateMapping.Rule(UiState.FARM, signals.map { it.name }.toSet())),
+        )
+
+        fun run(workers: Int): List<RoundResult> {
+            // 关掉"窗口未变即复用"：本用例要比的是**真匹配**的并行 vs 串行（复用另有专门用例）
+            val loop = RecognitionLoop(
+                signals,
+                params,
+                mapping,
+                matchParallelism = workers,
+                reuseUnchangedWindows = false,
+            )
+            return List(3) { loop.process(image, isForeground = true) }
+        }
+
+        val sequential = run(workers = 1) // 1 = 纯串行路径（原行为）
+        val parallel = run(workers = RecognitionLoop.DEFAULT_MATCH_PARALLELISM)
+
+        assertEquals("并行不得改变轮数", sequential.size, parallel.size)
+        parallel.zip(sequential).forEachIndexed { round, (a, b) ->
+            assertEquals("第 $round 轮判定记录（含分数与位置）必须逐字段一致", b.records, a.records)
+            assertEquals("第 $round 轮命中集合必须一致", b.hits, a.hits)
+            assertEquals("第 $round 轮状态必须一致", b.state, a.state)
+            assertEquals("第 $round 轮搜索集合必须一致", b.searched, a.searched)
+        }
+    }
+
+    @Test
+    fun unchangedWindowReusesPreviousRecordAndChangedWindowDoesNot() {
+        // 2026-09-24 第二刀（压单轮识别耗时）：某条信号的**搜索窗口像素逐字节相同** ⇒ 匹配是纯函数
+        // ⇒ 直接复用上一轮结论；窗口一变就必须实算（绝不猜）。
+        val image = SyntheticImages.background(400, 300, seed = 91)
+        val pattern = SyntheticImages.pattern(20, 16, seed = 92)
+        SyntheticImages.drawPattern(image, 30, 40, 20, 16, pattern)
+        val template = SyntheticImages.crop(image, 30, 40, 20, 16)
+        val signal = SignalSpec("农场标志", fullWindow, listOf(template))
+        val mapping = SignalStateMapping(listOf(SignalStateMapping.Rule(UiState.FARM, setOf("农场标志"))))
+        val loop = RecognitionLoop(listOf(signal), params, mapping)
+
+        val first = loop.process(image, isForeground = true)
+        assertTrue("第一次没有上一轮可复用", first.reusedSignals.isEmpty())
+        assertEquals(1, first.records.size)
+
+        // 同一块画面（**新的 GrayImage 对象、内容逐字节相同**）⇒ 复用：结论一致、且如实报出来
+        val sameCopy = GrayImage(image.width, image.height, image.pixels.copyOf())
+        val second = loop.process(sameCopy, isForeground = true)
+        assertEquals("窗口未变必须复用", setOf("农场标志"), second.reusedSignals)
+        assertEquals("复用不得改变判定记录", first.records, second.records)
+        assertEquals("复用不得改变状态推进", UiState.FARM, second.state)
+        assertTrue(
+            "复用的信号不产生耗时样本（这轮确实没花时间，不当成「匹配得很快」）",
+            loop.lastSignalCostMs.isEmpty(),
+        )
+
+        // 窗口里动了一个像素 ⇒ 必须实算（不猜）
+        val changed = image.pixels.copyOf()
+        changed[40 * image.width + 30] = (changed[40 * image.width + 30] + 40).toByte()
+        val third = loop.process(GrayImage(image.width, image.height, changed), isForeground = true)
+        assertTrue("窗口一变就不得复用", third.reusedSignals.isEmpty())
+
+        // 开关关掉 ⇒ 一律实算（A/B 对照用；判定结果不受影响）
+        val noReuse = RecognitionLoop(
+            listOf(signal),
+            params,
+            mapping,
+            reuseUnchangedWindows = false,
+        )
+        val rounds = List(3) { noReuse.process(sameCopy, isForeground = true) }
+        rounds.forEach { assertTrue("关掉开关后不得复用", it.reusedSignals.isEmpty()) }
+        assertEquals("关掉开关不改变判定记录", first.records, rounds.first().records)
+    }
+
+    @Test
     fun uncalibratedLoopRunsWithNoSignals() {
         val loop = RecognitionLoop.uncalibrated()
         assertEquals(0, loop.signalCount)
@@ -115,6 +199,9 @@ class RecognitionLoopTest {
             params,
             SignalStateMapping(rules),
             expectedSignals = expected,
+            // 本用例考察「样本 = 搜索集合」，所以关掉"窗口未变即复用"——
+            // 同一张画面连跑会走复用，而复用的信号**不产生样本**（它这轮确实没花时间，见 reuse 用例）
+            reuseUnchangedWindows = false,
         )
 
         loop.process(image, isForeground = true) // 期望集合内两个信号 → 各一个样本

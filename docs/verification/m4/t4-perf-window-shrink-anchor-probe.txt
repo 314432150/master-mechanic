@@ -1,0 +1,177 @@
+# 锚点定位复核：真机帧 × 每一屏的可点目标
+- 产物：t2-2-artifact.txt（标定帧 1440x3168，锚点状态 8 个：活动弹窗、启动页、退出登录确认框、设置页、大厅、返回场景确认框、农场、好友的农场）
+- 帧：76 帧；图例：`锚点=MATCHED:分数@x,y`，`竞` = 竞争峰
+
+frame-0000037175045.png  画面=（没认出任何界面）
+frame-0000037176367.png  画面=（没认出任何界面）
+frame-0000037177381.png  画面=（没认出任何界面）
+frame-0000037178395.png  画面=（没认出任何界面）
+frame-0000037179408.png  画面=（没认出任何界面）
+frame-0000037180410.png  画面=（没认出任何界面）
+frame-0000037181420.png  画面=（没认出任何界面）
+frame-0000037182435.png  画面=（没认出任何界面）
+frame-0000037183448.png  画面=（没认出任何界面）
+frame-0000037184461.png  画面=（没认出任何界面）
+frame-0000037185472.png  画面=（没认出任何界面）
+frame-0000037186486.png  画面=（没认出任何界面）
+frame-0000037187557.png  画面=（没认出任何界面）
+frame-0000037188567.png  画面=（没认出任何界面）
+frame-0000037189581.png  画面=大厅
+    hall_farm=MATCHED:0.9804@375,1733  竞 0.4356@370,1733
+    hall_settings=MATCHED:0.9910@1262,1273  竞 0.3930@1262,1268
+frame-0000037190592.png  画面=大厅
+    hall_farm=MATCHED:0.9814@375,1733  竞 0.4408@370,1733
+    hall_settings=MATCHED:0.9912@1262,1273  竞 0.3911@1262,1268
+frame-0000037191908.png  画面=大厅
+    hall_farm=MATCHED:0.9688@375,1733  竞 0.4324@370,1733
+    hall_settings=MATCHED:0.9893@1262,1273  竞 0.3975@1262,1268
+frame-0000037192911.png  画面=大厅
+    hall_farm=MATCHED:0.9805@375,1733  竞 0.4363@370,1733
+    hall_settings=MATCHED:0.9883@1262,1273  竞 0.3972@1262,1268
+frame-0000578178926.png  画面=（没认出任何界面）
+frame-0000578181563.png  画面=服务器列表
+frame-0000578182577.png  画面=服务器列表
+frame-0000578183601.png  画面=服务器列表
+frame-0000578184645.png  画面=服务器列表
+frame-0000578185669.png  画面=服务器列表
+frame-0000578186682.png  画面=（没认出任何界面）
+frame-0000578187762.png  画面=启动页
+    launch_login=MATCHED:1.0000@653,1746  竞 0.3868@653,1741
+    launch_switch=MATCHED:0.9250@902,1688  竞 0.1456@898,1693
+frame-0000578188975.png  画面=启动页
+    launch_login=MATCHED:0.9950@653,1746  竞 0.3837@653,1741
+    launch_switch=MATCHED:1.0000@902,1688  竞 0.1746@898,1693
+frame-0000578190377.png  画面=启动页
+    launch_login=MATCHED:0.9984@653,1746  竞 0.3768@653,1741
+    launch_switch=MATCHED:0.9904@902,1688  竞 0.1746@898,1693
+frame-0000578191526.png  画面=（没认出任何界面）
+frame-0000578192672.png  画面=大厅
+    hall_farm=MATCHED:0.9806@375,1733  竞 0.4442@370,1733
+    hall_settings=MATCHED:0.9963@1262,1273  竞 0.3993@1262,1268
+frame-0000578193679.png  画面=活动弹窗
+    activity_popup_e1=MATCHED:1.0000@1090,1283  竞 0.7579@1085,1279
+frame-0000578194733.png  画面=大厅
+    hall_farm=MATCHED:0.9795@375,1733  竞 0.4468@404,1733
+    hall_settings=MATCHED:0.9912@1262,1273  竞 0.4053@1262,1268
+frame-0000578195825.png  画面=大厅
+    hall_farm=MATCHED:1.0000@375,1733  竞 0.4421@370,1733
+    hall_settings=MATCHED:1.0000@1262,1273  竞 0.3935@1262,1268
+frame-0000578197003.png  画面=（没认出任何界面）
+frame-0000578198477.png  画面=（没认出任何界面）
+frame-0000578200847.png  画面=（没认出任何界面）
+frame-0000578201984.png  画面=农场
+    farm_exit=MATCHED:0.9700@99,1273  竞 0.7021@104,1273
+    farm_friends=MATCHED:0.9983@1308,1434  竞 0.3885@1308,1429
+frame-0000578202998.png  画面=农场
+    farm_exit=MATCHED:1.0000@99,1273  竞 0.6990@104,1273
+    farm_friends=MATCHED:1.0000@1308,1434  竞 0.3802@1308,1429
+frame-0000578204033.png  画面=农场
+    farm_exit=MATCHED:0.9815@99,1273  竞 0.6912@104,1273
+    farm_friends=MATCHED:0.9994@1308,1434  竞 0.3827@1308,1429
+frame-0000578205056.png  画面=农场、返回场景确认框
+    return_lobby=MATCHED:1.0000@789,1701  竞 0.3705@789,1706
+    farm_exit=MATCHED:0.9784@99,1273  竞 0.6918@104,1273
+    farm_friends=MATCHED:0.9973@1308,1434  竞 0.3812@1308,1429
+frame-0000578206071.png  画面=农场、返回场景确认框
+    return_lobby=MATCHED:1.0000@789,1701  竞 0.3705@789,1706
+    farm_exit=MATCHED:0.9787@99,1273  竞 0.6899@104,1273
+    farm_friends=MATCHED:0.9973@1308,1434  竞 0.3812@1308,1429
+frame-0000578207081.png  画面=农场、返回场景确认框
+    return_lobby=MATCHED:1.0000@789,1701  竞 0.3705@789,1706
+    farm_exit=MATCHED:0.9785@99,1273  竞 0.6928@104,1273
+    farm_friends=MATCHED:0.9973@1308,1434  竞 0.3811@1308,1429
+frame-0000578208203.png  画面=好友列表
+frame-0000578209229.png  画面=好友列表
+frame-0000578210254.png  画面=好友列表
+frame-0000578211279.png  画面=好友列表
+frame-0000578212293.png  画面=（没认出任何界面）
+frame-0000578213526.png  画面=（没认出任何界面）
+frame-0000578214772.png  画面=好友的农场
+    friend_farm_exit=MATCHED:1.0000@99,1273  竞 0.6889@94,1273
+    friend_farm_friends=MATCHED:1.0000@1309,1434  竞 0.3714@1309,1429
+frame-0000578215797.png  画面=好友的农场
+    friend_farm_exit=MATCHED:0.9647@99,1273  竞 0.6886@94,1273
+    friend_farm_friends=MATCHED:0.9948@1309,1434  竞 0.3398@1309,1429
+frame-0000578216831.png  画面=好友的农场
+    friend_farm_exit=MATCHED:0.9548@99,1273  竞 0.6630@94,1273
+    friend_farm_friends=MATCHED:0.9947@1309,1434  竞 0.3425@1309,1429
+frame-0000578217843.png  画面=好友的农场
+    friend_farm_exit=MATCHED:0.9532@99,1273  竞 0.6604@94,1273
+    friend_farm_friends=MATCHED:0.9948@1309,1434  竞 0.3428@1309,1429
+frame-0000578218864.png  画面=返回场景确认框、好友的农场
+    return_lobby=MATCHED:1.0000@789,1701  竞 0.3705@789,1706
+    friend_farm_exit=MATCHED:0.9530@99,1273  竞 0.6566@94,1273
+    friend_farm_friends=MATCHED:0.9926@1309,1434  竞 0.3407@1309,1429
+frame-0000578219886.png  画面=返回场景确认框、好友的农场
+    return_lobby=MATCHED:1.0000@789,1701  竞 0.3705@789,1706
+    friend_farm_exit=MATCHED:0.9537@99,1273  竞 0.6578@94,1273
+    friend_farm_friends=MATCHED:0.9926@1309,1434  竞 0.3410@1309,1429
+frame-0000578221373.png  画面=（没认出任何界面）
+frame-0000578222499.png  画面=大厅
+    hall_farm=MATCHED:0.9829@375,1733  竞 0.4414@404,1733
+    hall_settings=MATCHED:0.9963@1262,1273  竞 0.3994@1262,1268
+frame-0000578223506.png  画面=设置页
+    settings_logout=NOT_MATCHED:0.3757@1097,1813  竞 0.1933@1118,1814
+frame-0000578224521.png  画面=设置页
+    settings_logout=MATCHED:1.0000@1097,1803  竞 0.3439@1117,1802
+frame-0000578225534.png  画面=设置页
+    settings_logout=MATCHED:1.0000@1097,1803  竞 0.3439@1117,1802
+frame-0000578226548.png  画面=设置页、退出登录确认框
+    logout_confirm_ok=MATCHED:1.0000@806,1705  竞 0.4235@806,1700
+    settings_logout=MATCHED:0.9795@1097,1803  竞 0.3622@1104,1803
+frame-0000578227563.png  画面=设置页、退出登录确认框
+    logout_confirm_ok=MATCHED:1.0000@806,1705  竞 0.4235@806,1700
+    settings_logout=MATCHED:0.9795@1097,1803  竞 0.3622@1104,1803
+frame-0000578228576.png  画面=设置页、退出登录确认框
+    logout_confirm_ok=MATCHED:1.0000@806,1705  竞 0.4235@806,1700
+    settings_logout=MATCHED:0.9795@1097,1803  竞 0.3622@1104,1803
+frame-0000578230632.png  画面=（没认出任何界面）
+frame-0000578231703.png  画面=（没认出任何界面）
+frame-0000578232736.png  画面=启动页
+    launch_login=MATCHED:0.9984@653,1746  竞 0.3843@653,1741
+    launch_switch=MATCHED:0.9641@902,1688  竞 0.1641@898,1693
+frame-0000578233834.png  画面=启动页
+    launch_login=MATCHED:0.9957@653,1746  竞 0.3823@653,1741
+    launch_switch=MATCHED:0.9579@902,1688  竞 0.2187@898,1693
+frame-0000578234841.png  画面=启动页
+    launch_login=MATCHED:0.9944@653,1746  竞 0.3882@653,1741
+    launch_switch=MATCHED:0.9825@902,1688  竞 0.2337@906,1681
+m4-friend-list-20260919.png  画面=好友列表
+m4-launch-page-20260919.png  画面=启动页
+    launch_login=MATCHED:0.9954@653,1746  竞 0.3841@653,1741
+    launch_switch=MATCHED:0.9538@902,1688  竞 0.1967@898,1693
+m4-logout-confirm-20260919.png  画面=设置页、退出登录确认框
+    logout_confirm_ok=MATCHED:1.0000@806,1705  竞 0.4235@806,1700
+    settings_logout=MATCHED:0.9795@1097,1803  竞 0.3622@1104,1803
+m4-return-confirm-friend-farm-20260919.png  画面=返回场景确认框、好友的农场
+    return_lobby=MATCHED:1.0000@789,1701  竞 0.3705@789,1706
+    friend_farm_exit=MATCHED:0.9530@99,1273  竞 0.6566@94,1273
+    friend_farm_friends=MATCHED:0.9926@1309,1434  竞 0.3407@1309,1429
+m4-return-confirm-own-farm-20260919.png  画面=农场、返回场景确认框
+    return_lobby=MATCHED:1.0000@789,1701  竞 0.3705@789,1706
+    farm_exit=MATCHED:0.9784@99,1273  竞 0.6918@104,1273
+    farm_friends=MATCHED:0.9973@1308,1434  竞 0.3812@1308,1429
+m4-scene-return-confirm-20260919.png  画面=返回场景确认框、好友的农场
+    return_lobby=MATCHED:0.9992@789,1701  竞 0.3675@789,1706
+    friend_farm_exit=MATCHED:0.9544@99,1273  竞 0.6565@94,1273
+    friend_farm_friends=MATCHED:0.9926@1309,1434  竞 0.3408@1309,1429
+m4-server-select-20260919.png  画面=服务器列表
+m4-settings-page-20260919.png  画面=设置页
+    settings_logout=MATCHED:1.0000@1097,1803  竞 0.3439@1117,1802
+t24-01-popup-landscape.png  画面=（没认出任何界面）
+
+## 汇总（在「属于该画面」的帧里，各锚点的命中率与分数区间）
+| 锚点 | 出现帧数 | 命中帧数 | 最低分 | 最高分 |
+| --- | --- | --- | --- | --- |
+| activity_popup_e1 | 1 | 1 | 1.0000 | 1.0000 |
+| farm_exit | 7 | 7 | 0.9700 | 1.0000 |
+| farm_friends | 7 | 7 | 0.9973 | 1.0000 |
+| friend_farm_exit | 8 | 8 | 0.9530 | 1.0000 |
+| friend_farm_friends | 8 | 8 | 0.9926 | 1.0000 |
+| hall_farm | 8 | 8 | 0.9688 | 1.0000 |
+| hall_settings | 8 | 8 | 0.9883 | 1.0000 |
+| launch_login | 7 | 7 | 0.9944 | 1.0000 |
+| launch_switch | 7 | 7 | 0.9250 | 1.0000 |
+| logout_confirm_ok | 4 | 4 | 1.0000 | 1.0000 |
+| return_lobby | 8 | 8 | 0.9992 | 1.0000 |
+| settings_logout | 8 | 7 | 0.9795 | 1.0000 |

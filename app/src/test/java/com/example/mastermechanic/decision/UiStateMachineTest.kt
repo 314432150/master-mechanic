@@ -106,6 +106,34 @@ class UiStateMachineTest {
         assertEquals(UiState.ACTIVITY_POPUP, transition!!.to)
     }
 
+    @Test
+    fun tutorialOverlaysOutrankTheScreensUnderneathThem() {
+        // 2026-09-29 恢复 FR-02：新手引导 / 新手大厅是**盖在下层界面上的遮挡屏**，标志会与
+        // 大厅 / 启动页同时命中（下层并没消失）⇒ 必须赢；输了程序就会照着下层界面去动手
+        for (overlay in listOf(UiState.TUTORIAL_GUIDE, UiState.TUTORIAL_HALL)) {
+            val machine = UiStateMachine()
+            val overlapped = hits(UiState.HALL, UiState.LAUNCH_PAGE, overlay)
+            machine.update(overlapped, foreground = true)
+            val transition = machine.update(overlapped, foreground = true)
+            assertEquals("$overlay 应压过大厅 / 启动页", overlay, transition!!.to)
+        }
+    }
+
+    @Test
+    fun tutorialOverlaysOutrankTheActivityPopup() {
+        // 2026-09-29 用户口径："新手两屏出现在活动弹窗**之前**" ⇒ 声明顺序按时间顺序排，
+        // 万一两者同时命中，先解决新手这屏、再管弹窗
+        val machine = UiStateMachine()
+        val allOverlays = hits(UiState.ACTIVITY_POPUP, UiState.TUTORIAL_GUIDE, UiState.TUTORIAL_HALL)
+        machine.update(allOverlays, foreground = true)
+        assertEquals(UiState.TUTORIAL_GUIDE, machine.update(allOverlays, foreground = true)!!.to)
+
+        val withoutGuide = hits(UiState.ACTIVITY_POPUP, UiState.TUTORIAL_HALL)
+        val second = UiStateMachine()
+        second.update(withoutGuide, foreground = true)
+        assertEquals(UiState.TUTORIAL_HALL, second.update(withoutGuide, foreground = true)!!.to)
+    }
+
     // ---- 未知：连续未命中任何标志 ----
 
     @Test

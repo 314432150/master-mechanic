@@ -23,6 +23,19 @@ class ServerListCodecTest {
     }
 
     @Test
+    fun leadingBomIsTreatedAsNoDamage() {
+        // 2026-09-25 真机事故：清单被外部工具写了一遍、开头多了 UTF-8 BOM（EF BB BF）⇒
+        // 第 1 行的「# 注释」被判成"缺少 key=value 结构" —— 文件其实是好的。
+        // 口径：**开头的 BOM 不算损坏**（去掉它继续解析）；**真正的格式错误照旧一律拒绝**。
+        val list = ServerList(listOf(a, b))
+        assertEquals(list, ServerListCodec.decode("\uFEFF" + ServerListCodec.encode(list)))
+        // 容忍 BOM 不等于放宽校验：BOM + 乱写的内容仍然要拒
+        assertThrows(IllegalArgumentException::class.java) {
+            ServerListCodec.decode("\uFEFF这不是服务器清单\n")
+        }
+    }
+
+    @Test
     fun encodeIsDeterministicAndWritesCurrentVersion() {
         val list = ServerList(listOf(a, b))
         assertEquals(ServerListCodec.encode(list), ServerListCodec.encode(list))

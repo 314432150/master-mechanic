@@ -18,18 +18,26 @@ object ClickAuditLog {
             is ClickEvent.Decided -> {
                 val audit = event.audit
                 val verdict = if (audit.allowed) "下发" else "拒绝（${audit.reason?.label ?: "原因未知"}）"
+                // 滑动的终点也记（2026-09-29 加）：真机核对"滚了没有 / 滚了多少"只看这一行
+                val points = if (audit.toScreenX != null && audit.toScreenY != null) {
+                    "｜屏幕点: (${audit.screenX}, ${audit.screenY}) -> (${audit.toScreenX}, ${audit.toScreenY})"
+                } else {
+                    "｜屏幕点: (${audit.screenX}, ${audit.screenY})"
+                }
+                // 两个坐标都记（2026-09-20）：真机上"点歪了"必须能分清是识别定位错还是坐标换算错
                 MmLog.i(
                     TAG,
-                    "点击$verdict｜来源: ${audit.source.label}｜锚点: ${audit.anchorName}" +
-                        "｜点: (${audit.frameX}, ${audit.frameY})｜状态: ${audit.state.label}" +
-                        "｜前台: ${audit.foreground}｜模式: ${audit.mode.label}｜判定: ${audit.decisionId}",
+                    "${audit.kind.label}$verdict｜来源: ${audit.source.label}｜锚点: ${audit.anchorName}" +
+                        "｜帧点: (${audit.frameX}, ${audit.frameY})" +
+                        points + "｜状态: ${audit.state.label}" +
+                        "｜前台: ${audit.foreground}｜判定: ${audit.decisionId}",
                 )
             }
 
             is ClickEvent.GestureEnded -> MmLog.i(
                 TAG,
-                "手势结束: ${if (event.completed) "完成" else "被取消"}｜锚点: ${event.anchorName}" +
-                    "｜判定: ${event.decisionId}",
+                "${event.kind.label}手势结束: ${if (event.completed) "完成" else "被取消"}" +
+                    "｜锚点: ${event.anchorName}｜判定: ${event.decisionId}",
             )
         }
     }
