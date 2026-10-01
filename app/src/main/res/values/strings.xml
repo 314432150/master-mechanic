@@ -47,15 +47,11 @@
          标签不再显示识别状态，只显示最近一次触发的请求（直接走 PatrolRequestSignal.logText）。 -->
     <string name="floating_handle_desc">悬浮窗手柄（单击展开菜单，位置固定不可拖动）</string>
     <string name="floating_handle_desc_alert">悬浮窗手柄（步骤已中止或暂停，展开菜单可点「继续」）</string>
-    <string name="floating_menu_start_patrol">开始跑号</string>
 
     <!-- 悬浮窗二级菜单（M3-T3-8，FR-07）：四组 + 两级列表 -->
     <!-- 一键拜访（2026-09-16 用户口径：移除巡查，改由预设驱动、一级直接执行） -->
-    <string name="floating_menu_switch_visit">换号拜访「%1$s」</string>
     <!-- 副文用（未配置时）：**说清下一步去哪**，比"（未配置）"有用。 -->
     <string name="floating_menu_switch_visit_unset">未配置 · 点右边 ⚙ 选服务器与好友</string>
-    <string name="floating_menu_visit">只拜访「%1$s」</string>
-    <string name="floating_menu_visit_unset">只拜访（未配置好友）</string>
     <!-- 2026-10-01 用户口径："给「换号+拜访」换个更合适的 icon"（原来是个 `★`，看不出它干嘛）。
          经 UI 顾问**两轮**评审后由用户拍板 **`⚑`**（U+2691 BLACK FLAG = 出发 / 起跑 / 目的地）：
          顾问的关键判断是"这一行的图标不该表达'组合'，而该表达'**一键跑完 / 出发**'" ——
@@ -169,14 +165,9 @@
          不能再写"登录游戏"（用户读成"它还在催我登录"）。%1$s = 当前那一屏的名字。 -->
     <string name="floating_label_entered_game">已进入游戏（正在处理 %1$s）</string>
     <string name="floating_menu_switch_next">下一个</string>
-    <string name="floating_menu_visit_toggle">进入好友农场（点击切换）</string>
-    <string name="floating_menu_confirm">确定拜访</string>
-    <string name="floating_menu_cancel">取消</string>
-    <string name="floating_menu_confirm_friend">确认要拜访「%1$s」吗？</string>
     <string name="floating_menu_no_server">服务器清单是空的：先到「服务器」页添加。</string>
     <string name="floating_menu_no_friend">好友清单是空的：先到「好友」页添加。</string>
     <string name="floating_menu_nothing_running">当前没有进行中的流程。</string>
-    <string name="floating_menu_glyph_patrol">▶</string>
 
     <!-- 跑号进度与「继续」（M4-T4-5，FR-05）：进度/原因文字由 PatrolStatus 出（与日志同源），这里只有这一项的名字 -->
     <string name="floating_menu_resume">继续</string>
@@ -189,10 +180,6 @@
     <!-- 会话**曾经建立、现在断了**（2026-09-28 用户报障后分的第二句）：不能说"尚未建立 / 请先授予"——
          凭证是一次性的，"重新授予"才是用户该做的动作。判据见 FloatingWindow.noSessionReason()。 -->
     <string name="floating_reason_session_ended">采集会话已结束（画面不再更新）：请到「授权状态」页重新授予屏幕采集权限。</string>
-    <string name="floating_reason_config_empty">跑号清单为空：请先到「跑号清单」页添加至少一项。</string>
-    <string name="floating_reason_config_broken">跑号清单读取失败：%1$s</string>
-    <string name="floating_side_left">左侧</string>
-    <string name="floating_side_right">右侧</string>
     <!-- 顶部状态标签（2026-09-28 用户口径："在屏幕顶部的正中心位置，增加一个可以拖动的悬浮窗……
          用来显示当前正在进行的操作，内容要简短"）。取舍逻辑在纯逻辑 FloatingLabelText 里（有单测）：
          读整屏动作 > 中止/暂停 > 关弹窗 > 跑号第几步 > 已完成 > 待命。
@@ -215,7 +202,6 @@
     <!-- **想关却关不成**（2026-09-29 用户报障："显示了正在关弹窗，但实际上没关掉"）：
          标签曾把"给出一次点击"当成"正在关"，而真发得出去还要过开火前复眼与门禁 ⇒ 会一直骗人。
          现在只有**真的发出去一枪**才写「正在关弹窗」，被拦住就写这句（原因在日志里，标签放不下）。 -->
-    <string name="floating_label_popup_blocked">关弹窗受阻</string>
     <!-- 「关弹窗受阻」的**原因**（2026-09-29 用户口径："把「关弹窗受阻」的原因也显示在悬浮窗菜单里"）。
          标签只放 12 字（放不下原因），所以原因要在菜单里说清楚：用户是在游戏里看到弹窗没被关掉，
          唯一能立刻回答"为什么"的地方就是这个菜单。 -->
@@ -268,7 +254,6 @@
     <string name="calibration_workbench_title">标定工作台</string>
     <string name="calibration_workbench_done">完成</string>
     <string name="calibration_workbench_frame_index">%1$d / %2$d 帧</string>
-    <string name="calibration_workbench_frames">样本帧（点选切换）</string>
     <string name="calibration_workbench_select">框选</string>
     <string name="calibration_workbench_cancel">✕</string>
     <string name="calibration_workbench_confirm">✓ 写入%1$s</string>
@@ -282,11 +267,6 @@
     <string name="calibration_missing_purpose">选锚点用途</string>
     <!-- 归属好友名（2026-09-21）：好友头像"每位好友一条"，必须写明这是谁的。
          名字**从好友清单里选**（不手打）：打错一个字，这条模板就对不上任何人 -->
-    <string name="calibration_friend_label">这是谁的头像</string>
-    <string name="calibration_missing_friend">选「这是谁的头像」</string>
-    <string name="calibration_friend_empty">好友清单还是空的</string>
-    <string name="calibration_friend_go_add">去好友清单添加</string>
-    <string name="calibration_friend_hint">从好友清单里选，别手打</string>
     <string name="calibration_role_label">记录类型（可多选）</string>
     <string name="calibration_role_pair">%1$s + %2$s</string>
     <string name="calibration_select_hint_short">拖动＝建框，拖框内＝移动，拖白线＝缩放，✕＝清除</string>
@@ -296,7 +276,6 @@
     <string name="calibration_missing_state">选所属界面</string>
     <string name="calibration_missing_roles">选记录类型</string>
     <string name="calibration_missing_sep">、</string>
-    <string name="calibration_workbench_write_hint">浏览模式：左右滑动换帧、点缩略图跳帧；点「框选」进入框选模式：拖动画布建框，拖动框内整体移动，拖动外层白线拉伸 / 缩放选框，左上 ✕ 清除重画；下方「所属界面」选这个元素属于哪个界面（按流程顺序排，最前面是"随时可能出现的活动弹窗"），「记录类型（可多选）」选这次框选写成什么（标志 = 判断界面 / 锚点 = 在该界面点这个位置）——同一个元素两样都要时**两个都勾**，一次写入两条记录，点「✓ 写入X」落库。框线颜色跟着「记录类型」的勾选走：标志红、锚点青，两个都勾 = 红青双框线，一个都没勾 = 琥珀黄（还没决定写什么）。双指捏合缩放 / 平移画面，尽量只含目标本身与稳定背景。</string>
     <string name="calibration_annotate_hint">浏览模式：左右滑动大图切换样本帧（缩略图过半即同步）；点「框选」进入框选模式——拖动空白处新建选框，拖动框内整体移动，拖动外层白线拉伸 / 缩放选框，点选框左上角 × 清除重画。下方各行各管一件事：「所属界面」= 这个元素属于哪个界面（按流程顺序排，最前面是"随时可能出现的活动弹窗"），「记录类型（可多选）」= 这次框选写成什么（标志 = 判断界面 / 锚点 = 在该界面点这个位置），若勾了锚点而该界面有两个以上可点控件，还会多出一行「锚点用途」——同一个元素两样都要就**两个都勾**，一次写两条记录，最后点「✓ 写入X」。框线颜色跟着「记录类型」的勾选走：标志红、锚点青，两个都勾 = 红青双框线，一个都没勾 = 琥珀黄（还没决定写什么）；双指捏合缩放 / 平移画面（小目标先放大再框选），放大后可以把画面拖到黑边区域继续框，点下方的倍数即可回到适应大小。尽量只含目标本身与稳定背景，避开动态元素。帧条上的缩略图：**上滑或下滑**（长按同效）可删除该帧 —— 会先弹确认，删错了点底部「撤销」找回；用来清掉跑流程时顺手录下的无效帧。</string>
     <string name="calibration_annotate_hint_icon">ⓘ</string>
     <string name="calibration_hint_close">知道了</string>
@@ -314,14 +293,6 @@
     <string name="floating_menu_glyph_capture">＋</string>
     <string name="floating_menu_capture_servers">添加这一屏的服务器</string>
     <string name="capture_servers_wrong_screen">当前画面不是选服页（现在识别到「%1$s」）—— 请停在服务器列表页（能看见那几行区服名），等状态显示「服务器列表」后再点一次。这一次**一个字节都没写**。</string>
-    <string name="capture_servers_frame">整屏识别｜帧 %1$d×%2$d｜分 %3$d 块（放大 ×%4$d）｜合计 %5$d ms</string>
-    <string name="capture_servers_read">读到 %1$d 行，解析出 %2$d 个服务器</string>
-    <string name="capture_servers_merged">新增 %1$d 条 ／ 补全空字段 %2$d 条 ／ 已存在未改 %3$d 条</string>
-    <string name="capture_servers_saved">已写入服务器清单（现共 %1$d 条）</string>
-    <string name="capture_servers_item">  %1$d. %2$s</string>
-    <string name="capture_servers_recheck">逐行复核 %1$d 行，其中 %2$d 行复核后读得更全（同一行取更长的读数）</string>
-    <!-- 同区号但名字不同：不新增，摊给用户复核（真机事故：缺字条目与正确条目并存） -->
-    <string name="capture_servers_conflict">⚠ %1$s区 读成「%2$s」，清单里已有「%3$s」——没有新增，请确认哪个对</string>
     <!-- 「读当前屏幕」只有**一个**按钮（用户 2026-09-25 口径："重读这一屏"与"继续添加"是同一个功能，
          统一成一个、名字也要说清它读的是**当前屏幕**）：滚没滚都由用户决定，程序不区分。 -->
     <string name="floating_menu_capture_more">再读一屏</string>
@@ -362,7 +333,6 @@
     <string name="calibration_signal_added">已新增%1$s（%2$s，模板 %3$d×%4$d；该状态现有 %5$s）</string>
     <string name="calibration_signal_updated">已更新%1$s（%2$s，模板 %3$d×%4$d；该状态现有 %5$s）</string>
     <string name="calibration_note_label">备注</string>
-    <string name="calibration_note_hint">可留空、可重复写；只影响显示，不影响识别</string>
     <string name="calibration_note_saved">备注已保存</string>
     <string name="calibration_notes_filled">已按新规则补全 %1$d 条备注（只填空的，原有备注没动）</string>
     <string name="calibration_note_save_failed">备注保存失败：读不到产物文件</string>
@@ -371,7 +341,6 @@
     <string name="calibration_count_anchor">锚点 %1$d 条</string>
     <string name="calibration_write_failed">写入失败：%1$s</string>
     <string name="calibration_signal_deleted">已删除信号：%1$s</string>
-    <string name="calibration_view">查看</string>
     <string name="calibration_signal_remove">删除</string>
     <string name="calibration_template_title">模板详情</string>
     <string name="calibration_param_title">匹配参数（产物级；编辑合法即写入产物）</string>
@@ -398,12 +367,8 @@
     <string name="calibration_detail_element_label">元素 ID</string>
     <string name="calibration_detail_sides_differ">标志与锚点框得不一样（本该是同一次框选）——建议删掉重标</string>
     <string name="calibration_signal_row_desc">%1$s，%2$s，%3$s，模板 %4$d 乘 %5$d</string>
-    <string name="calibration_signal_template">模板 %1$d × %2$d</string>
     <string name="calibration_undo">撤销</string>
     <string name="calibration_restored">已恢复</string>
-    <string name="calibration_delete_artifact_confirm_title">删除全部标定产物？</string>
-    <string name="calibration_delete_artifact_confirm_body">将删除全部 %1$d 条记录，且无法撤销。</string>
-    <string name="calibration_artifact_present">当前产物：信号 %1$d 个（标定帧 %2$d×%3$d）。</string>
     <string name="calibration_artifact_broken">产物解析失败：文件损坏或格式不符，请重新标定保存。</string>
     <string name="calibration_take_effect">写入 / 删除后在下次建立采集会话时生效（停止采集后重新授权）。</string>
     <string name="calibration_deleted">产物已删除。</string>
@@ -416,70 +381,11 @@
     <string name="calibration_error_frame_decode">帧文件解码失败</string>
     <string name="calibration_error_selection_too_small">选区太小：原图至少需要 %1$d×%2$d 像素</string>
 
-    <!-- 跑号清单（M3-T3-3 / FR-03） -->
-    <string name="auth_open_patrol_config">跑号</string>
-    <string name="patrol_title">跑号</string>
-    <string name="patrol_subtitle">每项 = 一个区服名称 + 一个目标好友名称，跑号时按列表顺序依次执行。这里只校验「名称不得为空」；能不能在界面上唯一找到这个名称，要到跑号开始时才判断（找不到或不止一个就停下，不会猜着点）。</string>
-    <string name="patrol_back">返回授权页</string>
-    <string name="patrol_list_title">跑号（%1$d 项）</string>
-    <string name="patrol_empty">尚无跑号项。点上面右侧的「新增跑号项」添加第一项。</string>
-    <string name="patrol_index">%1$d.</string>
-    <string name="patrol_item_friend">目标好友：%1$s</string>
-    <!-- 读屏用：把一整行念成一句话（视觉上的分行对读屏是噪音） -->
-    <!-- 跑号项编辑页（2026-09-16 用户口径：好友上移 + 服务器多选；UX 结论：弃用小弹框 + 下拉框，改全屏页） -->
-    <string name="patrol_editor_add">新增跑号项</string>
-    <string name="patrol_editor_edit">编辑跑号项</string>
-    <string name="patrol_save">保存</string>
-    <string name="patrol_select_all">全选</string>
-    <string name="patrol_clear_selection">清空</string>
-    <string name="patrol_selected_count">已选 %1$d / %2$d 个服务器</string>
-    <string name="patrol_need_friend">请先选一个好友</string>
-    <string name="patrol_need_server">请至少选一个服务器</string>
-    <string name="patrol_add_count">添加 %1$d 条</string>
-    <string name="patrol_batch_preview">将新增 %1$d 条</string>
-    <string name="patrol_batch_preview_mixed">将新增 %1$d 条，另有 %2$d 条已存在、会被跳过</string>
-    <!-- 按好友合并展示（2026-09-16 用户口径「相同好友对应的服务器合并展示」） -->
-    <string name="patrol_group_servers">%1$d 个服务器</string>
-    <string name="patrol_group_more">+%1$d</string>
-    <string name="patrol_group_desc">第 %1$d 组：好友 %2$s，共 %3$d 个服务器，包括 %4$s</string>
-    <string name="patrol_group_deleted">已删除 %1$s 的 %2$d 个服务器</string>
-    <string name="patrol_group_updated">已更新 %1$s 的 %2$d 个服务器</string>
-    <string name="patrol_group_will_be_removed">一个服务器都不勾 = 删掉这一组</string>
-    <string name="patrol_batch_preview_skip">选中的 %1$d 条都已存在，不会重复添加</string>
-    <string name="patrol_batch_added">已新增 %1$d 条跑号项</string>
-    <string name="patrol_batch_added_mixed">已新增 %1$d 条，跳过 %2$d 条（已存在）</string>
-    <string name="patrol_batch_added_none">没有新增：选中的 %1$d 条都已存在</string>
-    <string name="patrol_server_fixed">服务器决定这条挂在哪个区服，编辑时不可改；要换服务器请删掉这条重新加。</string>
-    <string name="patrol_row_desc">第 %1$d 项：%2$s，目标好友 %3$s</string>
-    <string name="patrol_add">新增跑号项</string>
-    <string name="patrol_edit">编辑</string>
-    <string name="patrol_move_up">上移</string>
-    <string name="patrol_move_down">下移</string>
-    <string name="patrol_delete">删除</string>
-    <string name="patrol_clear">整体清空</string>
-    <string name="patrol_clear_title">清空全部跑号项？</string>
-    <string name="patrol_clear_body">将删除当前全部 %1$d 个跑号项，此操作不可撤销。</string>
-    <string name="patrol_clear_confirm">清空</string>
-    <string name="patrol_cancel">取消</string>
-    <string name="patrol_dialog_add">新增跑号项</string>
-    <string name="patrol_dialog_edit">编辑跑号项</string>
-    <string name="patrol_field_server">区服名称</string>
-    <string name="patrol_field_friend">目标好友名称</string>
-    <!-- 跑号项改为引用：两个字段都只能从清单里选，选不到就说明该先去清单里加一条 -->
-    <string name="patrol_picker_hint">点这里选择</string>
-    <!-- 改引用后的判重：同一区服允许出现多次（同一个号拜访多个好友），但同一组合排两遍没意义 -->
-    <string name="patrol_duplicate">这一组（%1$s → %2$s）已经在清单里了。</string>
-    <!-- 悬空引用：清单里那条被删了，跑号项还指着它 —— 必须说出来，不能静默失效 -->
-    <string name="patrol_dangling">引用对不上：清单里已经没有它了，点「编辑」重新选。</string>
-    <string name="patrol_no_server_option">服务器清单还是空的：先去「服务器清单」页加一条，再来选。</string>
-    <string name="patrol_no_friend_option">好友清单还是空的：先去「好友清单」页加一条，再来选。</string>
-    <string name="patrol_field_required">区服名称与目标好友名称均不得为空（也不能只剩空格）。</string>
-    <string name="patrol_field_separator">名称里不能出现「|」或换行。</string>
-    <string name="patrol_confirm">保存</string>
-    <string name="patrol_save_failed">保存失败：%1$s</string>
-    <string name="patrol_load_failed">跑号清单解析失败：%1$s</string>
-    <string name="patrol_rebuild">清空重建</string>
-    <string name="patrol_hint">一行是一个好友，右侧是它在几个区服跑。点一行改它的服务器；左滑删掉这一组；长按拖动调整整组顺序。</string>
+    <!-- 2026-10-01（M5-U7 / 验收 V3）：这里原有 61 条「跑号清单」时代的文案（`patrol_*` 与
+         `auth_open_patrol_config`），**已全部删除** —— 那套「跑号项」界面在 M4 被「拜访规则」
+         （悬浮窗 CONFIG 层 + `preset/`）取代后，这些字符串在 `app/src` 里**零引用**。
+         ⚠ 别再加回来：`StringResourcesTest` 会扫「`strings.xml` ↔ 代码/XML 引用」，
+         任何一条没人用的文案都会让它变红（V3「零死文案」）。 -->
 
     <!-- 服务器清单（M3-T3-9 / FR-10） -->
     <string name="auth_open_server_list">服务器</string>
@@ -490,12 +396,10 @@
     <string name="server_empty">还没有服务器。点右上角「新增服务器」加第一条。
 
 列表里可以这样操作：双击一张卡 = 编辑，按住一张卡拖动 = 调整顺序，往左滑一张卡 = 尾部压出红色的「删除」按钮，点它就直接删掉（删了不能撤销）。</string>
-    <string name="server_index">%1$d</string>
     <!-- 区号在列表里的显示后缀：用户填「256」→ 列表显示「256区」（用户自己写了「区」则不重复补）。 -->
     <string name="server_no_suffix">区</string>
     <!-- 等级在列表里的显示前缀：用户填「30」→ 列表显示「Lv.30」（已带 Lv / LV 前缀则不重复补）。 -->
     <string name="server_level_prefix">Lv.</string>
-    <string name="server_item_separator">·</string>
     <string name="server_field_optional_hint">可留空</string>
     <string name="server_field_server_hint">必填</string>
     <string name="server_add">新增服务器</string>

@@ -8643,6 +8643,33 @@
     不急于删：它是共用类、删会牵动 `ServerListScanTest`；记在这里免得下次看到时当成"有人用"。
   - 验证：`-PfastTests` **951 例 0 失败** ✓ ＋ `assembleDebug` ✓ ＋ `adb install -r` + `am start` ✓。
 
+407b. **M5 开工：U7 第一刀 —— 死文案清零（97 条）+ V3「零死文案」守卫单测**（2026-10-01）
+  - 用户："**开始UI重构部分的任务**" ⇒ 先切**不需要任何决策**的那一刀（U7 的死文案），
+    因为 U1「导航骨架」要新增依赖 `androidx.navigation:navigation-compose`（**不在** `libs.versions.toml` 里）
+    ⇒ 按 `AGENTS.md`"新增依赖先征得确认"，已把 §5 的 6 项待确认一并回给用户。
+  - **删了 97 条死文案**：
+    ① **61 条**（计划 §4 规则 6 点名的）：`patrol_*` 全 60 条 + `auth_open_patrol_config` —— 旧「跑号清单」界面
+       在 M4 被「拜访规则」（悬浮窗 CONFIG 层 + `preset/`）取代后留下的壳，`app/src` 里**零引用**；
+    ② **36 条**（**新写的守卫单测揪出来的**，原文没提）：`floating_menu_*`（拜访规则 CONFIG 旧文案：
+       `start_patrol` / `switch_visit` / `visit` / `visit_unset` / `visit_toggle` / `confirm` / `cancel` /
+       `confirm_friend` / `glyph_patrol`）、`floating_reason_config_empty|broken`、`floating_side_left|right`、
+       `floating_label_popup_blocked`、`calibration_friend_*`（5 条归属好友旧句）、`calibration_workbench_frames`、
+       `calibration_workbench_write_hint`、`calibration_note_hint`、`calibration_view`、`calibration_signal_template`、
+       `calibration_delete_artifact_confirm_title|body`、`calibration_artifact_present`、`capture_servers_*`（8 条）、
+       `server_index`、`server_item_separator`。
+    删前**排除误删**：仓库级搜索确认 **零引用** ✓＋ `settings.gradle.kts` 确认**只有 `:app` 一个模块** ✓
+    （守卫只扫 `app/src`，多模块会假阳性 —— 这条写进了测试的"已知不覆盖"）。
+  - **新增 `StringResourcesTest`**（M5-U7 / 验收 V3 的守卫）：扫 `src/main/res/values/strings.xml` 的
+    `<string name="…">` ⇒ 与 `src/` 下全部 `kt`/`java`/`xml` 里的 `R.string.X` / `@string/X` 求差集，
+    非空即失败并**把没人用的列出来**；"已知不覆盖"（动态 `getIdentifier`、只检默认 `values/`、
+    `<string-array>` 条目）如实写在类注释里（静默跳过的守卫等于没有守卫）。
+    ⚠ 踩坑两条（都已写进注释）：① Kotlin 块注释**可嵌套** ⇒ 文档里写 `src/**` 会把 `/*` 当成嵌套注释开始 ⇒
+    文件"未闭合注释"编译错；② 末尾带引号的 raw string 不能写 `"""…""""` ⇒ 用转义普通串。
+  - **结果**：`strings.xml` **454 → 361 条（-93，-20.5%）**，未引用项 **0**；
+    `-PfastTests` **952 例 0 失败**（951 → 952，+1 守卫）✓ ＋ `assembleDebug` ✓ ＋ 装机 ✓。
+  - **下一步（待用户拍板 §5 的 6 项）**：U1 导航骨架（Navigation Compose + TopAppBar + NavigationBar + 抽屉）
+    ⇒ 之后 U2/U3 → U4 → U5 → U6，文案精简随各页走。
+
 ## 待开发（用户列，2026-09-24）
 
 1. **优化 · 悬浮窗一级菜单底部加「返回 App」**：一级菜单最下方增加一个回到我们 App 的入口（现在只能靠后台/多任务切回去）。
