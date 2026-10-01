@@ -630,6 +630,24 @@ class FloatingWindow(private val context: Context) {
                 reportRow(context.getString(R.string.floating_frame_stalled_notice, frameAgeMs / 1000)),
             )
         }
+        // **一键重新授权采集**（2026-10-01 用户口径，M5 期间插入）：判据在纯逻辑
+        // [FloatingMenu.shouldOfferReauthorize] —— 只在"会话没了 / 画面停更 / 这次授权没被投喂"时出现；
+        // 正常跑着时**不占这一行**（面板长高会让正在点的行整体位移 ⇒ 误点相邻项）。
+        // 位置紧挨在它要解决的那条原因行下面：**看完原因，顺手就点**（原来得"收起面板 → 回 App →
+        // 找授权页 → 点建立采集"四步）。常驻通路在「更多」层（见 [renderMore]）。
+        if (FloatingMenu.shouldOfferReauthorize(
+                captureActive = CaptureSessionSignal.isActive,
+                frameStale = FrameFreshness.isStale(),
+                frameStarved = FrameFreshness.isStarved(),
+            )
+        ) {
+            container.addView(
+                menuRow(
+                    context.getString(R.string.floating_menu_glyph_reauthorize),
+                    R.string.floating_menu_reauthorize,
+                ) { onRequestReauthorize() },
+            )
+        }
         // 进度块（T4-5）：**有流程才出现** —— 没在跑时面板与 M3 完全一样，不多占一行；
         // 刚跑完的那 30 秒里也要能在这里读到结果（"第 10/10 步 · 完成 / 本次执行已完成"），
         // 见 [patrolForDisplay]。（这是第 327 条真机验收发现的补课：跑完那一刻标签与菜单一起空了。）
@@ -2669,6 +2687,33 @@ class FloatingWindow(private val context: Context) {
     }
 
     /**
+     * **一键重新授权采集**（2026-10-01 用户口径，M5 期间插入）：把本 App 拉到前台**并带上标记**，
+     * App 收到后**自动**拉起系统的屏幕采集授权弹窗 ⇒ 用户只需在弹窗里选「共享一个应用」+ 选中游戏。
+     *
+     * 为什么必须经 App 这一趟：**系统授权弹窗只能由 Activity 用 `startActivityForResult` 拉起**，
+     * 而凭证不落盘、只经内存交给 `CaptureService`（ADR-001）—— 悬浮窗是无障碍 Service，没有 result 通道。
+     * 效果上仍是"一键"：菜单点一下 ⇒ 弹窗直接出现在眼前（不再需要"返回 App → 找授权页 → 点建立采集"三步）。
+     * FR-08「授权必须由用户在前台界面主动确认」仍然成立：**确认这个动作永远由用户在弹窗里做**。
+     *
+     * ⚠ 若这次授权**一帧都没被投喂**（`FrameFreshness.isStarved()`），同一进程里重建会话常常救不回来
+     * —— 那时菜单最上面那条原因行已经写清"要用「退出」重开 App"，本入口仍给（用户可能想再试一次）。
+     */
+    private fun onRequestReauthorize() {
+        MmLog.i(
+            TAG,
+            "菜单：点「重新授权采集」⇒ 拉起 App 并自动请求系统采集授权" +
+                "（弹窗里选「共享一个应用」+ 选中游戏）",
+        )
+        // 先收起（操作已经结束）：App 马上到前台，回来时手柄仍在原位、以收起态重建
+        collapse()
+        context.startActivity(
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                .putExtra(MainActivity.EXTRA_REAUTH_CAPTURE, true),
+        )
+    }
+
+    /**
      * 「更多」层（2026-09-30 用户口径）：**低频维护类**动作 —— 导入服务器（试读这一屏已整体移除）。
      *
      * 前两版它们直接摆在主菜单上；现在主菜单只留高频（换号 / 拜访 / 换号拜访 / 拜访规则 / 更多 / 退出 / 停止），
@@ -2690,6 +2735,16 @@ class FloatingWindow(private val context: Context) {
                 context.getString(R.string.floating_menu_glyph_capture),
                 R.string.floating_menu_import_servers,
             ) { onCaptureServers() },
+        )
+        // **一键重新授权采集**（2026-10-01 用户口径，M5 期间插入）：与根菜单那条**条件行**是同一个动作
+        //（见 [renderRoot] 里 [FloatingMenu.shouldOfferReauthorize] 的调用点），这里是**常驻**通路 ——
+        // 标定产物改过之后"下次建立采集会话时生效"（`calibration_take_effect`）需要一条随时可用的
+        // 重建入口，不能等出了故障才给。放在「导入服务器」旁边：两者都与采集 / 数据有关。
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_reauthorize),
+                R.string.floating_menu_reauthorize,
+            ) { onRequestReauthorize() },
         )
         //（「试读这一屏」已按用户口径**移除**，含后续要删的功能逻辑 —— 见 progress 第 313 条。）
         // **暂停 / 恢复「自动关弹窗」**（2026-09-30，同日从主菜单挪进「更多」）：

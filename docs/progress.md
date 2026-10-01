@@ -8270,6 +8270,37 @@
     增补（二之续：只拜访成功轮逐行 + 只换号→继续 + 两件待办）；`verification/README.md` FR-04 行补收官结论。
   - ⚠ 本轮 `20:27:51` 那次「停止：停在第 4 步」是**用户主动停**（四态核对用），不是失败。
 
+394. **M5 插入项 U0：悬浮窗菜单「一键重新授权采集」入口（两处：根菜单条件行 + 「更多」常驻行）**（2026-10-01，用户拍板）
+  - 用户："**M5 期间在悬浮窗菜单里插一个「一键重新授权采集」入口**"（起因：帧流静默停更时，玩家在游戏里
+    只能看着一轮跑号卡住，要"收起悬浮窗 → 回 App → 找授权页 → 点建立采集"四步）。
+  - **判据（纯逻辑）**：`FloatingMenu.shouldOfferReauthorize(captureActive, frameStale, frameStarved)`
+    = `!captureActive || frameStale || frameStarved` —— 三类"眼睛 / 会话已出问题"：
+    ① 采集会话没了（系统侧回收 / 用户停掉，重建是唯一出路）；② 画面久未更新（`FrameFreshness.isStale`）；
+    ③ 这次授权没被投喂（`isStarved`，入口照给、原因行会说"要换进程"）。**正常跑着时全假 ⇒ 面板零额外行**
+    （菜单每多一行面板就高一截，而面板长高会让正在点的行整体位移 ⇒ 误点相邻项）。
+  - **入口**：① `FloatingWindow.renderRoot`：紧跟在"停更 / 没被投喂"那两条**原因行下面**（看完原因顺手就点）；
+    ② `FloatingWindow.renderMore`：「更多」层**常驻**一条（标定产物改过之后"下次建立采集会话时生效"
+    需要一条随时可用的重建通路）。两处都是 `onRequestReauthorize()`。
+  - **机制（关键约束）**：**系统采集授权弹窗只能由 Activity 用 `startActivityForResult` 拉起**
+    （凭证不落盘、只经内存交给 `CaptureService`，ADR-001）⇒ 悬浮窗那一下是
+    `startActivity(MainActivity + EXTRA_REAUTH_CAPTURE, NEW_TASK or CLEAR_TOP)`，
+    `AuthorizationRoute` 收到 tick 后**自动** `captureLauncher.launch(createScreenCaptureIntent())`
+    ⇒ 用户只需在弹窗里选「共享一个应用」+ 选中游戏。**效果仍是"一键"**。
+    ⚠ 三处防坑（都写进了注释）：① 弹窗只能由 Activity 拉起 ⇒ 借 `MainActivity` 的手；
+    ② `LaunchedEffect` **只以 reauthTick 为键**（并进 resumeTick 会在每次回前台重弹 ⇒ 死循环）；
+    ③ 用"**计数 + 消费**"（`onReauthHandled` 清零）：不清零则"切去别的页再切回授权页"会重弹
+    （系统弹窗只能由用户主动点的那一次触发）。
+  - **口径合规**：FR-08「授权必须由用户在前台界面主动确认，不得由后台静默发起」**不破** ——
+    我们只是把弹窗端到用户面前，**确认永远由用户在弹窗里做**，且只在用户点了菜单那一行时发生。
+  - **文档**：`plans/m5-ui-restructure.md` 新增 §8（U0 卡：目标 / 验收 5 条 / 证据方式 + 口径说明）；
+    `requirements.md` FR-07「菜单」行补入（「更多」清单加「重新授权采集」+ 条件行口径）。
+    另：`strings.xml` 里 2026-09-30 就加好、**一直没接线**的 `floating_menu_reauthorize` / `_glyph_reauthorize`
+    两条死文案**本轮接线**（顺手消灭两条死文案，符合 M5-V3）；`floating_reason_frame_stalled` 的处置
+    由"回 App 的授权状态页"改成"点菜单里的「重新授权采集」"。
+  - 验证：`-PfastTests` **946 例 0 失败**（945 → 946，+1 判据用例）✓ ＋ `assembleDebug` ✓ ＋
+    装机 **Success + 已拉起** ✓。⚠ `-r` 重装会重置无障碍与采集授权 ⇒ 真机走查前需重新授权
+    （走查口径见 M5 §8 的 U0 卡）。
+
 ## 待开发（用户列，2026-09-24）
 
 1. **优化 · 悬浮窗一级菜单底部加「返回 App」**：一级菜单最下方增加一个回到我们 App 的入口（现在只能靠后台/多任务切回去）。

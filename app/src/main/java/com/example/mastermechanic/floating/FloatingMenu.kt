@@ -330,4 +330,31 @@ internal object FloatingMenu {
      * 只有冒号没有内容的垃圾行）；文案拼装（前缀 + 原因）留给 `FloatingWindow`（那里才有 Context）。
      */
     fun popupBlockedNotice(reason: String?): String? = reason?.trim()?.takeIf { it.isNotEmpty() }
+
+    // ---------------------------------------------------------------- 「重新授权采集」入口（纯逻辑）
+
+    /**
+     * 根菜单要不要显示「**⟳ 重新授权采集**」那一行。
+     *
+     * 用户口径（2026-10-01，M5 期间插入）：**"在悬浮窗菜单里插一个「一键重新授权采集」入口"** ——
+     * 起因是帧流静默停更（[FrameFreshness]）时，玩家在游戏里只能看着一轮跑号卡住，
+     * 得"收起悬浮窗 → 回 App → 找授权页 → 点建立采集"四步才回到游戏。
+     *
+     * 为什么**不是常驻行**：菜单每多一行面板就高一截，而**面板长高会让正在点的行整体位移** ⇒
+     * 误点相邻项（见 [ROW_HEIGHT_DP] 与 `FloatingWindow.controlRow` 那段说明）。
+     * 下面三个判据恰好就是"此刻眼睛 / 会话已经出问题"，那时多一行才值得：
+     * - ① **采集会话没了**（用户从系统侧停掉 / 系统回收）：程序什么都做不了，重建采集是**唯一**出路；
+     * - ② **画面久未更新**（[FrameFreshness.isStale]）：识别读的是重放的旧帧 ⇒ 老处置只能写"回 App 重建"；
+     * - ③ **这次授权没被投喂**（[FrameFreshness.isStarved]）：入口照给（用户可能还想再试一次），
+     *   但原因行会说清"**只重新授权通常没用、要换进程**"（2026-10-01 真机实证）。
+     *
+     * 正常跑着时三个都为假 ⇒ 面板与从前**一模一样**（零位移、零额外行）。
+     * （另有「更多」层里的一条**常驻**同类入口：改过标定产物之后"下次建立采集会话时生效"
+     * 需要一条稳定的重建通路，见 `FloatingWindow.renderMore`。）
+     */
+    fun shouldOfferReauthorize(
+        captureActive: Boolean,
+        frameStale: Boolean,
+        frameStarved: Boolean,
+    ): Boolean = !captureActive || frameStale || frameStarved
 }

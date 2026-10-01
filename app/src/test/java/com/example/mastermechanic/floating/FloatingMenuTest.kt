@@ -46,6 +46,45 @@ class FloatingMenuTest {
         assertNull(resumed.reason)
     }
 
+    @Test
+    fun theReauthorizeRowOnlyAppearsWhenTheEyesAreBroken() {
+        // 2026-10-01 用户口径（M5 期间插入）：悬浮窗菜单里要有一条「一键重新授权采集」。
+        // 判据 = 三种"眼睛 / 会话已经出问题"的情形之一；**正常跑着时它是假的** ——
+        // 菜单每多一行面板就高一截，而面板长高会让正在点的行整体位移 ⇒ 误点相邻项。
+        assertFalse(
+            "一切正常 ⇒ 不加这一行（面板与从前一模一样）",
+            FloatingMenu.shouldOfferReauthorize(
+                captureActive = true,
+                frameStale = false,
+                frameStarved = false,
+            ),
+        )
+        assertTrue(
+            "采集会话没了（系统侧回收 / 用户从系统侧停掉）⇒ 重建采集是唯一出路",
+            FloatingMenu.shouldOfferReauthorize(
+                captureActive = false,
+                frameStale = false,
+                frameStarved = false,
+            ),
+        )
+        assertTrue(
+            "画面久未更新（60 秒没有新帧）：识别读的是重放的旧帧 ⇒ 就地给一键入口",
+            FloatingMenu.shouldOfferReauthorize(
+                captureActive = true,
+                frameStale = true,
+                frameStarved = false,
+            ),
+        )
+        assertTrue(
+            "这次授权没被投喂（isStarved）：入口照给，原因行会建议换进程",
+            FloatingMenu.shouldOfferReauthorize(
+                captureActive = true,
+                frameStale = false,
+                frameStarved = true,
+            ),
+        )
+    }
+
     // ---------------------------------------------------------------- 层级
 
     @Test

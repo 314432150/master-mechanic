@@ -62,6 +62,9 @@ import kotlinx.coroutines.delay
  * 授权流入口（M0-T0-2）：展示各关键授权状态，并提供一键前往授予。
  *
  * @param resumeTick 每次回到前台自增，用于从系统设置页返回后刷新状态。
+ * @param reauthTick **一键重新授权采集**的待处理请求（>0 = 有一条；见 [MainActivity.EXTRA_REAUTH_CAPTURE]）：
+ *   悬浮窗菜单点「⟳ 重新授权采集」⇒ App 被拉到前台并带上它 ⇒ 本页**自动**拉起系统采集授权弹窗。
+ * @param onReauthHandled 本页已经把请求兑现（弹窗已拉起）⇒ 通知调用方清零，避免切页回来又弹一次。
  * @param onOpenCalibration 进入「识别标定」页（T1-5b）。
  * @param onOpenServerList 进入「服务器清单」页（M3-T3-9，FR-10）。
  * @param onOpenFriendList 进入「好友清单」页（M3-T3-8，FR-07「拜访」三级列表的数据源）。
@@ -69,6 +72,8 @@ import kotlinx.coroutines.delay
 @Composable
 fun AuthorizationRoute(
     resumeTick: Int,
+    reauthTick: Int,
+    onReauthHandled: () -> Unit,
     onOpenCalibration: () -> Unit,
     onOpenServerList: () -> Unit,
     onOpenFriendList: () -> Unit,
@@ -139,9 +144,41 @@ fun AuthorizationRoute(
         reconcileTick++
     }
 
+    /**
+     * 拉起**系统**的屏幕采集授权弹窗（唯一入口，两处共用：授权页那颗按钮 + 悬浮窗菜单的
+     * 「一键重新授权采集」）。用户确认后由 [captureLauncher] 建立真实采集会话。
+     *
+     * ⚠ 定义必须排在 [captureLauncher] **之后**：局部函数不能前向引用尚未声明的局部 val。
+     */
+    fun requestCapture() {
+        val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+            as MediaProjectionManager
+        captureLauncher.launch(manager.createScreenCaptureIntent())
+    }
+
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { refreshTick++ }
+
+    // **一键重新授权采集**（2026-10-01 用户口径，M5 期间插入）：悬浮窗菜单那一行把本页拉到前台并带上
+    // [reauthTick] ⇒ 这里**自动**把系统采集授权弹窗拉起来（用户只需在弹窗里选「共享一个应用」+ 选中游戏）。
+    //
+    // 为什么"必须经 App 这一趟"：系统授权弹窗**只能由 Activity 用 `startActivityForResult` 拉起**，
+    // 而凭证不落盘、只经内存交给 `CaptureService`（ADR-001）—— 悬浮窗是无障碍 Service，没有 result 通道。
+    // 效果上仍是"一键"：菜单点一下 ⇒ 弹窗直接出现在眼前（原来要"返回 App → 找授权页 → 点建立采集"三步）。
+    // FR-08「授权必须由用户在前台界面主动确认」仍然成立：**确认这个动作永远由用户在弹窗里做**，
+    // 我们只是把弹窗端到他面前。
+    //
+    // ⚠ 只以 [reauthTick] 为键，且**兑现后立刻回调清零**（[onReauthHandled]）：
+    // 若把它并进 `resumeTick` 这类键，用户刚从授权弹窗返回就又会被弹一次（死循环）；
+    // 若不清零，用户切去别的页再切回来也会重弹。
+    LaunchedEffect(reauthTick) {
+        if (reauthTick <= 0) return@LaunchedEffect
+        // 先让本页走到 RESUMED：组合期（onCreate 里）直接 launch 时还没有前台 Activity，弹窗会被丢掉
+        delay(250)
+        requestCapture()
+        onReauthHandled()
+    }
 
     AuthorizationScreen(
         statuses = statuses,
@@ -150,11 +187,7 @@ fun AuthorizationRoute(
         onOpenAccessibilitySettings = {
             context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         },
-        onRequestCapture = {
-            val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
-                as MediaProjectionManager
-            captureLauncher.launch(manager.createScreenCaptureIntent())
-        },
+        onRequestCapture = { requestCapture() },
         onRequestNotifications = {
             // minSdk 34 起通知权限始终需要运行时申请（不再有"低版本无需申请"那条分支）
             notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)

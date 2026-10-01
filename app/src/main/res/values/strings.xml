@@ -96,14 +96,17 @@
     <string name="floating_menu_glyph_open_app">⌂</string>
     <string name="floating_menu_open_app">返回 App</string>
     <!-- 2026-09-30（真机第 301 条）：镜像帧流失效时，“旧画面”不能再当成“当前画面”下结论 ⇒
-         原因条与入口都要指路到“重建采集”，而不是“回到大厅”。 -->
+         原因条与入口都要指路到“重建采集”，而不是“回到大厅”。
+         2026-10-01 接线（用户口径：M5 期间插「一键重新授权采集」入口）：两处用到同一行 ——
+         ① 根菜单**条件行**（采集会话没了 / 画面停更 / 这次授权没被投喂时才出现，判据
+         `FloatingMenu.shouldOfferReauthorize`）；② 「更多」层**常驻行**（改过标定产物后重建采集的通路）。 -->
     <string name="floating_menu_glyph_reauthorize">⟳</string>
     <string name="floating_menu_reauthorize">重新授权采集</string>
     <!-- 2026-09-30 改写：原文写着"**画面一直在动**却收不到新帧 ⇒ 镜像已失效" —— 那条前提当天被真机推翻
          （目标在前台 = 农场、画面静止、零新帧 60 秒：平台对静止画面本来就不产帧）。
          "没有新帧"分不出「屏幕真的没变」与「镜像坏了」⇒ 这里只陈述**事实**（看到的是旧画面）+ 给处置，
          不再下"镜像已失效"的判断。 -->
-    <string name="floating_reason_frame_stalled">采集画面已停更 %1$d 秒（现在看到的是旧画面）⇒ 请回到 App 的「授权状态」重新建立采集（不是回到大厅）；若游戏画面本来就静止，等新画面即可</string>
+    <string name="floating_reason_frame_stalled">采集画面已停更 %1$d 秒（现在看到的是旧画面）⇒ 点菜单里的「重新授权采集」重建（别回大厅）；若游戏画面本来就静止，等新画面即可</string>
     <!-- 2026-09-30：采集会话没了（用户从系统侧停掉 / 系统回收）⇒ 标签必须说出来，否则界面静默 -->
     <string name="floating_label_capture_stopped">采集已停止（点手柄重新授权）</string>
     <!-- **画面久未更新**（2026-09-30，L2）：60 秒收不到新帧 ⇒ 程序**停止一切点击**（手上那张画面是旧的），
