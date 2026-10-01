@@ -25,7 +25,6 @@
     <string name="nav_tab_friends">好友清单</string>
     <!-- U1 阶段的**占位页**（U3 / U6 会各自替换掉；每句 ≤60 字，见验收 V2）：
          写清"这一页以后是什么"，而不是留一片空白 —— 空白会被当成 bug。 -->
-    <string name="nav_stub_visit_settings">本页在 M5-U3 建设：选区服策略与好友，保存即落盘。</string>
     <string name="nav_stub_diagnostics">本页在 M5-U6 建设：画面是否在来、当前识别结果、单帧耗时、日志。</string>
     <string name="nav_stub_settings">本页在 M5-U6 建设：自动关弹窗、悬浮窗提示位置、退出 App。</string>
     <string name="nav_stub_help">本页在 M5-U6 建设：术语与流程说明。</string>
@@ -47,6 +46,28 @@
     <!-- 「继续」在本页**只指路、不做按钮**（用户 2026-10-01 真机："在 App 里出现继续按钮没有意义，
          因为游戏不在前台"）⇒ 这句替代那个按钮。 -->
     <string name="run_resume_in_game">已停在第 %1$d 步：请回到游戏，点悬浮窗的「继续」</string>
+
+    <!-- ===== M5-U3「拜访设置」页（2026-10-01）=====
+         只保存、不发起（用户拍板"要跑就回游戏用悬浮窗点"）；值都从两份清单里**选**，不手打
+         （名字是跨文件的引用键，错一个字跑号时就"永远找不到"）。每句 ≤60 字（验收 V2）。 -->
+    <string name="visit_settings_strategy">区服策略</string>
+    <string name="visit_settings_strategy_next">顺序轮换（按清单顺序换下一个）</string>
+    <string name="visit_settings_strategy_fixed">固定区服</string>
+    <string name="visit_settings_server">区服</string>
+    <string name="visit_settings_friend">拜访好友</string>
+    <string name="visit_settings_pick">点这里选择</string>
+    <string name="visit_settings_no_servers">清单里还没有区服：先去「账号与好友」加一条</string>
+    <string name="visit_settings_no_friends">清单里还没有好友：先去「账号与好友」加一条</string>
+    <string name="visit_settings_save">保存</string>
+    <string name="visit_settings_saved">已保存：悬浮窗的「拜访」会按它执行</string>
+    <string name="visit_settings_save_failed">保存失败：%1$s</string>
+    <string name="visit_settings_load_failed">读取预设失败：%1$s</string>
+    <string name="visit_settings_blocked_friend">还要选一个拜访好友</string>
+    <string name="visit_settings_blocked_server">固定区服还要选一个区服</string>
+    <string name="visit_settings_current_next">当前生效：顺序轮换 · 去「%1$s」的农场</string>
+    <string name="visit_settings_current_fixed">当前生效：固定「%1$s」· 去「%2$s」的农场</string>
+    <string name="visit_settings_current_none">还没配置过：选好策略与好友再保存</string>
+    <string name="visit_settings_run_hint">本页只保存设置；要跑的时候回游戏，用悬浮窗的「拜访」。</string>
 
     <!-- 授权流（M0-T0-2） -->
     <string name="auth_title">授权状态</string>

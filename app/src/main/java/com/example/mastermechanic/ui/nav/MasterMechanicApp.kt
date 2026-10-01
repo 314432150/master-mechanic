@@ -44,6 +44,7 @@ import com.example.mastermechanic.ui.CalibrationRoute
 import com.example.mastermechanic.ui.FriendListRoute
 import com.example.mastermechanic.ui.ServerListRoute
 import com.example.mastermechanic.ui.run.RunRoute
+import com.example.mastermechanic.ui.settings.VisitSettingsRoute
 import kotlinx.coroutines.launch
 
 /**
@@ -182,9 +183,9 @@ fun MasterMechanicApp(
                         onOpenAccounts = { tab -> accountsTab = tab; go(Routes.ACCOUNTS) },
                     )
                 }
-                // 一级：拜访设置（U3 建设）
+                // 一级：拜访设置 —— U3 起是本页自己的内容（区服策略 + 好友 ⇒ **只保存，不发起**）
                 composable(Routes.VISIT_SETTINGS) {
-                    StubDestination(R.string.nav_stub_visit_settings)
+                    VisitSettingsRoute(resumeTick = resumeTick)
                 }
                 // 一级：账号与好友 —— 两个 Tab，复用手上真正的两个清单页
                 composable(Routes.ACCOUNTS) {
