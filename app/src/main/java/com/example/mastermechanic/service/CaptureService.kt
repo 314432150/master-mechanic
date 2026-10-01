@@ -334,6 +334,13 @@ class CaptureService : Service() {
     /** 上一次**新读**到的"行键 → 纵坐标"（量滑动位移用）。仅帧线程访问。 */
     private var lastServerRowYs: Map<String, Double>? = null
 
+    /**
+     * 上一次解释"**搜索链为什么在等**"的那句话（同一条只记一次，避免逐轮刷屏）。仅帧线程访问。
+     *
+     * 用于 2026-10-01 加的那道"**不在前台就不写文字**"护栏（见 [friendPlanOf] 的 ③）。
+     */
+    private var lastFriendSearchWaitingNote: String? = null
+
     /** 上一次"新读"之后是否下发过滑动（只测量用：没有滑动就不必量位移）。仅帧线程访问。 */
     private var serverScrollSinceRead = false
 
@@ -393,6 +400,14 @@ class CaptureService : Service() {
      * 节点树实证它就在同一次会话里被我们抓到过（见 `TextInjector.dumpTreeVia`）。
      */
     private val searchConfirmLabel = "确定"
+
+    /**
+     * 搜索链 ③ **等前台**时的那句话（同一条只记一次，见 [lastFriendSearchWaitingNote]）。
+     *
+     * 2026-10-01 加：`ACTION_SET_TEXT` 写的是**当前活动窗口**的节点树 —— 游戏不在前台时这一写必然失败
+     * （真机日志：`根节点包名=com.bbk.launcher2`＝桌面）。
+     */
+    private val searchWaitForegroundNote = "游戏还没回到前台（这时写入必然失败）"
 
     /**
      * **写文字**（原生 `ACTION_SET_TEXT`，不弹键盘；见 `action/TextInjector` 的说明）。
@@ -2918,9 +2933,26 @@ class CaptureService : Service() {
         }
         // ③：**原生写文字**；诊断原样进日志（真机第一轮就靠它判断"这条路通不通"）
         if (friendSearch.phase == FriendSearch.Phase.TYPE) {
+            // ⚠ **我们眼睛不在游戏上时，一个字节都不写**（2026-10-01 真机缺陷修）：`ACTION_SET_TEXT`
+            // 写的是**当前活动窗口**那棵树 —— 用户切出去的那一两秒里根节点是**桌面**
+            //（真机日志实证：`21:11:58.366 … 没找到可编辑控件（整棵树里没有 isEditable 节点）｜根节点包名=com.bbk.launcher2`）
+            // ⇒ 必然失败 ✗。这种时刻**不算搜索链的失败**，等下一轮（前台恢复 / 可疑解除）再写。
+            // 真机后果（用户报"**继续后没有继续搜索，而是进行了滑屏**"）：那一次失败把整条链降级成滑屏。
+            if (!ForegroundSignal.isForeground || ClickDispatch.foregroundSuspect) {
+                if (lastFriendSearchWaitingNote != searchWaitForegroundNote) {
+                    lastFriendSearchWaitingNote = searchWaitForegroundNote
+                    MmLog.i(
+                        TAG,
+                        "第 9 步搜索链 ③ 暂缓写文字：$searchWaitForegroundNote" +
+                            "（不在前台时写入必然失败 —— 真机会写进桌面的节点树里）",
+                    )
+                }
+                return PatrolRunner.NamePlan.Waiting
+            }
+            lastFriendSearchWaitingNote = null
             val diag = textWriter.write(target)
             MmLog.i(TAG, "第 9 步搜索链 ③ 写「$target」：$diag")
-            friendSearch.onTextWritten(diag.contains("成功"))
+            friendSearch.onTextWritten(diag.contains("成功"), searchWriteMaxAttempts)
             return PatrolRunner.NamePlan.Waiting
         }
         // ③.5：**收输入法**（用户 2026-10-01 提示的那一步）——

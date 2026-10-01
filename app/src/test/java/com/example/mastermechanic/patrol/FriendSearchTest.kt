@@ -96,8 +96,12 @@ class FriendSearchTest {
     }
 
     @Test
-    fun aFailedWriteFallsBackToScrolling() {
-        // 写文字失败（`ACTION_SET_TEXT` 找不到可编辑节点）⇒ UNAVAILABLE ⇒ 调用方退回滑屏找。
+    fun aFailedWriteRetriesOnceBeforeFallingBackToScrolling() {
+        // 2026-10-01 真机缺陷修（用户报"**本来已经触发搜索好友的流程，继续后却没有继续搜索，
+        // 而是进行了滑屏**"）：写失败原来**直接** UNAVAILABLE ⇒ 整条搜索链**永久降级**成"逐屏滑屏找" ✗。
+        // 真机那次失败的原因极瞬时（用户切出去的那一秒里根节点是桌面 ⇒ 树里当然没有可编辑控件 ✗，
+        // 日志：`21:11:58.366 … 根节点包名=com.bbk.launcher2`）。
+        // ⇒ 现在：失败先**回到「点搜索框」重写一次**；两次都没进去才认下"走不了"（调用方退回滑屏）。
         val search = newSearch(*three)
         search.start()
         search.onAnchorPracticed()
@@ -105,10 +109,21 @@ class FriendSearchTest {
 
         search.onTextWritten(succeeded = false)
 
-        assertEquals(FriendSearch.Phase.UNAVAILABLE, search.phase)
+        assertEquals(
+            "第一次失败 ⇒ 回「点搜索框」重写（不降级成滑屏）",
+            FriendSearch.Phase.FIELD,
+            search.phase,
+        )
         assertFalse(search.awaitingResults)
+        assertEquals("失败也占一次额度（否则会无限重写）", 1, search.writeAttempts)
+
+        // 重写还是没进去（额度用完）⇒ 这才认下"走不了"
+        search.onAnchorPracticed() // ② 再点搜索框
+        search.onTextWritten(succeeded = false)
+
+        assertEquals(FriendSearch.Phase.UNAVAILABLE, search.phase)
         assertTrue("日志要说清是「走不了」，别让用户以为「搜过了」", search.note().contains("走不了"))
-        assertEquals("失败的那次不算写过", 0, search.writeAttempts)
+        assertEquals(2, search.writeAttempts)
     }
 
     @Test

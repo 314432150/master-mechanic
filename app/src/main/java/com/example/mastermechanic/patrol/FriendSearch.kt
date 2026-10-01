@@ -140,15 +140,27 @@ class FriendSearch(
 
     /**
      * **写文字的结果**（调用方把 [TextInjectorLike] 的诊断传进来）：
-     * 成功 ⇒ 先去 [Phase.DISMISS]**收输入法**（不然「搜索」按钮不在画面上）；失败 ⇒ 走不了。
+     * 成功 ⇒ 先去 [Phase.DISMISS]**收输入法**（不然「搜索」按钮不在画面上）；
+     * 失败 ⇒ **先用现有额度重写一次**，额度用完才走不了（[Phase.UNAVAILABLE] ⇒ 调用方退回滑屏）。
+     *
+     * ⚠ **失败不再立刻降级**（2026-10-01 真机缺陷修，用户报"**本来已经触发搜索好友的流程，继续后
+     * 却没有继续搜索，而是进行了滑屏**"）：原来一步失败就 `UNAVAILABLE` ⇒ 整条搜索链**永久降级**
+     * 成"逐屏滑屏找" ✗。真机实录（`21:11:58.366`）：用户切出去的那 1 秒里写入**必然**失败
+     * （`根节点包名=com.bbk.launcher2`＝桌面，树里当然没有可编辑控件）⇒ 回到游戏点「继续」之后再也没
+     * 搜索过，一路滑屏到 `已滚动 5 屏仍未找到` 中止 ✗。
+     * ⇒ 这种**瞬时**失败最多消耗一次重写额度（与"结果页没命中"共用，见 [writeAttempts]）。
+     *
+     * @param maxAttempts 重写额度上限；调用方传自己的常量（见 `CaptureService.searchWriteMaxAttempts`）。
      */
-    fun onTextWritten(succeeded: Boolean) {
+    fun onTextWritten(succeeded: Boolean, maxAttempts: Int = 2) {
         if (phase != Phase.TYPE) return
         if (succeeded) {
             writeAttempts++
             phase = Phase.DISMISS
         } else {
-            phase = Phase.UNAVAILABLE
+            // **失败也占一次额度**（否则会无限重写）：写完第 [maxAttempts] 次还是没进去 ⇒ 认下"走不了"。
+            writeAttempts++
+            phase = if (writeAttempts >= maxAttempts) Phase.UNAVAILABLE else Phase.FIELD
         }
     }
 
