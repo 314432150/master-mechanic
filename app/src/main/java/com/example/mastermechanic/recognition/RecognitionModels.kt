@@ -52,7 +52,28 @@ class Template(val width: Int, val height: Int, val pixels: ByteArray) {
 }
 
 /** 像素范围闭开区间 [x0, x1) × [y0, y1)（由 [SearchWindow] 按帧尺寸换算而来）。 */
-data class PixelBounds(val x0: Int, val y0: Int, val x1: Int, val y1: Int)
+data class PixelBounds(val x0: Int, val y0: Int, val x1: Int, val y1: Int) {
+
+    /** 空区域（右侧/下侧不大于左侧/上侧即为空）。 */
+    val isEmpty: Boolean get() = x1 <= x0 || y1 <= y0
+
+    /**
+     * **只取横向**的交集（2026-09-22，T4-3g）：横向收窄到两框的共同部分，**纵向仍是自己的**。
+     *
+     * 用法是"在「列表区域」里再裁出一条名称列"（第 9 步的 OCR 输入）：那个"列表区域"（接收者）
+     * 负责纵向，`other`（名称列）**只当横向限制器** —— 用户框名称列时**不必**与列表区域上下齐平
+     * （只框一行高也行），所以纵向**故意不参与**求交。理由见 `NameLocating.visitRanges`。
+     *
+     * **横向无交集时不夹取**：[isEmpty] 为真就是真没对上，调用方据此如实报"框得不对"。
+     * 夹成零宽区域会把"没有交集"伪装成"有一条空列"，那是猜。
+     */
+    fun intersectHorizontally(other: PixelBounds): PixelBounds = PixelBounds(
+        x0 = maxOf(x0, other.x0),
+        y0 = y0,
+        x1 = minOf(x1, other.x1),
+        y1 = y1,
+    )
+}
 
 /** 搜索窗口：相对帧尺寸的比例矩形（0..1）。像素范围按帧尺寸换算，因此零设备常量。 */
 data class SearchWindow(val left: Double, val top: Double, val right: Double, val bottom: Double) {
@@ -70,6 +91,28 @@ data class SearchWindow(val left: Double, val top: Double, val right: Double, va
         x1 = ceil(right * imageWidth).toInt().coerceIn(0, imageWidth),
         y1 = ceil(bottom * imageHeight).toInt().coerceIn(0, imageHeight),
     )
+
+    companion object {
+        /**
+         * 收紧后模板四周**至少**保留的搜索余量（像素，2026-09-21；**2026-09-24 由 8 提到 32**）。
+         *
+         * 为什么是绝对值而不是比例：小模板在比例口径下没救 —— 0.6 倍"小窗口"还是小窗口。
+         *
+         * **为什么从 8 提到 32**（真机实测，`docs/progress.md` 第 188 条）：收紧是**以窗口中心**收窄的，
+         * 而元素在真机上**未必落在标定窗口中心** —— 实测 `hall_settings`（模板 77×79、窗口 231×199）
+         * 的命中位置比窗口中心**高 ≈20px**（`MM-Click 帧点 (2817,80)` vs 窗口中心 `(2817.5,99.5)`）。
+         * 8px 只够盖住"手抖 1~3px"，盖不住这种 ~20px 的框选偏离 ⇒ 收紧到 0.45 之后**正确位置落到窗口外**
+         * ⇒ 大厅永远认不出（`hall_settings` 分数停在 0.365，跑号第 6 步等 15s 超时中止，
+         * 而用户明明就站在大厅）。32 = 实测偏离 20px + 12px 安全余量。
+         *
+         * 代价如实：中小模板的搜索区会回到接近 0.6 的水平（单轮识别 ≈0.16s → 预计 ≈0.3s），
+         * 换来的是"框得偏一点也照样找得到"——**宁可慢一点点，也不能认不出画面**。
+         * 下限比原窗口还宽时按"只收紧不放大"夹回原窗口（见 [tightened]）。
+         *
+         * **不是设备绑定常量**：它限制的是"搜索区相对模板的富余"，与分辨率 / 密度无关（红线 4）。
+         */
+        const val MIN_ABSOLUTE_MARGIN_PX = 32.0
+    }
 }
 
 /**
@@ -118,6 +161,32 @@ data class DetectionRecord(
     val best: MatchPeak?,
     val competitor: MatchPeak?,
 ) {
-    /** 是否命中（不可信与未命中均不算命中）。 */
+    /** 是否命中（不可信与未命中均不算命中）。**要点击的锚点只认这一条**（位置歧义一票否决，红线 7）。 */
     val matched: Boolean get() = verdict == Verdict.MATCHED
+
+    /**
+     * **"这一屏上在不在"**（标志语义；2026-09-29 加）：命中，或"不可信但最高分够高"。
+     *
+     * 与 [matched] 的分工就是**"判状态"与"点坐标"的分工**：
+     * - 标志（判状态）只问"在不在" ⇒ 位置歧义不影响答案，最高分够高就当在场；
+     * - 锚点（要点击）必须知道"点哪儿" ⇒ 有竞争位置就宁可不点（[AnchorLocator.hitOf] 只看 [matched]）。
+     *
+     * 真机成因见 [SignalStateMapping.resolve] 的注释（用户报"新手引导页的标志连当前帧都搜不到"）。
+     */
+    val present: Boolean
+        get() = matched ||
+            (verdict == Verdict.UNRELIABLE && (best?.score ?: 0.0) >= PRESENCE_SCORE)
+
+    companion object {
+        /**
+         * "最高分高到这个程度 ⇒ 即便有竞争位置，也当作**在场**"（取 **0.97**）。
+         *
+         * 依据（真机写入试读，2026-09-29）：
+         * `tutorial_guide_e1｜marker｜试读 ⚠ 不可信（最高 1.00，但竞争位置 (204, 38) 也有 0.90）`
+         * —— 1.00 是**像素级满分**（同一个像素阵列），不可能出现在错的地方；0.90 那一侧才是
+         * "像但不是"。命中线 0.85 回答的是"够不够像"，0.97 回答的是"是不是它本人"。
+         * ⚠ 调低 = 更多歧义被当成在场（更容易认错界面）；调高 = 更多标志回到"认不出"。
+         */
+        const val PRESENCE_SCORE = 0.97
+    }
 }

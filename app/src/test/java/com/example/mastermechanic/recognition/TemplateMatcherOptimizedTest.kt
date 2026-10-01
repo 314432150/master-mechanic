@@ -194,7 +194,12 @@ class TemplateMatcherOptimizedTest {
                 if (score > 0.0) candidates.add(MatchPeak(score, x, y))
             }
         }
-        return TemplateMatcher.suppressPeaks(candidates, params.peakMinDistance)
+        // 抑制半径与生产口径一致（随模板短边放大，见 TemplateMatcher.effectiveSuppressRadius：
+        // 老口径用固定 peakMinDistance 会把"峰肩"留成竞争位置）
+        return TemplateMatcher.suppressPeaks(
+            candidates,
+            TemplateMatcher.effectiveSuppressRadius(params, template.width, template.height),
+        )
     }
 
     private fun referenceNcc(image: GrayImage, template: Template, x: Int, y: Int): Double {

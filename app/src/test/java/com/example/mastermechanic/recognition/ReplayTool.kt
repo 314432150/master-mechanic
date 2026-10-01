@@ -100,7 +100,7 @@ object ReplayTool {
         require(manifest.isFile) { "样本集缺少清单：${manifest.path}" }
         val set = ReplaySetCodec.decode(manifest.readText(Charsets.UTF_8))
         val detector = SignalDetector(
-            data.signals.map { SignalSpec(it.name, it.window, it.templates) },
+            data.signals.map { SignalSpec(it.id, it.window, it.templates) },
             data.params,
         )
         // 逐帧流式处理：解码一帧 → 跑 [runs] 次检测 → 立即丢弃灰帧（内存与批次规模解耦，

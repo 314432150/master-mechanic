@@ -18,13 +18,13 @@ class MmLogFormatTest {
     @Test
     fun lineCarriesLogcatCompatibleTimestamp() {
         val nowMs = 1_756_000_000_000L // 固定时刻，避免依赖真实时钟
-        val line = MmLogFormat.line("MM-Click", "点击拒绝（演练模式）", nowMs)
+        val line = MmLogFormat.line("MM-Click", "点击拒绝（目标不在前台）", nowMs)
         assertTrue(
             "行首应为 MM-dd HH:mm:ss.SSS 时间戳：$line",
             Regex("^\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3} ").containsMatchIn(line),
         )
         assertTrue("行内应含 TAG", line.contains("MM-Click: "))
-        assertTrue("行内应含消息", line.endsWith("点击拒绝（演练模式）"))
+        assertTrue("行内应含消息", line.endsWith("点击拒绝（目标不在前台）"))
     }
 
     @Test

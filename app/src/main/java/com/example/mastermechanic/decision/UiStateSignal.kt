@@ -26,6 +26,34 @@ object UiStateSignal {
     /** 当前界面状态（识别结论；初始 / 重置后为「未知」）。 */
     val status: UiState get() = current
 
+    /**
+     * **最近一轮命中的画面**（未经滞回，2026-09-22 真机需求）。
+     *
+     * 滞回要**连续 2 轮**命中才转移（§2.2）—— 这段时间里「画面已经变了」但 [status] 还停在旧结论。
+     * 真机实录（`files/logs/mm-log-20260922.txt`）：
+     *
+     * ```
+     * 02:24:16.368  待命期画面判定：当前「好友列表」｜本轮命中：农场   ← 农场已经命中了
+     * 02:24:16.647  状态转移: 好友列表 -> 农场（连续 2 次命中（进入））   ← 0.3 秒后 status 才跟上
+     * ```
+     *
+     * 而用户"关掉好友列表 → 立刻点菜单"就落在这个窗口里，被拦下
+     * （真机报障原话："我是在农场点击的只拜访"）。
+     *
+     * 所以起点判定（`PatrolStartGate`）除 [status] 外**也看这一份**：
+     * 最近一轮画面里只要出现能当起点的画面，就按它放行 —— 不必等滞回确认。
+     */
+    @Volatile
+    private var latestHits: Set<UiState> = emptySet()
+
+    /** 最近一轮命中的画面（未经滞回；空集 = 那一轮没命中任何画面 / 还没跑过）。 */
+    val recentHits: Set<UiState> get() = latestHits
+
+    /** 由采集侧每轮写入（仅帧线程调用）。 */
+    fun noteHits(hits: Set<UiState>) {
+        latestHits = hits
+    }
+
     fun addListener(listener: (UiState) -> Unit) {
         listeners.add(listener)
     }
@@ -45,6 +73,7 @@ object UiStateSignal {
 
     /** 采集会话终止等场景：识别结论停止更新，回到「未知」。 */
     fun reset(reason: String) {
+        latestHits = emptySet()
         update(UiState.UNKNOWN, reason)
     }
 }

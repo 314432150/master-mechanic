@@ -3,15 +3,17 @@ package com.example.mastermechanic.service
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import com.example.mastermechanic.action.ClickDispatch
+import com.example.mastermechanic.action.SystemKeys
+import com.example.mastermechanic.action.TextInjector
 import com.example.mastermechanic.floating.FloatingWindow
 import com.example.mastermechanic.foreground.ForegroundEvaluator
 import com.example.mastermechanic.foreground.ForegroundSignal
 import com.example.mastermechanic.foreground.ForegroundStatus
-import com.example.mastermechanic.notify.FloatingNotifier
 
 /**
  * 无障碍服务：点击注入（ADR-002）、悬浮窗（ADR-004）、前台判定（ADR-005）的共同承载者。
@@ -23,11 +25,34 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
 
+    /**
+     * **前台查询线程**（2026-09-29）：`windows…root` 的建树代价**绝不能落在主线程上**。
+     *
+     * 真机实录（打开框选页 ⇒ 黑屏 + ANR）：从进入那一页起，`GC freed 91~96MB, 0(0B) LOS objects` 每 ~270ms
+     * 一次（≈350MB/s）、并且**探针日志（跑在主线程）从那一刻起就不再打了** ⇒ 主线程正卡在**一句查询**里
+     * （我们自己的 Compose 页，整棵语义树要在这里建出来）。所以：
+     * ① 查询搬到本线程；② 一次没完**不发起第二次**（[foregroundQueryBusy]）。
+     * 查询本身很便宜（实测 1~3ms / ≈0MB），放在这里只是为了"**主线程绝不碰它**"这条不变量。
+     */
+    private val foregroundThread = HandlerThread("MM-Foreground").apply { start() }
+    private val foregroundHandler = Handler(foregroundThread.looper)
+
+    /** 是否已有一次前台查询在飞（只被主线程读写）。 */
+    private var foregroundQueryBusy = false
+
     private val floatingWindow by lazy { FloatingWindow(this) }
 
-    /** 前台信号 → 悬浮窗可见性：仅 FOREGROUND 挂载，其余一律整窗移除（FR-07 / A4）。 */
+    /**
+     * 前台信号 → 悬浮窗可见性：仅 FOREGROUND 挂载，其余一律整窗移除（FR-07 / A4）。
+     *
+     * ⚠ **挂载 / 移除必须回到主线程**（2026-09-29）：前台状态现在可能由 [foregroundHandler] 上的
+     * 查询线程更新（见 [refreshForeground]），而监听器是**在更新线程上同步回调**的 ——
+     * `WindowManager.addView/removeView` 只能在主线程做，否则直接抛异常。
+     */
     private val onForegroundChanged: (ForegroundStatus) -> Unit = { status ->
-        if (status == ForegroundStatus.FOREGROUND) floatingWindow.show() else floatingWindow.hide()
+        handler.post {
+            if (status == ForegroundStatus.FOREGROUND) floatingWindow.show() else floatingWindow.hide()
+        }
     }
 
     /** 主动复核兜底：周期小于 2 秒，保证事件丢失时状态变化仍能在 2 秒内生效（ADR-005）。 */
@@ -40,14 +65,19 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        // 点击通道（T2-3c）：注入实现 + 单调时钟 + 审计输出；模式默认演练（B5：实点需显式开启）
+        // 点击通道（T2-3c）：注入实现 + 单调时钟 + 审计输出（只有真实点击一种行为，无模式开关）
         ClickDispatch.install(
             injector = AccessibilityGestureInjector(this),
             clock = SystemClock::elapsedRealtime,
             audit = ClickAuditLog::write,
         )
-        // 菜单提示的浮窗只能从**服务上下文**取 WindowManager（token 才有效）
-        FloatingNotifier.bindWindow(this)
+        // **写文字通道**（2026-10-01，第 9 步搜索式查找）：原生 `ACTION_SET_TEXT` 直接写进可编辑控件
+        // （见 `TextInjector` 的说明：不走输入法 ⇒ 不弹键盘、也不用点"完成"收键盘）。
+        TextInjector.install { text -> TextInjector.writeVia(this, text) }
+        // **点原生控件**（2026-10-01）：搜索框写完字后点那个原生「确定」提交（见 `action/TextInjector.click`）
+        TextInjector.installClicker { label -> TextInjector.clickVia(this, label) }
+        // **系统返回**（2026-10-01）：第 9 步搜索链写完文字后用来**收输入法**（见 `action/SystemKeys`）
+        SystemKeys.install { SystemKeys.backVia(this) }
         refreshForeground("服务已连接")
         ForegroundSignal.addListener(onForegroundChanged)
         onForegroundChanged(ForegroundSignal.status) // 初始同步（监听只覆盖后续变化）
@@ -56,7 +86,42 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         when (event?.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            // **事件自带的 `packageName` 就是"新获得活动的那个包"**（String，不用建任何节点树）⇒ 零成本路径
+            //（2026-09-29 加：见 [refreshForeground] 里那句 `.root` 的代价说明）
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                val packageName = event.packageName?.toString()
+                // ⚠ **我们自己的包一律忽略**（2026-09-29 真机"悬浮窗一直在闪烁"的修复点）：
+                // 我们自己的覆盖窗（手柄 / 菜单 / 状态标签）**也在 `TYPE_WINDOW_STATE_CHANGED` 的覆盖范围内**，
+                // 包名就是本 App ⇒ 一旦认它就会把状态打成"不在前台" ⇒ 悬浮窗**自己把自己摘掉**，
+                // 下一次游戏窗口事件又挂回来 ⇒ **每 ~1.4 秒反复挂载 / 移除**（日志实录：
+                // `悬浮窗已挂载` → 0.15 秒后 `悬浮窗已移除`，如此循环）⇒ 每次 addView/removeView 都是主线程同步
+                // binder ⇒ 5 秒内处理不了 MotionEvent ⇒ **ANR**（用户看到"闪烁 + 崩溃"）。
+                // 「我们的界面到前台」这件事由周期复核覆盖（≤1.5 秒内生效，完全够用）⇒ 这里忽略不丢功能。
+                if (packageName != null && packageName != this.packageName) {
+                    val verdict = ForegroundEvaluator.evaluate(packageName)
+                    // **不对称判定**（2026-09-30 真机第 309 条）：窗口事件判"**不在前台**"时，必须**权威复核**一次才生效。
+                    //
+                    // 依据（12:00 实录）：
+                    // ```
+                    // 12:00:16 前台: NOT_FOREGROUND -> FOREGROUND（来源: 周期复核）
+                    // 12:00:44 前台: FOREGROUND -> **NOT_FOREGROUND（来源: 窗口事件）**   ← 某个非游戏的窗口事件
+                    // 12:00:44 悬浮窗已移除 / 12:00:45 跑号: 游戏不在前台，已暂停        ← 副作用立刻发生
+                    // 12:00:46 前台: NOT_FOREGROUND -> FOREGROUND（来源: 周期复核）      ← 1.4 秒后又对了
+                    // ```
+                    // ⇒ 游戏**一直在前台**，那是一次 1.4 秒的抖动，代价却是"悬浮窗被摘 + 跑号被暂停（要用户手动点继续）"。
+                    // ⇒ 判"不在前台"**立刻有副作用**（摘窗、暂停、冻结识别），值得比"回到前台"更保守；
+                    //    而"回到前台"晚一点**没有代价** ⇒ 两个方向**不对称**处理。
+                    if (verdict == ForegroundStatus.FOREGROUND) {
+                        ForegroundSignal.update(verdict, "窗口事件")
+                    } else {
+                        // 复核走**权威查询**（活动窗口）：我们自己的覆盖窗不可聚焦 ⇒ 不会把自己算成活动窗口
+                        refreshForeground("窗口事件复核（事件判 ${packageName} 不在前台）")
+                    }
+                }
+            }
+            // 这一类只说"窗口集合变了"，不给活动窗口的包名 ⇒ 走查询。
+            // ⚠ 已**不再订阅**它（见 `accessibility_service_config.xml` 的注释）：它极频繁，而每次投递都可能
+            // 让系统替我们建"事件源窗口的整棵节点树" ⇒ 实测 ≈350MB/s 的短命小对象 ⇒ ANR。留这一支只是兜底。
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> refreshForeground("窗口事件")
         }
     }
@@ -64,18 +129,20 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {
         stopRecheck()
         ClickDispatch.uninstall()
+        TextInjector.uninstall()
+        SystemKeys.uninstall()
         ForegroundSignal.removeListener(onForegroundChanged)
         floatingWindow.hide()
-        FloatingNotifier.unbindWindow()
         ForegroundSignal.reset("服务被中断")
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
         stopRecheck()
         ClickDispatch.uninstall()
+        TextInjector.uninstall()
+        SystemKeys.uninstall()
         ForegroundSignal.removeListener(onForegroundChanged)
         floatingWindow.hide()
-        FloatingNotifier.unbindWindow()
         ForegroundSignal.reset("服务已断开")
         return super.onUnbind(intent)
     }
@@ -83,25 +150,51 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         stopRecheck()
         ClickDispatch.uninstall()
+        TextInjector.uninstall()
+        SystemKeys.uninstall()
         ForegroundSignal.removeListener(onForegroundChanged)
         floatingWindow.hide()
-        FloatingNotifier.unbindWindow()
         ForegroundSignal.reset("服务已销毁")
         super.onDestroy()
     }
 
     private fun stopRecheck() {
         handler.removeCallbacks(recheck)
+        foregroundHandler.removeCallbacksAndMessages(null)
+        foregroundThread.quitSafely()
     }
 
-    /** 主动查询活动（焦点）窗口包名；查询异常 / 结果为空 → 判定为非前台（FR-09）。 */
+    /**
+     * 主动查询活动（焦点）窗口包名；查询异常 / 结果为空 → 判定为非前台（FR-09）。
+     *
+     * ## ⚠ 这里**曾经**加过一条"我们自己在前台就直接判 NOT_FOREGROUND、不查"的短路，已回退（别再照它写）
+     *
+     * 那条短路的动机是省掉 `windows…root` 的建树代价，但**它自己成了更大的故障**（2026-09-29 真机）：
+     * "我们自己的 Activity 是否 resumed"这个判据**一旦卡住**（计数器不再回零），周期复核就永远返回
+     * "不在前台" ⇒ 游戏里悬浮窗被**每 ~1.4 秒摘掉一次**（下文日志），而下一次游戏窗口事件又把它挂回来 ⇒
+     * **闪烁**；每次 `addView/removeView` 都是主线程同步 binder ⇒ 5 秒处理不了 MotionEvent ⇒ **ANR**。
+     * ```
+     * 07:33:54.747 悬浮窗已挂载…   07:33:54.893 悬浮窗已移除
+     * 07:33:56.267 悬浮窗已挂载…   07:33:56.421 悬浮窗已移除   （如此循环）
+     * 07:34:52 am_anr: Input dispatching timed out … Waited 5000ms for MotionEvent
+     * ```
+     * ⇒ 教训：**前台判定必须只看"系统事实"**（活动窗口 / 事件包名），不要引入"我们自己的生命周期状态"
+     * 这种**可能卡住**的、需要与系统状态保持同步的镜像判据。
+     * 查询本身很便宜（真机实测 1~3ms / ≈0MB），但**绝不能落在主线程**上 ⇒ 一律在 [foregroundThread] 上做。
+     */
     private fun refreshForeground(source: String) {
-        val activePackage = try {
-            windows?.firstOrNull { it.isActive }?.root?.packageName?.toString()
-        } catch (e: Exception) {
-            null
+        // **绝不并发发起第二次**：一次查询没结束就跳过这次（否则慢查询会排队，越堵越死）。
+        if (foregroundQueryBusy) return
+        foregroundQueryBusy = true
+        foregroundHandler.post {
+            val activePackage = try {
+                windows?.firstOrNull { it.isActive }?.root?.packageName?.toString()
+            } catch (e: Exception) {
+                null
+            }
+            ForegroundSignal.update(ForegroundEvaluator.evaluate(activePackage), source)
+            handler.post { foregroundQueryBusy = false }
         }
-        ForegroundSignal.update(ForegroundEvaluator.evaluate(activePackage), source)
     }
 
     private companion object {

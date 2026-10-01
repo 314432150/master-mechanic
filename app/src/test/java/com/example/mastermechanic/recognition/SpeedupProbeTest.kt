@@ -186,7 +186,7 @@ class SpeedupProbeTest {
         }
 
         val lines = mutableListOf<String>()
-        lines += "T1-10e 提速手段评估（固定批次有效帧 ${frames.size}，信号 ${spec.name}，模板 ${template.width}x${template.height}）"
+        lines += "T1-10e 提速手段评估（固定批次有效帧 ${frames.size}，信号 ${spec.id}，模板 ${template.width}x${template.height}）"
         lines += "口径：每帧每变体跑 $ROUNDS 轮取中位耗时；剪枝每 $PRUNE_CHECK_ROWS 行做一次上界检查；JVM 相对比值，非设备绝对值"
         lines += "自校验：复刻基线 ≡ 生产实现，不一致帧数 = $mismatches"
         lines += ""
@@ -296,13 +296,13 @@ class SpeedupProbeTest {
 
         val data = CalibrationCodec.decode(multiSignalFile.readText(Charsets.UTF_8))
         val detector = SignalDetector(
-            data.signals.map { SignalSpec(it.name, it.window, it.templates) },
+            data.signals.map { SignalSpec(it.id, it.window, it.templates) },
             data.params,
         )
 
         val times = ArrayList<Long>(files.size)
         val hits = LinkedHashMap<String, Int>()
-        data.signals.forEach { hits[it.name] = 0 }
+        data.signals.forEach { hits[it.id] = 0 }
         val verdicts = LinkedHashMap<Verdict, Int>()
         files.forEach { file ->
             val gray = ReplayTool.decodeGrayPng(file)
@@ -367,7 +367,7 @@ class SpeedupProbeTest {
 
         val data = CalibrationCodec.decode(multiSignalFile.readText(Charsets.UTF_8))
         val rules = data.stateRules.map { SignalStateMapping.Rule(it.state, it.signalNames.toSet()) }
-        val specs = data.signals.map { SignalSpec(it.name, it.window, it.templates) }
+        val specs = data.signals.map { SignalSpec(it.id, it.window, it.templates) }
 
         fun loop(expected: ExpectedSignals): RecognitionLoop = RecognitionLoop(
             signals = specs,
@@ -538,7 +538,7 @@ class SpeedupProbeTest {
                 times += round[ROUNDS / 2] / 1_000 // 微秒：亚毫秒信号（farm / friend_list）需要可分辨精度
             }
             PerSignal(
-                name = spec.name,
+                name = spec.id,
                 windowW = bounds.x1 - bounds.x0,
                 windowH = bounds.y1 - bounds.y0,
                 templateW = template.width,
@@ -624,6 +624,170 @@ class SpeedupProbeTest {
         assertTrue("应完成全部信号测量", perSignal.size == data.signals.size && fullTimes.size == frames.size)
     }
 
+    /**
+     * 并行匹配的收益与一致性（2026-09-24「压单轮识别耗时」）：设备灰度帧 + 设备 7 信号产物上，
+     * 对比**串行（并行度 1）**与**并行（默认 3）**的整轮耗时，并逐帧比对判定记录。
+     *
+     * 口径：走生产路径 `RecognitionLoop.process`（含判定 + 滞回状态机），但计时只反映
+     * 「一轮的识别开销」；两种模式用**各自独立的循环实例**（状态机各自演进），
+     * 判定记录的比较与状态无关（每帧的 records 只取决于该帧像素与搜索集合）。
+     * JVM 相对比值、非设备绝对值；设备上是 8 核真机，收益会高于桌面单核竞态的结果。
+     */
+    @Test
+    fun profileParallelMatching() {
+        assumeTrue(
+            "需要 build/replay-work/calibration-7sig.txt 与灰度帧 set-20260912-06/",
+            multiSignalFile.isFile && File(workDir, "set-20260912-06").isDirectory,
+        )
+        val grayDir = File(workDir, "set-20260912-06")
+        val files = (grayDir.listFiles() ?: emptyArray())
+            .filter { it.name.endsWith(".png") }
+            .sortedBy { it.name }
+        assumeTrue("灰度帧不足（≥10）", files.size >= 10)
+
+        val data = CalibrationCodec.decode(multiSignalFile.readText(Charsets.UTF_8))
+        val rules = data.stateRules.map { SignalStateMapping.Rule(it.state, it.signalNames.toSet()) }
+        val specs = data.signals.map { SignalSpec(it.id, it.window, it.templates) }
+        val frames = files.map { ReplayTool.decodeGrayPng(it) }
+
+        fun measure(workers: Int): Pair<List<Long>, List<List<DetectionRecord>>> {
+            val loop = RecognitionLoop(
+                signals = specs,
+                params = data.params,
+                mapping = SignalStateMapping(rules),
+                expectedSignals = ExpectedSignals.ALL,
+                matchParallelism = workers,
+            )
+            frames.take(3).forEach { loop.process(it, isForeground = true) } // 预热（JIT / 线程池启线程）
+            val times = ArrayList<Long>(frames.size)
+            val records = ArrayList<List<DetectionRecord>>(frames.size)
+            frames.forEach { gray ->
+                val started = System.nanoTime()
+                val result = loop.process(gray, isForeground = true)
+                times += System.nanoTime() - started
+                records += result.records
+            }
+            return times to records
+        }
+
+        val (seqTimes, seqRecords) = measure(1)
+        val (parTimes, parRecords) = measure(RecognitionLoop.DEFAULT_MATCH_PARALLELISM)
+        val drift = seqRecords.zip(parRecords).count { (a, b) -> a != b }
+
+        fun List<Long>.inMs(): List<Double> = map { it / 1_000_000.0 }
+        fun stats(times: List<Double>): Triple<Double, Double, Double> {
+            val sorted = times.sorted()
+            val p50 = sorted[sorted.size / 2]
+            val p95 = sorted[minOf(sorted.size - 1, ceil(sorted.size * 0.95).toInt() - 1)]
+            return Triple(p50, p95, times.average())
+        }
+
+        val seq = stats(seqTimes.inMs())
+        val par = stats(parTimes.inMs())
+        val lines = mutableListOf<String>()
+        lines += "并行匹配收益与一致性（设备帧 ${frames.size}，产物 ${data.signals.size} 信号，"
+        lines += "线程数 = ${RecognitionLoop.DEFAULT_MATCH_PARALLELISM}（期望集合 = 全集）"
+        lines += "路径：生产 RecognitionLoop.process；每帧计时 = 一轮识别开销（不含节流休息）"
+        lines += ""
+        lines += "模式 | P50(ms) | P95(ms) | 平均(ms) | 提速比"
+        lines += "串行（并行度 1） | ${fmt(seq.first)} | ${fmt(seq.second)} | ${fmt(seq.third)} | x1.00"
+        lines += "并行（并行度 ${RecognitionLoop.DEFAULT_MATCH_PARALLELISM}） | ${fmt(par.first)} | " +
+            "${fmt(par.second)} | ${fmt(par.third)} | x${String.format(Locale.ROOT, "%.2f", seq.third / par.third)}"
+        lines += ""
+        lines += "判定记录不一致帧数（串行 vs 并行）：$drift / ${frames.size}" +
+            "（必须为 0：并行只改「谁先算」，不改「算出什么」）"
+        lines += "说明：桌面为共享核，真机 8 核上收益通常高于此处；本项**不改任何识别参数**，故预期零漂移。"
+
+        outDir.mkdirs()
+        File(outDir, "t4-parallel-match.txt").writeText(lines.joinToString("\n") + "\n", Charsets.UTF_8)
+        lines.forEach(::println)
+        assertTrue("并行与串行必须逐帧一致（判定记录逐字段相同）", drift == 0)
+    }
+
+    /**
+     * 「窗口未变即复用」的收益与一致性（2026-09-24 第二刀）：设备灰度帧 + 设备 7 信号产物上，
+     * 对比**开 / 关**该机制的耗时、复用命中率，并逐帧比对判定记录（必须 0 不一致）。
+     *
+     * ⚠ 本批次是**逐帧换场景**的采集序列，复用命中率是**下界**；真实使用中"停在某一屏不动"
+     * （静止兜底轮重放缓存副本）时窗口逐字节不变，命中率会高得多。
+     */
+    @Test
+    fun profileWindowReuse() {
+        assumeTrue(
+            "需要 build/replay-work/calibration-7sig.txt 与灰度帧 set-20260912-06/",
+            multiSignalFile.isFile && File(workDir, "set-20260912-06").isDirectory,
+        )
+        val grayDir = File(workDir, "set-20260912-06")
+        val files = (grayDir.listFiles() ?: emptyArray())
+            .filter { it.name.endsWith(".png") }
+            .sortedBy { it.name }
+        assumeTrue("灰度帧不足（≥10）", files.size >= 10)
+
+        val data = CalibrationCodec.decode(multiSignalFile.readText(Charsets.UTF_8))
+        val rules = data.stateRules.map { SignalStateMapping.Rule(it.state, it.signalNames.toSet()) }
+        val specs = data.signals.map { SignalSpec(it.id, it.window, it.templates) }
+        val frames = files.map { ReplayTool.decodeGrayPng(it) }
+
+        data class Run(val times: List<Double>, val records: List<List<DetectionRecord>>, val reused: Int, val searched: Int)
+
+        fun measure(reuse: Boolean): Run {
+            val loop = RecognitionLoop(
+                signals = specs,
+                params = data.params,
+                mapping = SignalStateMapping(rules),
+                expectedSignals = ExpectedSignals.ALL,
+                reuseUnchangedWindows = reuse,
+            )
+            frames.take(3).forEach { loop.process(it, isForeground = true) } // 预热
+            val times = ArrayList<Double>(frames.size)
+            val records = ArrayList<List<DetectionRecord>>(frames.size)
+            var reused = 0
+            var searched = 0
+            frames.forEach { gray ->
+                val started = System.nanoTime()
+                val result = loop.process(gray, isForeground = true)
+                times += (System.nanoTime() - started) / 1_000_000.0
+                records += result.records
+                reused += result.reusedSignals.size
+                searched += result.searched.size
+            }
+            return Run(times, records, reused, searched)
+        }
+
+        val off = measure(reuse = false)
+        val on = measure(reuse = true)
+        val drift = off.records.zip(on.records).count { (a, b) -> a != b }
+
+        fun stats(times: List<Double>): Triple<Double, Double, Double> {
+            val sorted = times.sorted()
+            val p50 = sorted[sorted.size / 2]
+            val p95 = sorted[minOf(sorted.size - 1, ceil(sorted.size * 0.95).toInt() - 1)]
+            return Triple(p50, p95, times.average())
+        }
+
+        val offStats = stats(off.times)
+        val onStats = stats(on.times)
+        val lines = mutableListOf<String>()
+        lines += "「窗口未变即复用」收益与一致性（设备帧 ${frames.size}，产物 ${data.signals.size} 信号）"
+        lines += "路径：生产 RecognitionLoop.process（期望集合 = 全集）；每帧计时 = 一轮识别开销"
+        lines += ""
+        lines += "模式 | P50(ms) | P95(ms) | 平均(ms) | 复用提速比 | 复用信号数 / 搜索信号数"
+        lines += "关（全实算） | ${fmt(offStats.first)} | ${fmt(offStats.second)} | ${fmt(offStats.third)} | x1.00 | —"
+        lines += "开 | ${fmt(onStats.first)} | ${fmt(onStats.second)} | ${fmt(onStats.third)} | " +
+            "x${String.format(Locale.ROOT, "%.2f", offStats.third / onStats.third)} | " +
+            "${on.reused} / ${on.searched}" +
+            "（${String.format(Locale.ROOT, "%.1f%%", if (on.searched > 0) on.reused * 100.0 / on.searched else 0.0)}）"
+        lines += ""
+        lines += "判定记录不一致帧数（关 vs 开）：$drift / ${frames.size}（必须为 0）"
+        lines += "说明：本批次逐帧换场景 ⇒ 命中率是**下界**；真实「停在一屏不动」（含静止兜底重放）时命中率高得多。"
+        lines += "判定零漂移由构造保证：复用的前提就是「窗口像素逐字节相同 + 模板/参数不变」，匹配是纯函数。"
+
+        outDir.mkdirs()
+        File(outDir, "t4-window-reuse.txt").writeText(lines.joinToString("\n") + "\n", Charsets.UTF_8)
+        lines.forEach(::println)
+        assertTrue("开/关复用的判定记录必须逐帧一致", drift == 0)
+    }
+
     private fun samePeaks(a: List<MatchPeak>, b: List<MatchPeak>): Boolean {
         if (a.size != b.size) return false
         return a.zip(b).all { (l, r) -> l.x == r.x && l.y == r.y && abs(l.score - r.score) <= 1e-12 }
@@ -707,7 +871,11 @@ class SpeedupProbeTest {
             }
             val t3 = System.nanoTime()
             stats?.add(t1 - t0, t2 - t1, t3 - t2)
-            return TemplateMatcher.suppressPeaks(candidates, params.peakMinDistance)
+            // 抑制半径与生产口径一致（见 TemplateMatcher.effectiveSuppressRadius）
+            return TemplateMatcher.suppressPeaks(
+                candidates,
+                TemplateMatcher.effectiveSuppressRadius(params, template.width, template.height),
+            )
         }
 
         /** 网格点：步长 ≤ [gridStep]、末点必取，保证任一位置到最近网格点距离 ≤ ceil(step/2)。 */

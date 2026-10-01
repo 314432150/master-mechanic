@@ -37,4 +37,21 @@ internal object ServerListLabels {
 
     /** 前缀里的**字母部分**（`Lv.` → `Lv`）；没有字母时（如中文前缀）原样返回，判据照样成立。 */
     private fun prefixLetters(prefix: String): String = prefix.takeWhile { it.isLetter() }
+
+    /**
+     * 编辑框里该显示的等级：**脱掉历史数据里的前缀**（`Lv.25` / `LV:50` → `25` / `50`）。
+     *
+     * 为什么需要它（2026-09-25 用户口径）：等级这一格现在是"**`Lv.` 当标签、只收数字**"，
+     * 而盘上可能还躺着老数据（早先采集写的是 `Lv.25`，用户手改也可能带前缀）。
+     * 不脱的话，一格"只收数字"的框里显示着 `Lv.25` 会自相矛盾；脱掉之后编辑一次就顺手把数据规整了。
+     *
+     * 判据与 [level] 一致（只看前缀里的字母、忽略大小写），所以"显示补前缀 / 编辑脱前缀"不会各说一套。
+     */
+    fun digitsOnly(raw: String, prefix: String): String {
+        val text = raw.trim()
+        if (text.isEmpty() || prefix.isEmpty()) return text
+        val letters = prefixLetters(prefix)
+        if (letters.isEmpty() || !text.startsWith(letters, ignoreCase = true)) return text
+        return text.dropWhile { it.isLetter() }.trim(' ', '.', '。', ':', '：')
+    }
 }

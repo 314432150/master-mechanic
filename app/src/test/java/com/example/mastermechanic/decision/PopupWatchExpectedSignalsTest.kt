@@ -46,6 +46,34 @@ class PopupWatchExpectedSignalsTest {
         )
     }
 
+    /**
+     * 2026-09-29 恢复 FR-02：**新手引导 / 新手大厅的标志也进"恒定搜索"**。
+     *
+     * 与活动弹窗同理 —— 它们是"只在新手号出现、出现了就得管"的遮挡屏，能不能管只能看
+     * **它们自己有没有出现**（不依赖阶段推断）。少搜一条的后果是**静默**的：状态永远不变，
+     * 闭环永远不触发，而日志上看不出任何异常。
+     */
+    @Test
+    fun searchesTutorialOverlayRecordsToo() {
+        val withTutorial = rules + listOf(
+            SignalStateMapping.Rule(UiState.TUTORIAL_GUIDE, setOf("tutorial_guide_e1")),
+            SignalStateMapping.Rule(UiState.TUTORIAL_HALL, setOf("tutorial_hall_e1", "tutorial_hall_e2")),
+        )
+        val knownAll = withTutorial.flatMap { it.signalNames }.toSet()
+        val expected = PopupWatchExpectedSignals.fromRules(withTutorial).expected(knownAll)
+
+        assertTrue("新手引导的标志要恒定搜", "tutorial_guide_e1" in expected)
+        assertTrue(
+            "新手大厅的每条样式记录都要搜（§2.1：任一命中即该状态命中）",
+            "tutorial_hall_e1" in expected && "tutorial_hall_e2" in expected,
+        )
+        assertTrue("活动弹窗照旧", "popup_close" in expected)
+        assertTrue(
+            "非遮挡屏仍不进恒定集合",
+            expected.none { it in setOf("hall", "farm", "launch_start") },
+        )
+    }
+
     /** T2-5 的核心：没有阶段 —— 不论画面命中什么，集合恒定。 */
     @Test
     fun setDoesNotChangeAcrossRounds() {

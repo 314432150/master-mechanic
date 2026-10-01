@@ -34,7 +34,7 @@ class ReplayBatchRunTest {
         CalibrationCodec.decode(artifactFile.readText(Charsets.UTF_8))
 
     private fun buildDetector(data: CalibrationData): SignalDetector = SignalDetector(
-        data.signals.map { SignalSpec(it.name, it.window, it.templates) },
+        data.signals.map { SignalSpec(it.id, it.window, it.templates) },
         data.params,
     )
 

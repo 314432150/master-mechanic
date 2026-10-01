@@ -5,7 +5,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
-import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -56,6 +55,7 @@ import com.example.mastermechanic.capture.CaptureSessionStatus
 import com.example.mastermechanic.service.CaptureService
 import com.example.mastermechanic.service.ResidentService
 import com.example.mastermechanic.ui.theme.MasterMechanicTheme
+import com.example.mastermechanic.ui.theme.Warning40
 import kotlinx.coroutines.delay
 
 /**
@@ -80,7 +80,8 @@ fun AuthorizationRoute(
     var notificationsEnabled by remember { mutableStateOf(true) }
     var reconcileTick by remember { mutableStateOf(0) }
 
-    val statuses = remember(resumeTick, captureActive, refreshTick) {
+    // residentRunning 也在 key 里：守护起停会改变"是否全部就绪"（2026-09-20 起它是必备项）
+    val statuses = remember(resumeTick, captureActive, refreshTick, residentRunning) {
         AuthorizationChecks.collect(
             context,
             if (captureActive) CaptureSessionState.GRANTED else CaptureSessionState.NOT_GRANTED,
@@ -104,6 +105,19 @@ fun AuthorizationRoute(
 
     // 进入 / 回到前台时刷新运行状态（含从系统设置页返回）
     LaunchedEffect(resumeTick) { refreshRuntime() }
+
+    // **重装后无障碍状态会"晚一点才对"**（T4-8，2026-09-24 用户报：打包重装后系统侧已开启，App 内却显示
+    // 「去开启」；进一次系统设置再返回就变"已开启"）。⇒ 不是缺"回到前台重算"的挂点（`resumeTick` 那条
+    // 一直在），而是**重装后系统那份"已启用无障碍服务"列表短暂未就绪**，而界面只在 resume 那一刻查了一次。
+    // 处置：resume 后**补几次查询**（400ms / +800ms / +800ms），拿到 GRANTED 立刻停；三次都不行就如实保持 MISSING
+    // （与 `reconcileTick` 那条 400ms 校正同一套路，不引入新的生命周期观察方式）。
+    LaunchedEffect(resumeTick) {
+        repeat(3) { attempt ->
+            delay(if (attempt == 0) 400L else 800L)
+            refreshTick++
+            if (AuthorizationChecks.accessibilityState(context) == AuthState.GRANTED) return@LaunchedEffect
+        }
+    }
 
     // 启动 / 停止后乐观更新，再延迟校正一次（服务启停为异步操作）
     LaunchedEffect(reconcileTick) {
@@ -142,9 +156,8 @@ fun AuthorizationRoute(
             captureLauncher.launch(manager.createScreenCaptureIntent())
         },
         onRequestNotifications = {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
+            // minSdk 34 起通知权限始终需要运行时申请（不再有"低版本无需申请"那条分支）
+            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         },
         onStartResident = {
             ContextCompat.startForegroundService(
@@ -208,28 +221,41 @@ fun AuthorizationScreen(
                     onAction = when (status.item) {
                         AuthItem.ACCESSIBILITY -> onOpenAccessibilitySettings
                         AuthItem.SCREEN_CAPTURE -> onRequestCapture
+                        // 常驻守护（2026-09-20 起为必备项）：未启动时这张卡的按钮就是"启动守护"
+                        AuthItem.RESIDENT -> onStartResident
                         AuthItem.NOTIFICATIONS -> onRequestNotifications
                     },
-                    trailing = if (
-                        status.item == AuthItem.SCREEN_CAPTURE && status.state == AuthState.GRANTED
+                    hint = if (
+                        status.item == AuthItem.RESIDENT &&
+                        status.state == AuthState.GRANTED &&
+                        !notificationsEnabled
                     ) {
-                        {
-                            OutlinedButton(onClick = onStopCapture) {
-                                Text(text = stringResource(R.string.auth_capture_action_stop))
-                            }
-                        }
+                        stringResource(R.string.resident_notify_warning)
                     } else {
                         null
+                    },
+                    trailing = when {
+                        status.item == AuthItem.SCREEN_CAPTURE && status.state == AuthState.GRANTED -> {
+                            {
+                                OutlinedButton(onClick = onStopCapture) {
+                                    Text(text = stringResource(R.string.auth_capture_action_stop))
+                                }
+                            }
+                        }
+
+                        status.item == AuthItem.RESIDENT && status.state == AuthState.GRANTED -> {
+                            {
+                                OutlinedButton(onClick = onStopResident) {
+                                    Text(text = stringResource(R.string.resident_action_stop))
+                                }
+                            }
+                        }
+
+                        else -> null
                     },
                 )
             }
             SummaryText(statuses = statuses)
-            ResidentCard(
-                running = residentRunning,
-                notificationsEnabled = notificationsEnabled,
-                onStart = onStartResident,
-                onStop = onStopResident,
-            )
             OutlinedButton(
                 onClick = onOpenCalibration,
                 modifier = Modifier.fillMaxWidth(),
@@ -256,6 +282,8 @@ fun AuthorizationScreen(
 private fun AuthorizationCard(
     status: AuthStatus,
     onAction: () -> Unit,
+    /** 附加提醒（如"常驻守护在跑但通知不可见"）：红字，排在描述之后。 */
+    hint: String? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -278,7 +306,6 @@ private fun AuthorizationCard(
                     color = when (status.state) {
                         AuthState.GRANTED -> MaterialTheme.colorScheme.primary
                         AuthState.MISSING -> MaterialTheme.colorScheme.error
-                        AuthState.NOT_APPLICABLE -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
                 )
             }
@@ -287,6 +314,15 @@ private fun AuthorizationCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (hint != null) {
+                // **提示 / 隐患用琥珀，不用红**（用户 2026-10-01 口径："提示类信息不应该使用红色"）：
+                // 这条说的是"守护还在跑、但有隐患"，不是"当前不可用" —— 红色会读成"坏了"。
+                Text(
+                    text = hint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Warning40,
+                )
+            }
             if (status.state == AuthState.MISSING) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Button(onClick = onAction) {
@@ -296,65 +332,6 @@ private fun AuthorizationCard(
             if (trailing != null) {
                 Spacer(modifier = Modifier.height(2.dp))
                 trailing()
-            }
-        }
-    }
-}
-
-@Composable
-private fun ResidentCard(
-    running: Boolean,
-    notificationsEnabled: Boolean,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(R.string.resident_label),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    text = stringResource(
-                        if (running) R.string.resident_status_running else R.string.resident_status_stopped
-                    ),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (running) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
-            Text(
-                text = stringResource(R.string.resident_desc),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (running && !notificationsEnabled) {
-                Text(
-                    text = stringResource(R.string.resident_notify_warning),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-            Spacer(modifier = Modifier.height(2.dp))
-            if (running) {
-                OutlinedButton(onClick = onStop) {
-                    Text(text = stringResource(R.string.resident_action_stop))
-                }
-            } else {
-                Button(onClick = onStart) {
-                    Text(text = stringResource(R.string.resident_action_start))
-                }
             }
         }
     }
@@ -383,6 +360,7 @@ private fun SummaryText(statuses: List<AuthStatus>) {
 private fun itemLabel(item: AuthItem): Int = when (item) {
     AuthItem.ACCESSIBILITY -> R.string.auth_accessibility_label
     AuthItem.SCREEN_CAPTURE -> R.string.auth_capture_label
+    AuthItem.RESIDENT -> R.string.auth_resident_label
     AuthItem.NOTIFICATIONS -> R.string.auth_notifications_label
 }
 
@@ -390,6 +368,7 @@ private fun itemLabel(item: AuthItem): Int = when (item) {
 private fun itemDescription(item: AuthItem): Int = when (item) {
     AuthItem.ACCESSIBILITY -> R.string.auth_accessibility_desc
     AuthItem.SCREEN_CAPTURE -> R.string.auth_capture_desc
+    AuthItem.RESIDENT -> R.string.resident_desc
     AuthItem.NOTIFICATIONS -> R.string.auth_notifications_desc
 }
 
@@ -397,6 +376,7 @@ private fun itemDescription(item: AuthItem): Int = when (item) {
 private fun itemActionText(item: AuthItem): Int = when (item) {
     AuthItem.ACCESSIBILITY -> R.string.auth_accessibility_action
     AuthItem.SCREEN_CAPTURE -> R.string.auth_capture_action
+    AuthItem.RESIDENT -> R.string.resident_action_start
     AuthItem.NOTIFICATIONS -> R.string.auth_notifications_action
 }
 
@@ -412,10 +392,14 @@ private fun itemStatusText(status: AuthStatus): Int = when (status.item) {
     } else {
         R.string.auth_capture_status_missing
     }
+    AuthItem.RESIDENT -> if (status.state == AuthState.GRANTED) {
+        R.string.resident_status_running
+    } else {
+        R.string.resident_status_stopped
+    }
     AuthItem.NOTIFICATIONS -> when (status.state) {
         AuthState.GRANTED -> R.string.auth_notifications_status_granted
         AuthState.MISSING -> R.string.auth_notifications_status_missing
-        AuthState.NOT_APPLICABLE -> R.string.auth_status_not_applicable
     }
 }
 

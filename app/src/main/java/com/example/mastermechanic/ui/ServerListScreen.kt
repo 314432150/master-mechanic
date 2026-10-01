@@ -78,6 +78,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -93,12 +94,99 @@ import com.example.mastermechanic.ui.list.DeleteActionButton
 import com.example.mastermechanic.servers.ServerList
 import com.example.mastermechanic.servers.ServerListStore
 import com.example.mastermechanic.servers.ServerPlatform
+import com.example.mastermechanic.servers.ServerReferences
+import com.example.mastermechanic.servers.ServerRenameSync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
+
+/**
+ * 改名结果 → 提示文案（2026-09-22 用户口径：改名要**说出来**下游跟着改了没有）。
+ *
+ * 区服名只被一处引用（拜访规则里"固定用某个区服"），所以比好友那份少两档 —— 但同样是**三句话**而不是
+ * 一句"已改名"：用户要知道的是"还有没有别的地方需要我去改"，而"没引用"与"没改成"是两种后续动作。
+ * 纯函数，有单测（`ServerRenameNoticeTest`）。
+ */
+internal fun serverRenameNoticeOf(report: ServerRenameSync.Report): Int = when {
+    report.failure != null -> R.string.server_rename_sync_failed
+    report.presetRenamed -> R.string.server_rename_synced_preset
+    else -> R.string.server_rename_synced_none
+}
+
+/**
+ * 删除时**引用验证**的结果 → 提示文案（2026-09-22 用户口径，与好友清单同一套）。
+ *
+ * 与改名是同一件事的两面：改名能把引用**改挂过去**，删除无处可改 —— 引用只剩**悬空**：
+ * 拜访规则仍固定用着它，而清单里已经没有这条了，区服名又是唯一参与定位的字段（红线 3）⇒
+ * 换号那一步永远找不到区服、流程中止，两份文件单看却都合法。
+ *
+ * 三句话：没引用 / 拜访规则还在用 / 查不成（**不把"查不到"说成"没问题"**）。
+ * 纯函数，有单测（`ServerDeleteNoticeTest`）。
+ */
+internal fun serverDeleteNoticeOf(hits: ServerReferences.Hits): Int = when {
+    hits.failure != null -> R.string.server_deleted_ref_check_failed
+    hits.any -> R.string.server_deleted_referenced_preset
+    else -> R.string.server_deleted_with_name // 干净的那一次：原样那一句，不加噪音
+}
+
+/**
+ * 删除前的**确认框正文**：只有"有引用"或"没能确认"时才需要问一句，其余返回 null（直接删）。
+ *
+ * 用户口径（2026-09-22）：**有引用时先问一句再删**。上面 [serverDeleteNoticeOf] 那一句是**事后**说的，
+ * 那时已经删掉了，只能靠撤销挽回；"删了之后会怎样"本来就该在动手前知道。
+ * 查不成也问：结论不可信时按"有风险"处理，绝不当成"没问题"放过去。
+ *
+ * 纯函数，有单测（`ServerDeleteNoticeTest`）。
+ */
+internal fun serverDeleteConfirmBodyOf(hits: ServerReferences.Hits): Int? = when {
+    hits.failure != null -> R.string.server_delete_body_ref_unknown
+    hits.any -> R.string.server_delete_body_preset
+    else -> null // 干净的那一次：不打断，照旧"先做再给撤销"
+}
+
+/**
+ * 清空确认框旁边那次引用查询的三态（清空**本来就有**确认框，所以引用信息放在**动手前**说最有用）。
+ *
+ * 查的过程中先按普通正文显示（查得很快，不能让对话框干等），查不成**如实加一句** ——
+ * 但**不拦住清空**：清空已经问过一遍了，这里只是把风险讲清楚。
+ */
+internal sealed interface ServerClearRef {
+
+    /** 正在查（正文先用普通那一句）。 */
+    data object Checking : ServerClearRef
+
+    /** 查到了：这批里有 [referenced] 条还被拜访规则固定用着。 */
+    data class Done(val referenced: Int) : ServerClearRef
+
+    /** 没查成（读盘失败 / 文件坏了）：原因照样说出来。 */
+    data class Failed(val reason: String) : ServerClearRef
+}
+
+/** 清空确认框正文：按三态分档（查不成要如实说，而不是当成没查到）。纯函数，有单测。 */
+internal fun serverClearBodyOf(ref: ServerClearRef?): Int = when (ref) {
+    is ServerClearRef.Done ->
+        if (ref.referenced > 0) R.string.server_clear_body_referenced else R.string.server_clear_body
+
+    is ServerClearRef.Failed -> R.string.server_clear_body_ref_unknown
+    else -> R.string.server_clear_body // 还在查：先用普通那一句
+}
+
+/** 可撤销的那一次删除：**位置 + 内容**（撤销要插回原位）+ 已经算好的提示语。 */
+private data class ServerPendingDelete(val index: Int, val entry: ServerEntry, val message: String)
+
+/**
+ * **先问一句**的那一次删除：位置 + 内容 + 已经查好的引用结论。
+ *
+ * 结论要跟着一起存：用户点「仍要删除」时才真删，删完的撤销窗口里那一句还要用它。
+ */
+private data class ServerDeleteAsk(
+    val index: Int,
+    val entry: ServerEntry,
+    val hits: ServerReferences.Hits,
+)
 
 /**
  * 服务器清单页（M3-T3-9 / FR-10）：有序的「区服名称 + 角色名 + 等级」列表，
@@ -137,7 +225,14 @@ fun ServerListRoute(resumeTick: Int, onBack: () -> Unit) {
 
     // 参数顺序：`transform` 放**最后**——这样 `applyEdit { it.clear() }` 的尾随 lambda 才会落到它身上
     // （Kotlin 的尾随 lambda 永远绑给最后一个参数，放前面会被绑到 onFinished 上）
-    fun applyEdit(onFinished: () -> Unit = {}, transform: (ServerList) -> ServerList) {
+    //
+    // `onFinished` 与 `andThen` 的差别是**成没成功**：前者无论成败都跑（拖动排序靠它清掉预览顺序），
+    // 后者只在**保存成功之后**跑 —— 改名要接着同步下游引用，正是靠这条保证"清单没改成 → 不同步、也不提示"。
+    fun applyEdit(
+        onFinished: () -> Unit = {},
+        andThen: suspend () -> Unit = {},
+        transform: (ServerList) -> ServerList,
+    ) {
         val current = loadedList ?: ServerList.EMPTY
         val next = transform(current)
         scope.launch {
@@ -147,6 +242,7 @@ fun ServerListRoute(resumeTick: Int, onBack: () -> Unit) {
                 .onSuccess {
                     message = null
                     reloadTick++
+                    andThen()
                 }
                 .onFailure {
                     message = context.getString(
@@ -167,30 +263,150 @@ fun ServerListRoute(resumeTick: Int, onBack: () -> Unit) {
      * 所以 2026-09-15 用户拍板：与好友清单拉平 → 删除后给一个**撤销窗口**，
      * 而不是二次确认弹窗（左滑 + 点按钮已经是两步明确意图，再问一遍在十几条的清单里很烦）。
      */
-    var pendingUndo by remember { mutableStateOf<Pair<Int, ServerEntry>?>(null) }
+    var pendingUndo by remember { mutableStateOf<ServerPendingDelete?>(null) }
 
+    /** **先问一句**的那一次删除（有引用 / 没能确认引用时才不是 null）：点「仍要删除」才真删。 */
+    var ask by remember { mutableStateOf<ServerDeleteAsk?>(null) }
+
+    /** 清空确认框旁边那次的引用查询（三态）：对话框一打开就查，正文据此分档。 */
+    var clearRef by remember { mutableStateOf<ServerClearRef?>(null) }
+
+    /**
+     * 可撤销的那一次**整体清空**：留着清空前的**整份清单**（撤销 = 整份写回）。
+     *
+     * 与"删一行"是两个粒度，所以分两个状态存：一行要插回**原位**（位置 + 内容），
+     * 清空则是"把那一份还回来" —— 整份写回最简单、也不会错（清单是 KB 级文件）。
+     * 2026-09-20 用户口径：整体清空也要给底部撤销（原来只有二次确认，文案还写着"不可撤销"）。
+     */
+    var pendingClearUndo by remember { mutableStateOf<ServerList?>(null) }
+
+    /**
+     * 最近一次改名的**结果提示**（null = 没有要说的）。
+     *
+     * 与删除 / 清空同一套底部提示：改名的重点不是"改成功了"（那一眼就能看见），而是
+     * **下游引用有没有跟着改** —— 没同步就等于约定要换的区服**不存在**，跑号会在换号那一步莫名中止。
+     */
+    var renameNotice by remember { mutableStateOf<String?>(null) }
+
+    // 真的删掉（入口：判断为"没引用"时的直接删 / 用户在确认框里点了「仍要删除」）。
+    // 局部函数必须先声明后使用，所以它排在 [deleteAt] 前面（这就是删除动作的公共尾巴）。
+    fun commitDelete(index: Int, entry: ServerEntry, hits: ServerReferences.Hits) {
+        applyEdit { it.remove(index) }
+        pendingUndo = ServerPendingDelete(
+            index = index,
+            entry = entry,
+            message = context.getString(serverDeleteNoticeOf(hits), entry.serverName, hits.arg),
+        )
+    }
+
+    /**
+     * 删除一条：**先查引用**，再决定"直接删"还是"先问一句"（2026-09-22 用户口径）。
+     *
+     * 区服名是**跨文件的引用键**，这一条删掉不代表拜访规则里的引用也没了（引用会变成**悬空引用**，
+     * 换号那一步永远找不到区服）。没引用 → 照旧"先做再给撤销"；有引用（或**没能确认**）→
+     * 先把后果说清楚，用户点「仍要删除」才真删（[serverDeleteConfirmBodyOf]）。
+     *
+     * 验证**只读**、不改任何数据；撤销窗口里那一句仍带着同样的结论 —— 删完可能反悔，
+     * 那时还需要知道"还得去拜访规则把固定区服改掉"（[serverDeleteNoticeOf]）。
+     */
     fun deleteAt(index: Int) {
         val entry = loadedList?.entries?.getOrNull(index) ?: return
-        applyEdit { it.remove(index) }
-        pendingUndo = index to entry
+        scope.launch {
+            val hits = withContext(Dispatchers.IO) {
+                ServerReferences.of(context, listOf(entry.serverName))
+            }
+            if (serverDeleteConfirmBodyOf(hits) == null) {
+                commitDelete(index, entry, hits)
+            } else {
+                ask = ServerDeleteAsk(index, entry, hits)
+            }
+        }
     }
 
     fun undoDelete() {
-        val (index, entry) = pendingUndo ?: return
+        val pending = pendingUndo ?: return
         // 撤销窗口期间可能又删了别人 → 位置夹回当前清单范围内（insert 越界会抛错）
-        applyEdit { it.insert(index.coerceIn(0, it.size), entry) }
+        applyEdit { it.insert(pending.index.coerceIn(0, it.size), pending.entry) }
         pendingUndo = null
     }
 
-    // 撤销窗口：Snackbar 上点「撤销」才恢复，超时（约 4s）就地关掉这个窗口
+    /**
+     * 区服改名（2026-09-22 用户口径，与好友清单同一套口径）。
+     *
+     * 区服名是**跨文件的引用键**：`preset/visit.txt` 里"固定用某个区服"时存着它的副本，服务器清单只是
+     * 主副本。只改清单 = 预设指向一个**不存在的区服**，而区服名是唯一参与定位的字段（红线 3）⇒
+     * 换号那一步永远找不到区服、流程中止，两份文件单看却都合法。
+     *
+     * 顺序上**先落盘清单、成功了再同步**；同步失败**不撤销**改名（改名这个动作本身成功了，
+     * 撤销只会让人以为没改上、再改一次还是同样的失败 —— 原因照实提示，见 [renameNotice]）。
+     */
+    fun renameAt(index: Int, entry: ServerEntry) {
+        val oldName = loadedList?.entries?.getOrNull(index)?.serverName ?: return
+        applyEdit(
+            andThen = {
+                if (oldName == entry.serverName) return@applyEdit // 名字没变 → 没有要同步的东西
+                val report = withContext(Dispatchers.IO) {
+                    ServerRenameSync.apply(context, oldName, entry.serverName)
+                }
+                renameNotice = context.getString(
+                    serverRenameNoticeOf(report),
+                    entry.serverName,
+                    report.failure.orEmpty(), // 只有"失败"那句用得到第二格
+                )
+            },
+        ) { it.update(index, entry) }
+    }
+
+    // 撤销窗口：Snackbar 上点「撤销」才恢复，超时才关掉这个窗口
+    // （消息里已含删除时的引用验证结论：这条区服还在被谁用着）
+    // 时长取 Long（约 10s）：删除不可逆、这里又是**唯一的挽回入口** —— 用户口径"撤销按钮驻留太短"（2026-09-22）
     LaunchedEffect(pendingUndo) {
         val pending = pendingUndo ?: return@LaunchedEffect
         val result = snackbarHostState.showSnackbar(
-            message = context.getString(R.string.server_deleted_with_name, pending.second.serverName),
+            message = pending.message,
             actionLabel = context.getString(R.string.server_undo),
-            duration = SnackbarDuration.Short,
+            duration = SnackbarDuration.Long,
         )
         if (result == SnackbarResult.ActionPerformed) undoDelete() else pendingUndo = null
+    }
+
+    // 整体清空的撤销窗口（"其中几条还被用着"已经在**动手前的确认框**里说过，这里只说清了多少条）
+    LaunchedEffect(pendingClearUndo) {
+        val before = pendingClearUndo ?: return@LaunchedEffect
+        val result = snackbarHostState.showSnackbar(
+            message = context.getString(R.string.server_cleared, before.size),
+            actionLabel = context.getString(R.string.server_undo),
+            duration = SnackbarDuration.Long,
+        )
+        if (result == SnackbarResult.ActionPerformed) {
+            applyEdit { before } // 整份写回：顺序、内容都原样还回来
+        }
+        // **必须最后**：它是本 LaunchedEffect 的 key，提前清空会把本协程连同 showSnackbar 一起取消
+        pendingClearUndo = null
+    }
+
+    // 清空确认框一打开就把"其中几条还被用着"查出来（清空的破坏面最大，信息要在动手前给）
+    LaunchedEffect(clearing) {
+        if (!clearing) {
+            clearRef = null
+            return@LaunchedEffect
+        }
+        clearRef = ServerClearRef.Checking
+        val names = loadedList?.entries.orEmpty().map { it.serverName }
+        val hits = withContext(Dispatchers.IO) { ServerReferences.of(context, names) }
+        clearRef = if (hits.failure != null) {
+            ServerClearRef.Failed(hits.failure)
+        } else {
+            ServerClearRef.Done(hits.presetNames.size)
+        }
+    }
+
+    // 改名的结果（尤其"下游引用有没有跟着改"）：与删除 / 清空同一套底部提示，不占用页头的错误位
+    LaunchedEffect(renameNotice) {
+        val notice = renameNotice ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(message = notice, duration = SnackbarDuration.Short)
+        // **必须最后**：它是本 LaunchedEffect 的 key（与上面两个撤销窗口同一个坑）
+        renameNotice = null
     }
 
     ServerListScreen(
@@ -240,7 +456,8 @@ fun ServerListRoute(resumeTick: Int, onBack: () -> Unit) {
                 if (index == null) {
                     applyEdit { it.add(entry) }
                 } else {
-                    applyEdit { it.update(index, entry) }
+                    // 改名**不是**普通编辑：区服名被下游（拜访规则的固定区服）引用着，见 [renameAt]
+                    renameAt(index, entry)
                 }
                 editorOpen = false
             },
@@ -249,15 +466,26 @@ fun ServerListRoute(resumeTick: Int, onBack: () -> Unit) {
 
     if (clearing) {
         val count = loadedList?.size ?: 0
+        // 正文按引用查询的三态分档（还在查 → 先用普通那一句；查到 → 说有几条；没查成 → 如实加一句）
+        val body = when (val ref = clearRef) {
+            is ServerClearRef.Done -> context.getString(serverClearBodyOf(ref), count, ref.referenced)
+            is ServerClearRef.Failed -> context.getString(serverClearBodyOf(ref), count, ref.reason)
+            else -> context.getString(R.string.server_clear_body, count)
+        }
         AlertDialog(
             onDismissRequest = { clearing = false },
             title = { Text(stringResource(R.string.server_clear_title)) },
-            text = { Text(stringResource(R.string.server_clear_body, count)) },
+            text = { Text(body) },
             confirmButton = {
                 Button(
                     onClick = {
-                        applyEdit { it.clear() }
+                        val before = loadedList
                         clearing = false
+                        // 清空前那一份留作撤销快照（null = 本来就空，那种情况按钮也点不到）
+                        if (before != null) {
+                            applyEdit { it.clear() }
+                            pendingClearUndo = before
+                        }
                     },
                 ) {
                     Text(stringResource(R.string.server_clear_confirm))
@@ -265,6 +493,34 @@ fun ServerListRoute(resumeTick: Int, onBack: () -> Unit) {
             },
             dismissButton = {
                 TextButton(onClick = { clearing = false }) {
+                    Text(stringResource(R.string.server_cancel))
+                }
+            },
+        )
+    }
+
+    // **有引用（或没能确认）时先问一句**（2026-09-22 用户口径）：删除不可逆、且引用会变成悬空，
+    // 把"删了之后会怎样"讲在动手前，比删完再靠撤销挽回强。没引用则压根不会走到这里（见 [deleteAt]）。
+    val asking = ask
+    val askingBody = asking?.let { serverDeleteConfirmBodyOf(it.hits) }
+    if (asking != null && askingBody != null) {
+        AlertDialog(
+            onDismissRequest = { ask = null },
+            title = { Text(stringResource(R.string.server_delete_title, asking.entry.serverName)) },
+            // 第二格：只有"没能确认"那一档用得到（失败原因走 %1$s），与分档函数配对
+            text = { Text(stringResource(askingBody, asking.hits.arg)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        ask = null
+                        commitDelete(asking.index, asking.entry, asking.hits)
+                    },
+                ) {
+                    Text(stringResource(R.string.server_delete_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { ask = null }) {
                     Text(stringResource(R.string.server_cancel))
                 }
             },
@@ -1133,7 +1389,12 @@ private fun ServerEntryEditor(
     var platformCode by rememberSaveable { mutableStateOf(initial?.platform?.code.orEmpty()) }
     var serverNo by rememberSaveable { mutableStateOf(initial?.serverNo.orEmpty()) }
     var characterName by rememberSaveable { mutableStateOf(initial?.characterName.orEmpty()) }
-    var level by rememberSaveable { mutableStateOf(initial?.level.orEmpty()) }
+    // 等级：打开编辑时先**脱掉历史数据的 `Lv.` 前缀**（老数据 / 手写文件里有过 `Lv.25`），
+    // 让这个"只收数字"的框里看到的就是 `25`（用户口径 2026-09-25）。
+    val levelPrefixText = stringResource(R.string.server_level_prefix)
+    var level by rememberSaveable {
+        mutableStateOf(ServerListLabels.digitsOnly(initial?.level.orEmpty(), levelPrefixText))
+    }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     val platform = ServerPlatform.fromCode(platformCode)
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -1227,6 +1488,10 @@ private fun ServerEntryEditor(
                     },
                     label = stringResource(R.string.server_field_level),
                     hint = optionalHint,
+                    // 等级**只填数字**（2026-09-25 用户口径）：`Lv.` 由这个框的标签承担，
+                    // 列表里也由 `ServerListLabels.level` 补 —— 数据里只存 `25` 这样的数字。
+                    prefix = stringResource(R.string.server_level_prefix),
+                    digitsOnly = true,
                     imeAction = ImeAction.Done,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1268,16 +1533,23 @@ private fun CompactField(
     hint: String,
     imeAction: ImeAction,
     modifier: Modifier = Modifier,
+    /** 框内**固定前缀标签**（等级那一格用它显示 `Lv.`；空串 = 没有这一格）。 */
+    prefix: String = "",
+    /** **只收数字**（等级那一格）：键盘换成数字键，且输入内容就地过滤掉非数字（粘贴也挡得住）。 */
+    digitsOnly: Boolean = false,
 ) {
     BasicTextField(
         value = value,
-        onValueChange = onValueChange,
+        onValueChange = { text -> onValueChange(if (digitsOnly) text.filter { it.isDigit() } else text) },
         singleLine = true,
         textStyle = MaterialTheme.typography.bodyMedium.copy(
             color = MaterialTheme.colorScheme.onSurface,
         ),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        keyboardOptions = KeyboardOptions(imeAction = imeAction),
+        keyboardOptions = KeyboardOptions(
+            imeAction = imeAction,
+            keyboardType = if (digitsOnly) KeyboardType.Number else KeyboardType.Text,
+        ),
         modifier = modifier,
         decorationBox = { innerTextField ->
             Row(
@@ -1300,6 +1572,15 @@ private fun CompactField(
                     maxLines = 1,
                     modifier = Modifier.widthIn(min = EditorFieldLabelWidth),
                 )
+                // 固定前缀标签（等级那一格的 `Lv.`）：**看得见的 label**，用户只需要填后面的数字
+                if (prefix.isNotEmpty()) {
+                    Text(
+                        text = prefix,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
                 Box(modifier = Modifier.weight(1f)) {
                     if (value.isEmpty()) {
                         Text(

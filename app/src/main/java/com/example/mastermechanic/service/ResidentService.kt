@@ -9,11 +9,13 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.mastermechanic.MainActivity
 import com.example.mastermechanic.R
+import com.example.mastermechanic.action.ClickDispatch
+import com.example.mastermechanic.patrol.PatrolRequestConsumer
+import com.example.mastermechanic.patrol.PatrolSession
 
 /**
  * 常驻守护服务（FR-08）：由用户在前台界面主动启动，以系统通知常驻展示运行状态。
@@ -27,6 +29,13 @@ class ResidentService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        // M4-T4-4c：菜单请求（开始 / 继续 / 停止）的消费方挂在这里 ——
+        // 常驻服务与进程同寿，比采集服务（会话级、会重建）更适合持有这个订阅。
+        // 带上上下文：顺序轮换要在启动前读服务器清单 + 游标（2026-09-24）
+        PatrolRequestConsumer.install(this)
+        // 2026-09-20 用户口径：**守护是运行自动化的必备项** —— 没它不许点击（门禁会如实拒绝并留痕）。
+        // 置位放在这里而不是"装了消费者之后"：两者本来就是同一件事的两面（有守护才有消费方）。
+        ClickDispatch.setGuardRunning(true)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -35,6 +44,11 @@ class ResidentService : Service() {
     }
 
     override fun onDestroy() {
+        PatrolRequestConsumer.uninstall()
+        // 守护停止 = 自动化整体停（门禁随即拒绝所有点击，不只是"没消费方"）
+        ClickDispatch.setGuardRunning(false)
+        // 常驻服务都没了 → 没人再消费菜单请求，进行中的跑号也一并收掉
+        PatrolSession.stop()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
@@ -43,15 +57,12 @@ class ResidentService : Service() {
 
     private fun startForegroundCompat() {
         val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        // minSdk 34 起始终带类型
+        startForeground(
+            NOTIFICATION_ID,
+            notification,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+        )
     }
 
     private fun buildNotification(): Notification =

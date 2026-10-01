@@ -38,6 +38,32 @@ data class VisitPreset(
         get() = friendName.isNotEmpty() &&
             (serverChoice == ServerChoice.NEXT || serverName.isNotEmpty())
 
+    /**
+     * 好友改名后**跟着改**（2026-09-22 用户口径：改名不能只在好友清单里生效）。
+     *
+     * 名字是**跨文件的引用键**：这里存的名字会被丢给界面定位（红线 3：全等 + 唯一），
+     * 好友清单一改名、这里不改，预设就指向一个**不存在的人** —— 表现是运行时永远认不出目标好友，
+     * 而两处文件看起来都"没问题"（事后极难排查）。
+     *
+     * 只改**正好等于**旧名的那一项（不做模糊匹配，与红线 3 同一口径）；没引用则原样返回
+     * （调用方据此决定要不要落盘）。
+     */
+    fun renamedFriend(oldName: String, newName: String): VisitPreset =
+        if (oldName != newName && friendName == oldName) copy(friendName = newName) else this
+
+    /**
+     * 区服改名后**跟着改**（2026-09-22 用户口径，与 [renamedFriend] 同一套口径）。
+     *
+     * 区服名是**唯一参与定位的字段**（红线 3）—— 这里存的是清单里那一份的副本，清单改了它不改，
+     * 换号那一步就会拿着一个**不存在的区服名**去找，表现是"永远找不到区服、流程中止"。
+     *
+     * 只改 [serverName]：**策略（顺序轮换 / 固定区服）与好友一概不动** ——
+     * 改名 = 同一台小号换了区服名，"见谁""怎么选服"都不该跟着变。
+     * 策略是顺序轮换时 [serverName] 本来就是空串 → 天然不命中（这是"没引用"，不是错误）。
+     */
+    fun renamedServer(oldName: String, newName: String): VisitPreset =
+        if (oldName != newName && serverName == oldName) copy(serverName = newName) else this
+
     init {
         require(isValidName(serverName)) { "预设非法：区服名称不得含「$PRESET_FIELD_SEPARATOR」或换行" }
         require(isValidName(friendName)) { "预设非法：好友名称不得含「$PRESET_FIELD_SEPARATOR」或换行" }

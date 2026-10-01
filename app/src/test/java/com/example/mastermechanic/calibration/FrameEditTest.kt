@@ -324,27 +324,96 @@ class FrameEditTest {
         assertEquals(rect.bottom - rect.top, moved.bottom - moved.top, eps)
     }
 
-    // --- zoomBy：焦点保持、范围与偏移 clamp ---
+    // --- fitRect：视口 → 画面适配矩形（2026-09-23 视口由"中央横带"提升为整屏） ---
+
+    @Test
+    fun fitRectLetterboxesALandscapeFrameInAPortraitViewport() {
+        // 用户真机：竖屏视口（1080×2340）框横屏帧（3168×1440，比例 ≈2.2）
+        // ⇒ 宽度铺满、上下留黑边 —— 这就是用户说的"中央那条横带"
+        val fit = FrameEditMath.fitRect(1080f, 2340f, 3168f / 1440f)
+        assertEquals(0f, fit.left, 0.01f)
+        assertEquals(1080f, fit.width, 0.01f)
+        assertEquals(1080f / (3168f / 1440f), fit.height, 0.05f)
+        assertEquals((2340f - fit.height) / 2f, fit.top, 0.05f)
+        assertEquals(fit.top, 2340f - fit.bottom, 0.05f)
+    }
+
+    @Test
+    fun fitRectPillarboxesAPortraitFrameInALandscapeViewport() {
+        // 反过来（横屏视口 + 竖屏帧）：高度铺满、左右留黑边
+        val fit = FrameEditMath.fitRect(2340f, 1080f, 1440f / 3168f)
+        assertEquals(0f, fit.top, 0.01f)
+        assertEquals(1080f, fit.height, 0.01f)
+        assertEquals((2340f - fit.width) / 2f, fit.left, 0.05f)
+    }
+
+    @Test
+    fun fitRectDegenerateInputsAreEmpty() {
+        // 视口 0 尺寸（首帧布局未回报）或帧比例非法 → 空矩形，各处换算短路，不做无意义的除法
+        assertTrue(FrameEditMath.fitRect(0f, 100f, 2f).isEmpty)
+        assertTrue(FrameEditMath.fitRect(100f, 0f, 2f).isEmpty)
+        assertTrue(FrameEditMath.fitRect(100f, 100f, 0f).isEmpty)
+    }
+
+    // --- zoomBy：焦点保持、范围 clamp、平移放开（可拖出适配矩形） ---
+
+    /** 竖屏视口（1080×2340）+ 横屏帧比例（2.2）：画面 = 中央一条横带。 */
+    private val bandFit = FrameEditMath.fitRect(1080f, 2340f, 2.2f)
+    private val bandViewWidth = 1080f
+    private val bandViewHeight = 2340f
+
+    /** 画面在某一轴上的可见长度（px）= 画面区间与视口区间的交集长度。 */
+    private fun visibleOnAxis(start: Float, length: Float, viewport: Float): Float =
+        (minOf(start + length, viewport) - maxOf(start, 0f)).coerceAtLeast(0f)
+
+    @Test
+    fun zoomAtFitScaleForcesCentering() {
+        // 适应态（≤ FIT_EPS）平移一律归零：1 倍的视觉基线（居中 + 上下黑边）不可被平移破坏。
+        // 顺带守住了"点『适应画面』之后一定回到居中"这条承诺。
+        val t = FrameEditMath.zoomBy(
+            ViewTransform(), 0f, 0f, 1f, 500f, 500f, bandFit, bandViewWidth, bandViewHeight, 48f,
+        )
+        assertEquals(1f, t.scale, eps)
+        assertEquals(0f, t.offsetX, eps)
+        assertEquals(0f, t.offsetY, eps)
+    }
 
     @Test
     fun zoomKeepsFocusStable() {
-        // 1x → 2x，焦点 (100,100)，视图 200x400：焦点处画面内容缩放后仍在屏幕 100
-        val t = FrameEditMath.zoomBy(ViewTransform(), 100f, 100f, 2f, 0f, 0f, 200f, 400f)
+        // 画面正好铺满视口（无黑边）时：2 倍、焦点 (100,100) 处的画面内容缩放后仍在视口 100
+        val fit = FrameEditMath.fitRect(200f, 400f, 0.5f)
+        val t = FrameEditMath.zoomBy(ViewTransform(), 100f, 100f, 2f, 0f, 0f, fit, 200f, 400f, 0f)
         assertEquals(2f, t.scale, eps)
         assertEquals(-100f, t.offsetX, eps)
         assertEquals(-100f, t.offsetY, eps)
     }
 
     @Test
+    fun zoomFocusStaysPutEvenWithLetterboxOffset() {
+        // 有黑边时焦点也必须稳住：视口 (540, 1200) 落在画面正中 ⇒ 2 倍后该点仍是画面正中
+        val fit = FrameEditMath.fitRect(1080f, 2340f, 2.2f)
+        val centerX = 540f
+        val centerY = fit.top + fit.height / 2f
+        val t = FrameEditMath.zoomBy(
+            ViewTransform(), centerX, centerY, 2f, 0f, 0f, fit, 1080f, 2340f, 48f,
+        )
+        // 画面中心在视口坐标里必须没动
+        val pictureCenterY = fit.top + t.offsetY + fit.height * t.scale / 2f
+        assertEquals(centerY, pictureCenterY, 0.05f)
+    }
+
+    @Test
     fun zoomClampsScaleRange() {
-        val up = FrameEditMath.zoomBy(ViewTransform(scale = 6f), 0f, 0f, 10f, 0f, 0f, 200f, 400f)
+        val up = FrameEditMath.zoomBy(
+            ViewTransform(scale = 6f), 0f, 0f, 10f, 0f, 0f, bandFit, bandViewWidth, bandViewHeight, 48f,
+        )
         assertEquals(FrameEditMath.MAX_SCALE, up.scale, eps)
         val down = FrameEditMath.zoomBy(
             ViewTransform(scale = 2f, offsetX = -50f, offsetY = -50f),
-            0f, 0f, 0.01f, 0f, 0f, 200f, 400f,
+            0f, 0f, 0.01f, 0f, 0f, bandFit, bandViewWidth, bandViewHeight, 48f,
         )
         assertEquals(FrameEditMath.MIN_SCALE, down.scale, eps)
-        // 缩回 1x 后偏移收敛到 0（不露黑边）
+        // 缩回适应大小后偏移收敛到 0（画面重新居中）
         assertEquals(0f, down.offsetX, eps)
         assertEquals(0f, down.offsetY, eps)
     }
@@ -357,48 +426,125 @@ class FrameEditTest {
     }
 
     @Test
-    fun zoomClampsOffsetToCoverView() {
-        // 2x、视图 200x400：偏移允许范围 [-200,0] × [-400,0]
+    fun zoomCanDragThePictureOutOfTheFitRect() {
+        // **本次改造的核心行为**：放大后画面可以拖出原来那块适配矩形（旧口径会把它夹回"恰好铺满"）
         val t = FrameEditMath.zoomBy(
-            ViewTransform(scale = 2f, offsetX = -100f, offsetY = -200f),
-            100f, 200f, 1f, 500f, 500f, 200f, 400f,
+            ViewTransform(scale = 4f), 540f, 1200f, 1f, 0f, -5000f,
+            bandFit, bandViewWidth, bandViewHeight, 48f,
         )
-        assertEquals(0f, t.offsetX, eps)
-        assertEquals(0f, t.offsetY, eps)
-        val t2 = FrameEditMath.zoomBy(
-            ViewTransform(scale = 2f), 100f, 200f, 1f, -1000f, -1000f, 200f, 400f,
+        val pictureTop = bandFit.top + t.offsetY
+        assertTrue("画面应能被拖到视口上方（顶边为负）：$pictureTop", pictureTop < 0f)
+        assertTrue(
+            "但至少还留 48px 可见：${visibleOnAxis(pictureTop, bandFit.height * t.scale, bandViewHeight)}",
+            visibleOnAxis(pictureTop, bandFit.height * t.scale, bandViewHeight) >= 48f - 0.01f,
         )
-        assertEquals(-200f, t2.offsetX, eps)
-        assertEquals(-400f, t2.offsetY, eps)
     }
 
-    // --- toRatio：视图坐标 → 帧比例（含缩放平移反算与越界 clamp） ---
+    @Test
+    fun zoomNeverLetsThePictureLeaveTheViewport() {
+        // 往任一方向狂拖，画面都不会被拖到完全看不见（用户最怕的"把图拖丢了"）
+        val scale = 4f
+        val shownHeight = bandFit.height * scale
+        val shownWidth = bandFit.width * scale
+        val expectedVisibleY = maxOf(FrameEditMath.MIN_VISIBLE_FRACTION * shownHeight, 48f)
+        val expectedVisibleX = maxOf(FrameEditMath.MIN_VISIBLE_FRACTION * shownWidth, 48f)
+        for (panY in listOf(-100_000f, 100_000f)) {
+            val t = FrameEditMath.zoomBy(
+                ViewTransform(scale = scale), 540f, 1200f, 1f, 0f, panY,
+                bandFit, bandViewWidth, bandViewHeight, 48f,
+            )
+            val visible = visibleOnAxis(bandFit.top + t.offsetY, shownHeight, bandViewHeight)
+            assertEquals("纵向至少留 $expectedVisibleY 可见", expectedVisibleY, visible, 0.05f)
+        }
+        for (panX in listOf(-100_000f, 100_000f)) {
+            val t = FrameEditMath.zoomBy(
+                ViewTransform(scale = scale), 540f, 1200f, 1f, panX, 0f,
+                bandFit, bandViewWidth, bandViewHeight, 48f,
+            )
+            val visible = visibleOnAxis(bandFit.left + t.offsetX, shownWidth, bandViewWidth)
+            assertEquals("横向至少留 $expectedVisibleX 可见", expectedVisibleX, visible, 0.05f)
+        }
+    }
+
+    @Test
+    fun clampOffsetNeverInvertsItsBounds() {
+        // 画面比视口小得多（竖屏机上的横屏帧就是这个情形）：下限必须按**画面自身尺寸**算，
+        // 否则"至少覆盖视口 25%"永不可满足 ⇒ coerceIn 上下界倒置 ⇒ 画面被顶到怪位置或直接抛异常
+        val tinyInHugeViewport = FrameEditMath.fitRect(1080f, 2340f, 0.05f)
+        val clamped = FrameEditMath.clampOffset(
+            offsetX = -100_000f,
+            offsetY = -100_000f,
+            fit = tinyInHugeViewport,
+            viewWidth = 1080f,
+            viewHeight = 2340f,
+            scale = 2f,
+            minVisiblePx = 48f,
+        )
+        val shownHeight = tinyInHugeViewport.height * 2f
+        val visible = visibleOnAxis(tinyInHugeViewport.top + clamped.second, shownHeight, 2340f)
+        // 可见量 = 契约下限（画面自身尺寸的 25%），而不是"覆盖视口 25%"那种永不可满足的条件
+        assertEquals(
+            "可见量必须是契约下限（按画面自身尺寸算）",
+            maxOf(FrameEditMath.MIN_VISIBLE_FRACTION * shownHeight, 48f),
+            visible,
+            0.05f,
+        )
+
+        // 极矮视口 + 大兜底值：区间不能倒置（倒置会抛 IllegalArgumentException，那是真机崩溃）
+        val degenerate = FrameEditMath.clampOffset(
+            offsetX = 0f, offsetY = 0f,
+            fit = FitRect(0f, 0f, 10f, 20f),
+            viewWidth = 1080f, viewHeight = 20f,
+            scale = 2f, minVisiblePx = 48f,
+        )
+        assertEquals("区间倒置会抛异常；未抛且值落在界内", 0f, degenerate.first, eps)
+        assertEquals(0f, degenerate.second, eps)
+    }
+
+    // --- toRatio：视口坐标 → 帧比例（含适配矩形偏移、缩放平移反算与越界 clamp） ---
 
     @Test
     fun toRatioIdentityTransform() {
-        val r = FrameEditMath.toRatio(100f, 200f, ViewTransform(), 200f, 400f)
+        val fit = FrameEditMath.fitRect(200f, 400f, 0.5f)
+        val r = FrameEditMath.toRatio(100f, 200f, ViewTransform(), fit)
         assertEquals(0.5f, r[0], eps)
         assertEquals(0.5f, r[1], eps)
     }
 
     @Test
+    fun toRatioSubtractsTheLetterboxOffset() {
+        // 有黑边时最容易错的一处：视口坐标必须**先减去画面原点**（漏减就是手指与框整体错位）
+        val fit = FitRect(left = 0f, top = 100f, width = 200f, height = 400f)
+        val r = FrameEditMath.toRatio(100f, 300f, ViewTransform(), fit)
+        assertEquals(0.5f, r[0], eps)
+        assertEquals(0.5f, r[1], eps)
+        // 黑边里（画面之外）的点按帧界裁住，不会算出负比例
+        val above = FrameEditMath.toRatio(100f, 10f, ViewTransform(), fit)
+        assertEquals(0f, above[1], eps)
+        val below = FrameEditMath.toRatio(100f, 600f, ViewTransform(), fit)
+        assertEquals(1f, below[1], eps)
+    }
+
+    @Test
     fun toRatioAccountsForZoomAndPan() {
-        // scale=2, offset=-100：视图 (100,100) → 帧坐标 (100+100)/2 = 100
-        val r = FrameEditMath.toRatio(100f, 100f, ViewTransform(2f, -100f, -100f), 200f, 400f)
+        // scale=2, offset=-100：视口 (100,100) → 画面局部 (100+100)/2 = 100
+        val fit = FitRect(0f, 0f, 200f, 400f)
+        val r = FrameEditMath.toRatio(100f, 100f, ViewTransform(2f, -100f, -100f), fit)
         assertEquals(0.5f, r[0], eps)
         assertEquals(0.25f, r[1], eps)
     }
 
     @Test
     fun toRatioClampsToFrame() {
-        val r = FrameEditMath.toRatio(-50f, 9999f, ViewTransform(), 200f, 400f)
+        val fit = FrameEditMath.fitRect(200f, 400f, 0.5f)
+        val r = FrameEditMath.toRatio(-50f, 9999f, ViewTransform(), fit)
         assertEquals(0f, r[0], eps)
         assertEquals(1f, r[1], eps)
     }
 
     @Test
     fun toRatioDegenerateViewReturnsZero() {
-        val r = FrameEditMath.toRatio(10f, 10f, ViewTransform(), 0f, 0f)
+        val r = FrameEditMath.toRatio(10f, 10f, ViewTransform(), FitRect(0f, 0f, 0f, 0f))
         assertEquals(0f, r[0], eps)
         assertEquals(0f, r[1], eps)
     }

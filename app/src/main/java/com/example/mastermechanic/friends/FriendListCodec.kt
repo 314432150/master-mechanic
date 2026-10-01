@@ -34,12 +34,15 @@ object FriendListCodec {
 
     /** 文本 → 清单（严格校验；任何非法都抛 [IllegalArgumentException]，消息含行号）。 */
     fun decode(text: String): FriendList {
+        // 开头的 BOM 先去掉（2026-09-25，与 `ServerListCodec` 同一口径）：BOM 会让第 1 行那句
+        // 「# 注释」变成"缺少 key=value 结构"的**假损坏**。真正的格式错误照旧一律拒绝。
+        val body = text.removePrefix("\uFEFF")
         var format: String? = null
         var version: Int? = null
         // 字段形状可能在将来随版本变化 → item 行先收集（带行号），头部校验完再解析
         val items = mutableListOf<Pair<Int, String>>()
 
-        text.split('\n').forEachIndexed { index, rawLine ->
+        body.split('\n').forEachIndexed { index, rawLine ->
             val line = rawLine.trim()
             if (line.isEmpty() || line.startsWith("#")) return@forEachIndexed
             val eq = line.indexOf('=')

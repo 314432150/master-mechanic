@@ -40,6 +40,14 @@ object PatrolRequestSignal {
          */
         VISIT_ONLY("用户请求只拜访（跳过换号）", "只拜访"),
 
+        /**
+         * 继续（FR-05）：流程**中止 / 暂停**之后，从失败的那一步重试，不重跑前面的步骤。
+         *
+         * M3 只有"停止"，没有这一项；M4 起流程真的会中止（验证不过 / 离开前台），所以补上这个出口
+         * （T4-4c 消费，菜单入口属 T4-5）。
+         */
+        RESUME("用户请求继续（从失败那一步重试）", "继续"),
+
         /** 停止：中断当前流程（M3 没有可停的流程，照常发出，由上层说明"没有进行中的流程"）。 */
         STOP("用户请求停止", "停止"),
     }
@@ -57,24 +65,10 @@ object PatrolRequestSignal {
         val serverName: String? = null,
         val friendName: String? = null,
     ) {
-        /**
-         * **精简文案**（2026-09-17 用户口径"精简语义，避免太长"）：
-         * - 只有动作名（来自 [Kind.briefText]），目标区服 / 好友名跟在「：」后面
-         * - 没有目标时只显示动作名（如"换号 → 下一个"、"停止"）
-         * - **区服与好友同时出现时用「→」而不是「·」**（2026-09-19 用户口径）：两个名字并列时
-         *   没有角色标识，`龙腾 · 星月晚` 分不清谁是区服、谁是好友；`→` 自带"先到区服、再见好友"
-         *   的**顺序语义**，天然消歧且更短
-         * - 用于浮窗提示这种"一闪而过"的提示；详细描述走 [MmLog] 留痕
-         */
-        fun briefText(): String {
-            val target = when {
-                !friendName.isNullOrEmpty() && !serverName.isNullOrEmpty() -> "$serverName → $friendName"
-                !friendName.isNullOrEmpty() -> friendName
-                !serverName.isNullOrEmpty() -> serverName
-                else -> null
-            }
-            return if (target == null) kind.briefText else "${kind.briefText}：$target"
-        }
+        // 2026-09-29：原先这里有一段 `briefText()`（"动作名：目标区服 → 好友"）专供底部浮窗提示那种
+        // "一闪而过"的提示。用户口径（"既然顶部增加了悬浮窗,那么底部的toast是不是可以去除了?"）
+        // 把底部提示整体移除之后它没有调用方了 ⇒ **一并删除**（不留死代码）。
+        // 详细描述仍走 [Kind.logText]（`MmLog` 留痕）与 `PatrolRequestConsumer` 的日志（用 [Kind.briefText]）。
     }
 
     private val listeners = CopyOnWriteArraySet<(Request) -> Unit>()
@@ -100,7 +94,7 @@ object PatrolRequestSignal {
             request.serverName?.let { append("，目标区服「$it」") }
             request.friendName?.let { append("，目标好友「$it」") }
         }
-        MmLog.i(TAG, "${request.kind.logText}（第 $count 次）$detail —— 本版本只发出请求，流程属 M4")
+        MmLog.i(TAG, "${request.kind.logText}（第 $count 次）$detail")
         listeners.forEach { it(request) }
         return count
     }

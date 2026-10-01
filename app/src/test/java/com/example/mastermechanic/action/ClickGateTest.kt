@@ -3,7 +3,6 @@ package com.example.mastermechanic.action
 import com.example.mastermechanic.decision.UiState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -15,22 +14,18 @@ import org.junit.Test
 class ClickGateTest {
 
     private fun environment(
-        mode: ClickMode = ClickMode.LIVE,
         foreground: Boolean = true,
         state: UiState = UiState.ACTIVITY_POPUP,
-    ) = ClickEnvironment(gameForeground = foreground, state = state, mode = mode)
-
-    @Test
-    fun drillModeDeniesEvenWhenEverythingElseIsFine() {
-        val gate = ClickGate()
-
-        val verdict = gate.decide(environment(mode = ClickMode.DRILL), nowMs = 1_000L)
-
-        assertFalse(verdict.allowed)
-        assertEquals(ClickDenyReason.DRILL_MODE, verdict.reason)
-        assertTrue(gate.isIdle)
-        assertNull(gate.lastFinishedMs)
-    }
+        onScreen: Boolean = true,
+        guard: Boolean = true,
+        stalled: Boolean = false,
+    ) = ClickEnvironment(
+        gameForeground = foreground,
+        state = state,
+        targetOnScreen = onScreen,
+        guardRunning = guard,
+        framesStalled = stalled,
+    )
 
     @Test
     fun deniesWhenGameNotForeground() {
@@ -46,6 +41,38 @@ class ClickGateTest {
 
         assertFalse(verdict.allowed)
         assertEquals(ClickDenyReason.STATE_UNKNOWN, verdict.reason)
+    }
+
+    @Test
+    fun deniesWhenTheFrameStreamIsStalled() {
+        // 2026-09-29 用户报"换号 / 拜访时很多标志和锚点都认不出"：会话重建后**5 分钟**没有一帧新画面，
+        // 程序照着 **234 秒前**那张大厅画面继续判、继续点 ⇒ 这种情况一律不许点（宁可停下，不可乱点）。
+        val verdict = ClickGate().decide(environment(stalled = true), nowMs = 1_000L)
+
+        assertFalse(verdict.allowed)
+        assertEquals(ClickDenyReason.STALE_FRAMES, verdict.reason)
+    }
+
+    @Test
+    fun stalledFramesOutrankTheStaleState() {
+        // 画面停摆时"当前状态"本身也是从旧画面读出来的 ⇒ 报"状态未知"会把人引偏，必须报真正的原因
+        val verdict = ClickGate().decide(
+            environment(stalled = true, state = UiState.UNKNOWN),
+            nowMs = 1_000L,
+        )
+
+        assertEquals(ClickDenyReason.STALE_FRAMES, verdict.reason)
+    }
+
+    @Test
+    fun notForegroundStillOutranksStalledFrames() {
+        // 前台是更前置的事实：目标不在前台时"没有新帧"毫无信息量（可能只是屏幕静止）
+        val verdict = ClickGate().decide(
+            environment(foreground = false, stalled = true),
+            nowMs = 1_000L,
+        )
+
+        assertEquals(ClickDenyReason.NOT_FOREGROUND, verdict.reason)
     }
 
     @Test
@@ -93,18 +120,49 @@ class ClickGateTest {
     }
 
     @Test
+    fun deniesEverythingWhileGuardIsNotRunning() {
+        // 2026-09-20 用户口径：常驻守护是**必备项** —— 没起就整体不动作（连 FR-01 关弹窗也不行），
+        // 免得出现"看着在跑、其实没人接单"的假运行态
+        val verdict = ClickGate().decide(environment(guard = false), nowMs = 1_000L)
+
+        assertFalse(verdict.allowed)
+        assertEquals(ClickDenyReason.GUARD_NOT_RUNNING, verdict.reason)
+    }
+
+    @Test
+    fun guardIsCheckedBeforeEverythingElse() {
+        // 顺序固定：守护是**第一拦**（2026-09-22 移除演练模式后，它成为判定列表的首条）
+        val verdict = ClickGate().decide(
+            environment(guard = false, foreground = false),
+            nowMs = 1_000L,
+        )
+
+        assertEquals(ClickDenyReason.GUARD_NOT_RUNNING, verdict.reason)
+    }
+
+    @Test
+    fun deniesWhenConvertedTargetIsOffScreen() {
+        // 2026-09-20 增：换算后的落点不在屏幕上 → 硬性拒绝（比"等 300ms"更靠前，因为不是时序问题）
+        val verdict = ClickGate().decide(environment(onScreen = false), nowMs = 1_000L)
+
+        assertFalse(verdict.allowed)
+        assertEquals(ClickDenyReason.OUT_OF_SCREEN, verdict.reason)
+    }
+
+    @Test
     fun reasonFollowsFixedPriorityOrder() {
-        // 四种不利条件同时成立：首个拦下的应是演练模式（门禁顺序固定，审计可解释）
+        // 多种不利条件同时成立：首个拦下的应是守护未启动（门禁顺序固定，审计可解释）
         val gate = ClickGate()
         gate.onGestureStarted("判定-1")
 
         val verdict = gate.decide(
-            environment(mode = ClickMode.DRILL, foreground = false, state = UiState.UNKNOWN),
+            environment(guard = false, foreground = false, state = UiState.UNKNOWN, onScreen = false),
             nowMs = 1_000L,
         )
 
-        assertEquals(ClickDenyReason.DRILL_MODE, verdict.reason)
+        assertEquals(ClickDenyReason.GUARD_NOT_RUNNING, verdict.reason)
         assertEquals(ClickDenyReason.NOT_FOREGROUND, gate.decide(environment(foreground = false), 1_000L).reason)
+        assertEquals(ClickDenyReason.OUT_OF_SCREEN, gate.decide(environment(onScreen = false), 1_000L).reason)
     }
 
     @Test

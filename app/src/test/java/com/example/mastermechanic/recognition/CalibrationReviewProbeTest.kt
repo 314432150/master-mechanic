@@ -55,7 +55,7 @@ class CalibrationReviewProbeTest {
         lines += "# T2-2 标定复核：设备帧池逐帧判定明细"
         lines += "- 产物：${artifactFile.name}（标定帧 ${data.frameWidth}x${data.frameHeight}，" +
             "信号 ${data.signals.size} 条，参数 ${describeParams(data.params)}）"
-        lines += "- 信号：${data.signals.joinToString("、") { it.name }}"
+        lines += "- 信号：${data.signals.joinToString("、") { it.id }}"
         lines += "- 帧：${frames.size} 帧（${frames.first().name} ~ ${frames.last().name}）"
         lines += "- 图例：`信号=结论:最高分@x,y`；结论 MATCHED 命中 / NOT_MATCHED 未命中 / UNRELIABLE 不可信"
         lines += ""
@@ -95,7 +95,7 @@ class CalibrationReviewProbeTest {
         lines += ""
         lines += "## 命中归因（全集口径下各信号在 ${frames.size} 帧中的 MATCHED 次数）"
         data.signals.forEach { signal ->
-            lines += "- ${signal.name}：${matchedCount[signal.name] ?: 0}"
+            lines += "- ${signal.id}：${matchedCount[signal.id] ?: 0}"
         }
 
         val text = lines.joinToString("\n") + "\n"

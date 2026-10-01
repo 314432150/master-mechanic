@@ -53,4 +53,25 @@ class ServerListLabelsTest {
         assertEquals("", ServerListLabels.level("", "Lv."))
         assertEquals("30", ServerListLabels.level("30", ""))
     }
+
+    // ---------------------------------------------------------------- 编辑框里的等级（脱前缀）
+
+    @Test
+    fun digitsOnlyStripsThePrefixForTheEditor() {
+        // 2026-09-25 用户口径：等级那一格是"`Lv.` 当标签、只收数字" ⇒ 编辑历史数据时要把前缀脱掉，
+        // 否则一格"只收数字"的框里显示 `Lv.25` 自相矛盾（编辑一次就顺手把数据规整了）。
+        assertEquals("25", ServerListLabels.digitsOnly("Lv.25", "Lv."))
+        assertEquals("50", ServerListLabels.digitsOnly("lv50", "Lv."))
+        assertEquals("50", ServerListLabels.digitsOnly("LV:50", "Lv."))
+        assertEquals("6", ServerListLabels.digitsOnly(" Lv. 6 ", "Lv."))
+    }
+
+    @Test
+    fun digitsOnlyKeepsPlainValuesUntouched() {
+        assertEquals("30", ServerListLabels.digitsOnly("30", "Lv."))
+        // 中文等级（自由文本）不是前缀写法 ⇒ 原样留着，让用户自己去改
+        assertEquals("三十", ServerListLabels.digitsOnly("三十", "Lv."))
+        assertEquals("", ServerListLabels.digitsOnly("", "Lv."))
+        assertEquals("Lv.30", ServerListLabels.digitsOnly("Lv.30", ""))
+    }
 }

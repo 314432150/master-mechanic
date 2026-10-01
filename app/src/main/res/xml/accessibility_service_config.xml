@@ -1,9 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/accessibility_service_description"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="100" />
+
+<!--
+  ⚠ **不要加回 `typeWindowsChanged`**（2026-09-29，docs/progress.md 第 291 条）。
+
+  FR-09 只关心"活动窗口是不是游戏"这一个二进制事实 —— 那由 **`typeWindowStateChanged`**
+  （活动窗口换了个 App 的那一刻）回答就够；`typeWindowsChanged` 说的是"窗口集合变了"，
+  它在这台机器上**极其频繁**，而**每次事件投递都可能让系统替我们建"事件源窗口的整棵无障碍节点树"**
+  （对象落在**我们进程的 Java 堆**上）。
+
+  真机实录（把 App 只放在它自己的界面上、不做任何操作）：
+  ```
+  vart_dgc, 8192KB,32MB,0.5                       ← 每 ~130ms 触发一次（≈10 次/秒）
+  Background young concurrent copying GC freed 46MB AllocSpace bytes, 0(0B) LOS objects, 12MB/57MB
+  07:28:03 am_anr: Input dispatching timed out … Waited 5000ms for MotionEvent
+  07:28:04 am_kill: JavaCrash                     ← 用户看到的"黑屏崩溃"
+  ```
+  ⇒ ≈350MB/s 的短命小对象、**堆里啥都没留下**、应用日志一行都没有（全在框架层）
+  ⇒ 主线程被 GC 拖死 ⇒ ANR ⇒ 黑屏。
+
+  注：`notificationTimeout="100"` 只是**节流上限（10 次/秒）**，不能替代"别收这类事件"。
+-->

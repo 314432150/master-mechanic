@@ -3,6 +3,7 @@ package com.example.mastermechanic.recognition
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.abs
 
 class TemplateMatcherTest {
 
@@ -107,5 +108,52 @@ class TemplateMatcherTest {
         // 同分按 y、x 升序（确定性 tie-break，§5-4）
         assertEquals(MatchPeak(0.5, 20, 8), picked[0])
         assertEquals(MatchPeak(0.5, 8, 20), picked[1])
+    }
+
+    /**
+     * 抑制半径随**模板短边**放大（2026-09-29 真机修，见 [TemplateMatcher.PEAK_SUPPRESS_DIVISOR]）。
+     *
+     * 修前口径：一律用标定里的固定 `peakMinDistance=5`。真机实录 —— `139×74` 的锚点模板：
+     * ```
+     * 半径 5px : 最高 0.9752 @ (74,13) / 次高 0.9033 @ (76,13)  ← 相距仅 2px，是同一个峰的肩膀
+     * 半径 40px: 最高 0.9752 @ (74,13) / 次高 0.4213 @ (60,13)  ← 真正的别处
+     * ```
+     * 肩部 ≥ 命中线 0.85 ⇒ `judge` 判「多处高分」⇒ 一条实际匹配到 0.975 的锚点被判"认不出"。
+     */
+    @Test
+    fun effectiveSuppressRadiusGrowsWithTemplateShortSide() {
+        assertEquals(24, TemplateMatcher.effectiveSuppressRadius(params, 139, 74))
+        assertEquals(16, TemplateMatcher.effectiveSuppressRadius(params, 139, 48))
+        // 小模板仍走标定下限（原口径不变）
+        assertEquals(5, TemplateMatcher.effectiveSuppressRadius(params, 20, 16))
+        assertEquals(5, TemplateMatcher.effectiveSuppressRadius(params, 6, 6))
+        // 标定给的下限更大时以标定为准（只增不减）
+        assertEquals(30, TemplateMatcher.effectiveSuppressRadius(MatchParams(0.85, 0.1, 30), 20, 16))
+    }
+
+    /**
+     * **峰肩不得被当成竞争位置**：模板取自平滑背景（低对比、无锐边）⇒ NCC 峰顶平坦，
+     * 与真机新手上那两条锚点的形态一致。留下的任意两个峰都必须相距 ≥ 实际抑制半径。
+     */
+    @Test
+    fun peakShouldersOfLargeTemplateAreNotCompetingPositions() {
+        val image = SyntheticImages.background(400, 300, seed = 11)
+        val template = SyntheticImages.crop(image, 100, 100, 61, 48)
+        val radius = TemplateMatcher.effectiveSuppressRadius(params, template.width, template.height)
+
+        val peaks = TemplateMatcher.findPeaks(image, template, fullWindow, params)
+
+        assertEquals(100, peaks.first().x)
+        assertEquals(100, peaks.first().y)
+        for (a in peaks) {
+            for (b in peaks) {
+                if (a === b) continue
+                val chebyshev = maxOf(abs(a.x - b.x), abs(a.y - b.y))
+                assertTrue(
+                    "峰值 (${a.x},${a.y}) 与 (${b.x},${b.y}) 相距 $chebyshev，小于抑制半径 $radius",
+                    chebyshev >= radius,
+                )
+            }
+        }
     }
 }

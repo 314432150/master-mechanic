@@ -61,12 +61,17 @@ object ServerListCodec {
 
     /** 文本 → 清单（严格校验；任何非法都抛 [IllegalArgumentException]，消息含行号）。 */
     fun decode(text: String): ServerList {
+        // **开头的 BOM 先去掉**（2026-09-25 真机事故后加）：BOM（U+FEFF）会让第 1 行那句「# 注释」
+        // 变成"缺少 key=value 结构"的**假损坏** —— 文件其实是好的，只是被外部编辑器 / 工具（含本项目
+        // 自己的取证脚本）写了一遍。为这三个字节让用户重建清单不值得；**真正的格式错误照旧一律拒绝**
+        // （下面每条校验都不动）。
+        val body = text.removePrefix("\uFEFF")
         var format: String? = null
         var version: Int? = null
         // item 行先只收集（行号 → 值）：v1 / v2 的字段个数不同，形状要等 version 定下来才知道
         val items = mutableListOf<Pair<Int, String>>()
 
-        text.split('\n').forEachIndexed { index, rawLine ->
+        body.split('\n').forEachIndexed { index, rawLine ->
             val line = rawLine.trim()
             if (line.isEmpty() || line.startsWith("#")) return@forEachIndexed
             val eq = line.indexOf('=')

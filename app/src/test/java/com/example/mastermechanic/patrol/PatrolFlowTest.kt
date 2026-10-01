@@ -20,17 +20,17 @@ class PatrolFlowTest {
         assertEquals(Step.SWITCH_SERVER, PatrolFlow.firstStep(Scene.BOOT, Range.SWITCH_ONLY))
         assertEquals(Step.PICK_SERVER, PatrolFlow.firstStep(Scene.SERVER_LIST, Range.SWITCH_ONLY))
         assertEquals(Step.LOGOUT, PatrolFlow.firstStep(Scene.LOBBY, Range.SWITCH_ONLY))
+        // 2026-09-21 合并：好友的农场也读成 Scene.FARM（见 PatrolScenesTest），
+        // 所以"在农场"这一屏只有一种起点：第 2 步退出农场
         assertEquals(Step.LEAVE_FARM, PatrolFlow.firstStep(Scene.FARM, Range.SWITCH_ONLY))
-        assertEquals(Step.LEAVE_FARM, PatrolFlow.firstStep(Scene.FRIEND_FARM, Range.SWITCH_ONLY))
     }
 
     @Test
     fun visitOnlySkipsAllSwitchSteps() {
         // 只拜访：从第 7 步起，跳过全部换号步骤
         assertEquals(Step.ENTER_FARM, PatrolFlow.firstStep(Scene.LOBBY, Range.VISIT_ONLY))
-        // 已经在农场（自己的 / 别人的）→ 第 7 步的「进入农场」没有入口，直接开好友列表
+        // 已经在农场（自己的 / 别人的，合并后同一个 Scene）→ 第 7 步的「进入农场」没有入口，直接开好友列表
         assertEquals(Step.OPEN_FRIENDS, PatrolFlow.firstStep(Scene.FARM, Range.VISIT_ONLY))
-        assertEquals(Step.OPEN_FRIENDS, PatrolFlow.firstStep(Scene.FRIEND_FARM, Range.VISIT_ONLY))
     }
 
     @Test
@@ -38,6 +38,15 @@ class PatrolFlowTest {
         // 只拜访却还停在启动页 / 选服页 → 起点不成立，必须中止（不猜）
         assertNull(PatrolFlow.firstStep(Scene.BOOT, Range.VISIT_ONLY))
         assertNull(PatrolFlow.firstStep(Scene.SERVER_LIST, Range.VISIT_ONLY))
+    }
+
+    @Test
+    fun screensThatAreNotStartPointsNeverStart() {
+        // 好友列表 / 设置页 / 退出登录确认框：认得出来，但起点表里没有它们
+        // → 中止并让用户先退出来，不做猜测性点击
+        for (range in Range.entries) {
+            assertNull(PatrolFlow.firstStep(Scene.NOT_A_START, range))
+        }
     }
 
     @Test
@@ -51,7 +60,7 @@ class PatrolFlowTest {
 
     @Test
     fun switchAndVisitUsesTheSwitchStartPoint() {
-        assertEquals(Step.LEAVE_FARM, PatrolFlow.firstStep(Scene.FRIEND_FARM, Range.SWITCH_AND_VISIT))
+        assertEquals(Step.LEAVE_FARM, PatrolFlow.firstStep(Scene.FARM, Range.SWITCH_AND_VISIT))
         assertEquals(Step.PICK_SERVER, PatrolFlow.firstStep(Scene.SERVER_LIST, Range.SWITCH_AND_VISIT))
     }
 
@@ -152,6 +161,118 @@ class PatrolFlowTest {
     fun resumeOnARunningStateChangesNothing() {
         val running = PatrolFlow.State(range = Range.VISIT_ONLY, step = Step.VISIT_FRIEND)
         assertEquals(running, PatrolFlow.resume(running))
+    }
+
+    // ---------------------------------------------------------------- 时间预算（2026-09-20 增）
+
+    @Test
+    fun eachStepGetsItsOwnTimeBudget() {
+        // 预算是**每步独立**的：进入这一步的时刻由 start / advance 打点
+        val started = PatrolFlow.start(Scene.LOBBY, Range.VISIT_ONLY, nowMs = 1_000L)!!
+        assertEquals(1_000L, started.stepEnteredAtMs)
+
+        val next = PatrolFlow.advance(started, nowMs = 5_000L)
+
+        assertEquals(5_000L, next.stepEnteredAtMs)
+        assertFalse(
+            "差 1ms 不算超时",
+            PatrolFlow.timedOut(next, 5_000L + PatrolFlow.STEP_TIMEOUT_MS - 1),
+        )
+        assertTrue("到点即算超时", PatrolFlow.timedOut(next, 5_000L + PatrolFlow.STEP_TIMEOUT_MS))
+    }
+
+    @Test
+    fun deadlineAbortsEvenBeforeRetriesRunOut() {
+        // 光有"重试 3 次"不够：加载慢时可能一次都还没重试就该给它时间；到点仍未通过 → 中止
+        val state = PatrolFlow.State(
+            range = Range.VISIT_ONLY,
+            step = Step.ENTER_FARM,
+            stepEnteredAtMs = 1_000L,
+        )
+
+        val failed = PatrolFlow.fail(
+            state,
+            "等超时",
+            nowMs = 1_000L + PatrolFlow.STEP_TIMEOUT_MS,
+        )
+
+        assertEquals(Outcome.FAILED, failed.outcome)
+    }
+
+    @Test
+    fun theLoginStepGetsAWiderBudgetThanTheOthers() {
+        // 2026-09-29 真机两次：第 6 步（点「登录游戏」→ 等「大厅」）等了 **14.2s / 13.4s**，而预算 15s
+        // ⇒ 余量只剩 1 秒多。那是**纯游戏加载**（还常附带一个活动弹窗），与应用无关
+        // ⇒ 第 6 步单独放宽到 30s（实测最慢的 2 倍余量），其余步骤仍是 15s（保留快速发现问题）。
+        val login = PatrolFlow.State(range = Range.SWITCH_ONLY, step = Step.LOGIN, stepEnteredAtMs = 1_000L)
+
+        assertFalse("20s 不该再把登录卡成中止", PatrolFlow.timedOut(login, 1_000L + 20_000L))
+        assertTrue("到 30s 才算超时", PatrolFlow.timedOut(login, 1_000L + PatrolFlow.LOGIN_TIMEOUT_MS))
+
+        val picked = PatrolFlow.State(range = Range.SWITCH_ONLY, step = Step.PICK_SERVER, stepEnteredAtMs = 1_000L)
+        assertTrue("其它步骤仍是 15s", PatrolFlow.timedOut(picked, 1_000L + PatrolFlow.STEP_TIMEOUT_MS))
+    }
+
+    @Test
+    fun theLogoutStepGetsItsOwnEvenWiderBudget() {
+        // 2026-09-30 真机验收（问题 A）：点下「确认退出」后 **35 秒**仍停在「未知」，而**帧一直在来**
+        // （230 / 155 帧每 10 秒 ⇒ 游戏在画、不是采集停更）⇒ 15 秒预算下整条"换号+拜访"被中止。
+        // 用户给的领域知识：**频繁退出登录有概率触发系统风控 ⇒ 强制下线**，那条路要人工登录 / 授权
+        // ⇒ 自动恢复时间长短不定 ⇒ 与第 6 步同源、给更宽的预算（其余步骤仍保持 15s）。
+        val logout = PatrolFlow.State(
+            range = Range.SWITCH_AND_VISIT,
+            step = Step.LOGOUT,
+            stepEnteredAtMs = 1_000L,
+        )
+
+        assertEquals(60_000L, PatrolFlow.LOGOUT_TIMEOUT_MS)
+        assertFalse(
+            "35 秒（真机实测那一刻）不该再把退出登录卡成中止",
+            PatrolFlow.timedOut(logout, 1_000L + 35_000L),
+        )
+        assertTrue("到 60s 才算超时", PatrolFlow.timedOut(logout, 1_000L + PatrolFlow.LOGOUT_TIMEOUT_MS))
+    }
+
+    @Test
+    fun theVisitFriendStepGetsABudgetForTheWholeSearchChain() {
+        // 2026-10-01：第 9 步从"滑屏找人"改成"**先看当前屏；没有就搜索**"（五小步：点「搜好友」→
+        // 点搜索框 → 原生写文字 → 提交/收输入法 → 点「搜索」≈ 6~8s），万一写入没进框还要**重写一次**
+        // ⇒ 贴着通用的 15s，"结果页还没出来就被中止"几乎必然发生
+        // （用户报："点搜索提示请输入文本，然后又去点输入框，继续重复直到时间到达中止阈值"）。
+        // ⇒ 这一步单独放宽到 25s；其余步骤不受影响（第 3 / 6 步另有各自的预算）。
+        val visit = PatrolFlow.State(
+            range = Range.VISIT_ONLY,
+            step = Step.VISIT_FRIEND,
+            stepEnteredAtMs = 1_000L,
+        )
+
+        assertEquals(25_000L, PatrolFlow.FRIEND_TIMEOUT_MS)
+        assertEquals(25_000L, PatrolFlow.timeoutFor(Step.VISIT_FRIEND))
+        assertFalse(
+            "15 秒（旧预算）不该再把搜索链卡成中止",
+            PatrolFlow.timedOut(visit, 1_000L + PatrolFlow.STEP_TIMEOUT_MS),
+        )
+        assertTrue("到 25s 才算超时", PatrolFlow.timedOut(visit, 1_000L + PatrolFlow.FRIEND_TIMEOUT_MS))
+
+        val picking = PatrolFlow.State(range = Range.SWITCH_ONLY, step = Step.PICK_SERVER, stepEnteredAtMs = 1_000L)
+        assertTrue("其它步骤仍是 15s", PatrolFlow.timedOut(picking, 1_000L + PatrolFlow.STEP_TIMEOUT_MS))
+    }
+
+    @Test
+    fun resumeRestartsTheTimeBudgetForTheFailedStep() {
+        // 「继续」= 重新给这一步一次完整预算，不拿"之前等了多久"立刻再判超时
+        val failed = PatrolFlow.State(
+            range = Range.VISIT_ONLY,
+            step = Step.ENTER_FARM,
+            retries = 3,
+            outcome = Outcome.FAILED,
+            stepEnteredAtMs = 1_000L,
+        )
+
+        val resumed = PatrolFlow.resume(failed, nowMs = 90_000L)
+
+        assertEquals(90_000L, resumed.stepEnteredAtMs)
+        assertFalse(PatrolFlow.timedOut(resumed, 90_000L))
     }
 
     // ---------------------------------------------------------------- 常量（对应 FR-04 硬性要求）
