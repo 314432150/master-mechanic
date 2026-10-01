@@ -4,6 +4,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -69,6 +70,31 @@ class PatrolSessionTest {
         PatrolSession.commit(staleSnapshot, staleGeneration)
 
         assertEquals("旧一次执行的结论不能覆盖新一次", fresh, PatrolSession.current)
+    }
+
+    @Test
+    fun resumeInvalidatesTheRoundsThatSampledThePausedState() {
+        // 2026-10-01 真机（用户报"**从桌面切回游戏，点了继续后依然报「游戏不在前台，已暂停」，
+        // 需要再次点「继续」才正常恢复流程**"）：帧线程在用户点「继续」**之前**就把那份「已暂停」的
+        // 快照读走了，算完 `commit` 回来 ⇒ 把刚恢复的流程**又写回暂停** ✗。
+        // 日志佐证：两次 `继续：从9步接着来` 都打了（resume 本身成功），而中间那 7 秒里流程没有任何动静。
+        // ⇒ resume 必须与 start / stop 同一条规矩：**递增代次**，让旧轮次整轮作废。
+        PatrolSession.start(PatrolFlow.Scene.FARM, PatrolFlow.Range.VISIT_ONLY, nowMs = 0L)
+        val paused = PatrolFlow.pause(requireNotNull(PatrolSession.current))
+        PatrolSession.commit(paused, PatrolSession.currentGeneration)
+        // 帧线程手上那份（已暂停）——它是在用户点「继续」之前取的
+        val staleSnapshot = PatrolSession.current
+        val staleGeneration = PatrolSession.currentGeneration
+
+        assertTrue("暂停中应能继续", PatrolSession.resume(nowMs = 5_000L))
+
+        PatrolSession.commit(staleSnapshot, staleGeneration)
+
+        assertEquals(
+            "旧代次的「已暂停」不能覆盖「继续」（否则用户得点两次才动）",
+            PatrolFlow.Outcome.RUNNING,
+            PatrolSession.current?.outcome,
+        )
     }
 
     @Test
