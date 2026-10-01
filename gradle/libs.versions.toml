@@ -10,6 +10,13 @@ kotlin = "2.2.10"
 composeBom = "2026.02.01"
 # ML Kit 中文文字识别（T4-3 名称定位，2026-09-21）：**捆绑模型版**（国内无 GMS，按需下载版不可用）
 mlkitTextRecognitionChinese = "16.0.1"
+# Navigation Compose（M5-U1 导航骨架，2026-10-01 **用户已拍板引入**）：
+# 计划里 U1 的验收就是"用 NavHost 替掉 MainActivity 的 when(screen)"，返回栈交给框架。
+# ⚠ 它**不在 Compose BOM 的管辖范围**（BOM 只管 androidx.compose.*），版本要自己写；
+# 与 `lifecycle 2.11.0` / `compileSdk 37` 同代，取 2.9.0。
+# 用**字符串路由**（不用 2.8+ 的 type-safe routes）：那需要 kotlinx-serialization 插件，
+# 为一张"换壳"卡不值得再加一个插件（U1 的验收是行为不变、仅换壳）。
+navigationCompose = "2.9.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -26,7 +33,12 @@ androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "u
 androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+# Material 图标（M5-U1：底部导航 / 抽屉要图标，验收 V6 还要求每个图标按钮有 contentDescription）。
+# **只取 core 那一档**（图标少而全：PlayArrow / Build / Person / Create / Lock / Info / Settings 足够）；
+# `material-icons-extended` 是一大包矢量，会顶到 NFR-03 的 25MB 包体线 ⇒ 不引。
+androidx-compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
 mlkit-text-recognition-chinese = { group = "com.google.mlkit", name = "text-recognition-chinese", version.ref = "mlkitTextRecognitionChinese" }
+androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

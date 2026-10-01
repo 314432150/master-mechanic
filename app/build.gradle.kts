@@ -97,11 +97,15 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
+    // M5-U1：导航 / 抽屉的图标（只引 core 那一档，见 libs.versions.toml 里的说明）
+    implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    // M5-U1：一级导航 / 抽屉 / 页面切换与返回栈（用户 2026-10-01 拍板引入）
+    implementation(libs.androidx.navigation.compose)
     // T4-3 名称定位（第 5 / 9 步）：区服名 / 好友名的文字识别，**捆绑模型**（无需 Google Play 服务）
     implementation(libs.mlkit.text.recognition.chinese)
     testImplementation(libs.junit)

@@ -8670,6 +8670,38 @@
   - **下一步（待用户拍板 §5 的 6 项）**：U1 导航骨架（Navigation Compose + TopAppBar + NavigationBar + 抽屉）
     ⇒ 之后 U2/U3 → U4 → U5 → U6，文案精简随各页走。
 
+408b. **M5-U1「导航骨架」代码完成：Navigation Compose 替掉 `when(screen)`（抽屉 + 底栏 + NavHost）**（2026-10-01）
+  - 用户逐项拍板（`plans/m5-ui-restructure.md` §5 全部确认）：**引入 `navigation-compose`** ✓；
+    **改名**「规则」→「**拜访设置**」、「清单」→「**账号与好友**」✓；**App 不新增"发起执行"入口**
+    （发起仍在悬浮窗）✓；标定页**拆文件 + 折叠**（U5 执行）✓；文案上限 **60 字** ✓；**首次启动缺授权自动进授权** ✓。
+  - **新增 `ui/nav/` 三件套**：
+    ① `Routes.kt` —— **纯 Kotlin** 路由名（8 个目的地：一级 4 + 抽屉 4）+ `topLevel`/`drawer`/`START`
+    ⇒ 进得了 JVM 单测（`RoutesTest` 钉住"一级 ≤5 / 路由不重名 / 落地页在一级里 / 抽屉与一级的顺序"，
+    即验收 V1 里能自动测的那部分）；
+    ② `AppDestination.kt` —— 目的地 → 图标 + 文案（枚举 + `titleResOf`）；图标**只取 `material-icons-core`**
+    那一档（`PlayArrow`/`Build`/`Person`/`Create`/`Lock`/`Info`/`Settings`/`AccountCircle`），
+    不引 `material-icons-extended`（一大包矢量会顶到 NFR-03 的 25MB 包体线）；
+    ③ `MasterMechanicApp.kt` —— `ModalNavigationDrawer`（抽屉四页）+ `Scaffold`（`TopAppBar`）+ `NavHost`
+    + `NavigationBar`（一级四项）；一级/抽屉切换统一走 `popUpTo(落地页)+saveState+restoreState+launchSingleTop`。
+  - **接线（行为不变，仅换壳）**：`运行` 与抽屉 `授权与权限` 都先接现有 `AuthorizationRoute`（U1 不许改页面内容）；
+    `账号与好友` = `SecondaryTabRow` + 现有 `ServerListRoute` / `FriendListRoute`；
+    `标定` = 现有 `CalibrationRoute`（全屏，页面自带页头）；`拜访设置`/`诊断`/`设置`/`帮助` = **占位页**
+    （写明"本页在 U3/U6 建设"，不留空白 —— 空白会被当成 bug）。`MainActivity` 只剩生命周期计次与
+    「一键重新授权采集」那条 Intent（`when(screen)` 与空号 `2` 一并消失）；重新授权现在导航到 `Routes.AUTH`。
+  - **两处有意的过渡态**（写在 `MasterMechanicApp` 顶部说明里，免得被当成 bug）：
+    ① 壳的标题栏**只给 5 个目的地**（占位页 + 账号与好友）—— 现有四页各自带页头，再套一层 = **双层标题栏** ✗
+    （U2/U5/U6 重写那些页时把页头收进壳里，那时 `SHELL_APP_BAR_ROUTES` 就是全集）；
+    ② `运行` 与 `授权与权限` 暂时是**同一个页面**（U2 与 U6 会把它们各自长出来）。
+  - **依赖**：`navigation-compose 2.9.0`（用户拍板引入；用**字符串路由**，不为此再加 kotlinx-serialization 插件）
+    + `material-icons-core`（BOM 管理，无版本号）。两条都写进了 `libs.versions.toml` 的注释。
+  - 验证：`-PfastTests` **956 例 0 失败**（952 → 956，+4 `RoutesTest`）✓ ＋ `assembleDebug` ✓ ＋
+    `adb install -r` + `am start` ✓。⚠ `-r` 重装重置无障碍与采集授权 ⇒ 真机走查前先重新授权。
+  - ⏳ **待真机走查**（U1 验收的另一半）：底栏四项与抽屉四项**逐项能到**；返回键**逐级回退**、
+    到「运行」才退出；抽屉的滑动打开与标题栏按钮都能开；`账号与好友` 两个 Tab 与授权页两个入口按钮
+    落到**正确的 Tab**。走查步骤见 `verification/m5/README.md`。
+  - 文档：`plans/m5-ui-restructure.md`（状态 → 进行中；U1 行 + U2 卡按"不加发起入口"改；§5 全部标注结论）、
+    `decisions/ADR-009…`（状态 → **接受**；改名与"不新增发起入口"、U7 死文案数据）、`architecture.md`（UI 层一节）。
+
 ## 待开发（用户列，2026-09-24）
 
 1. **优化 · 悬浮窗一级菜单底部加「返回 App」**：一级菜单最下方增加一个回到我们 App 的入口（现在只能靠后台/多任务切回去）。

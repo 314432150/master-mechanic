@@ -1,6 +1,30 @@
 <resources>
     <string name="app_name">MasterMechanic</string>
 
+    <!-- ===== M5-U1 导航骨架（2026-10-01 用户拍板）=====
+         一级（底部导航，验收 V1 要求 ≤5 项）：运行 / 拜访设置 / 账号与好友 / 标定
+         —— 用户当天把计划里的「规则」「清单」改成了现在这两个名字（ADR-009 同步更新）。
+         抽屉（系统级入口）：授权与权限 / 诊断 / 设置 / 帮助·关于。 -->
+    <string name="nav_run">运行</string>
+    <string name="nav_visit_settings">拜访设置</string>
+    <string name="nav_accounts">账号与好友</string>
+    <string name="nav_calibration">标定</string>
+    <string name="nav_auth">授权与权限</string>
+    <string name="nav_diagnostics">诊断</string>
+    <string name="nav_settings">设置</string>
+    <string name="nav_help">帮助·关于</string>
+    <!-- 无障碍（验收 V6）：抽屉按钮不能只靠图标，读屏要念得出来 -->
+    <string name="nav_open_drawer">打开侧边栏</string>
+    <!-- 「账号与好友」里的两个 Tab -->
+    <string name="nav_tab_servers">区服清单</string>
+    <string name="nav_tab_friends">好友清单</string>
+    <!-- U1 阶段的**占位页**（U3 / U6 会各自替换掉；每句 ≤60 字，见验收 V2）：
+         写清"这一页以后是什么"，而不是留一片空白 —— 空白会被当成 bug。 -->
+    <string name="nav_stub_visit_settings">本页在 M5-U3 建设：选区服策略与好友，保存即落盘。</string>
+    <string name="nav_stub_diagnostics">本页在 M5-U6 建设：画面是否在来、当前识别结果、单帧耗时、日志。</string>
+    <string name="nav_stub_settings">本页在 M5-U6 建设：自动关弹窗、悬浮窗提示位置、退出 App。</string>
+    <string name="nav_stub_help">本页在 M5-U6 建设：术语与流程说明。</string>
+
     <!-- 授权流（M0-T0-2） -->
     <string name="auth_title">授权状态</string>
     <string name="auth_subtitle">以下授权全部就绪后程序才能正常工作；缺失项会明确提示，不会静默跳过。</string>
