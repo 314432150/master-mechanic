@@ -100,6 +100,45 @@ class RunPageLogicTest {
         assertEquals("要说得出缺几项", 2, RunPageLogic.missingAuthCount(missingTwo))
     }
 
+    @Test
+    fun theAuthCardOnlyFiresCaptureWhenNothingElseIsMissing() {
+        // **2026-10-02 用户报障**："点击『去授权与权限』的逻辑有问题，目前是**直接拉起采集授权操作**，
+        // 一同意就跳转到游戏了，此时**无障碍和守护可能还没启动**，又要切换回 app 来启动这两项。"
+        // ⇒ 判据：采集前面还有缺项 ⇒ **只导航**；**只剩采集** ⇒ 才一键拉起。
+        val capturePlusAccessibility = listOf(
+            AuthStatus(AuthItem.ACCESSIBILITY, AuthState.MISSING),
+            AuthStatus(AuthItem.SCREEN_CAPTURE, AuthState.MISSING),
+            AuthStatus(AuthItem.RESIDENT, AuthState.GRANTED),
+            AuthStatus(AuthItem.NOTIFICATIONS, AuthState.GRANTED),
+        )
+        assertEquals(
+            "无障碍还没开 ⇒ 这一下只许导航（否则用户被送去游戏，还得切回来开无障碍）",
+            RunPageLogic.AuthAction.OPEN_AUTH,
+            RunPageLogic.authAction(capturePlusAccessibility),
+        )
+        assertEquals(
+            "挡着采集的项要说得出是哪一个（界面提示要用）",
+            listOf(AuthItem.ACCESSIBILITY),
+            RunPageLogic.captureBlockers(capturePlusAccessibility),
+        )
+
+        val onlyCapture = capturePlusAccessibility.map {
+            if (it.item == AuthItem.ACCESSIBILITY) it.copy(state = AuthState.GRANTED) else it
+        }
+        assertEquals(
+            "只剩采集 ⇒ 一键建立会话（点完就该去游戏了）",
+            RunPageLogic.AuthAction.CAPTURE,
+            RunPageLogic.authAction(onlyCapture),
+        )
+
+        val allReady = AuthItem.entries.map { AuthStatus(it, AuthState.GRANTED) }
+        assertEquals(
+            "四项都好 ⇒ 按钮退回「去授权页」（本页不提供第二个发起点）",
+            RunPageLogic.AuthAction.OPEN_AUTH,
+            RunPageLogic.authAction(allReady),
+        )
+    }
+
     /** 同一步连续失败到上限 ⇒ 中止状态（与 `PatrolStatusTest.failedAt` 同一个造法）。 */
     private fun failedAt(step: PatrolFlow.Step): PatrolFlow.State {
         var state = PatrolFlow.State(range = PatrolFlow.Range.SWITCH_AND_VISIT, step = step)

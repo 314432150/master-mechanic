@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.mastermechanic.R
+import com.example.mastermechanic.auth.AuthGuide
 import com.example.mastermechanic.auth.AuthItem
 import com.example.mastermechanic.auth.AuthState
 import com.example.mastermechanic.auth.AuthStatus
@@ -53,11 +54,21 @@ import com.example.mastermechanic.auth.AuthorizationSummary
 import com.example.mastermechanic.auth.CaptureSessionState
 import com.example.mastermechanic.capture.CaptureSessionSignal
 import com.example.mastermechanic.capture.CaptureSessionStatus
+import com.example.mastermechanic.log.MmLog
 import com.example.mastermechanic.service.CaptureService
 import com.example.mastermechanic.service.ResidentService
 import com.example.mastermechanic.ui.theme.MasterMechanicTheme
 import com.example.mastermechanic.ui.theme.Warning40
 import kotlinx.coroutines.delay
+
+/**
+ * 日志标签（2026-10-02 起本页也留痕：采集为什么被挡住要在日志里读得出来）。
+ *
+ * ⚠ 名字**必须**带前缀：同包 `CalibrationRoute.kt` 里已经有一个 `internal const val TAG`，
+ * 这里再声明一个同名的顶层 `TAG` 就是 `Conflicting declarations`（U5 拆文件时踩过同一类坑：
+ * 顶层声明放宽可见性 / 重名都会在同包内撞车）。
+ */
+private const val AUTH_LOG_TAG = "MM-Auth"
 
 /**
  * 授权流入口（M0-T0-2）：展示各关键授权状态，并提供一键前往授予。
@@ -85,6 +96,16 @@ fun AuthorizationRoute(
     var residentRunning by remember { mutableStateOf(false) }
     var notificationsEnabled by remember { mutableStateOf(true) }
     var reconcileTick by remember { mutableStateOf(0) }
+
+    /**
+     * **自动拉起采集被挡住**时的说明（2026-10-02 用户报障后加）。
+     *
+     * 报障原文："点击『去授权与权限』的逻辑有问题，目前是直接拉起采集授权操作，**一同意就跳转到游戏了**，
+     * 此时**无障碍和守护可能还没启动**，又要切换回 app 来启动这两项。"
+     * ⇒ 采集**永远是最后一步**（判据 [AuthGuide]）：前面还有缺项时**不**拉系统弹窗，
+     * 改为把这句话摆在页面上 —— 用户刚点了一下，必须当场得到回应（静默 = "点了没反应" ✗）。
+     */
+    var blockedNote by remember { mutableStateOf<String?>(null) }
 
     // residentRunning 也在 key 里：守护起停会改变"是否全部就绪"（2026-09-20 起它是必备项）
     val statuses = remember(resumeTick, captureActive, refreshTick, residentRunning) {
@@ -177,12 +198,33 @@ fun AuthorizationRoute(
         if (reauthTick <= 0) return@LaunchedEffect
         // 先让本页走到 RESUMED：组合期（onCreate 里）直接 launch 时还没有前台 Activity，弹窗会被丢掉
         delay(250)
-        requestCapture()
+        // **采集放最后**（2026-10-02）：按**当下**的授权情况判一次 —— 不用组合期那份快照，
+        // 因为用户可能刚从系统设置里开完无障碍返回（那份快照可能是旧的）。
+        val fresh = AuthorizationChecks.collect(
+            context,
+            if (CaptureSessionSignal.isActive) CaptureSessionState.GRANTED else CaptureSessionState.NOT_GRANTED,
+        )
+        val blockers = AuthGuide.blockingCapture(fresh)
+        if (blockers.isEmpty()) {
+            blockedNote = null
+            requestCapture()
+        } else {
+            val labels = blockers.map { context.getString(itemLabel(it)) }.joinToString("、")
+            blockedNote = context.getString(R.string.auth_capture_not_launched, labels)
+            // 日志必须能读出"是**判据**挡住的"（用户排障就是拿日志看时间线：哪一刻该发生什么没发生）
+            MmLog.w(
+                AUTH_LOG_TAG,
+                "采集授权**没有**拉起：还缺 $labels —— 采集留到最后（一授权画面就切到游戏）；已在授权页提示",
+            )
+            refreshTick++
+        }
         onReauthHandled()
     }
 
     AuthorizationScreen(
         statuses = statuses,
+        // 自动拉起被挡住的说明（null = 没有这回事）——页面上要当场说清，不许静默
+        blockedNote = blockedNote,
         residentRunning = residentRunning,
         notificationsEnabled = notificationsEnabled,
         onOpenAccessibilitySettings = {
@@ -230,7 +272,14 @@ fun AuthorizationScreen(
     onOpenCalibration: () -> Unit,
     onOpenServerList: () -> Unit,
     onOpenFriendList: () -> Unit,
+    /** 自动拉起采集被**判据**挡住时的说明（见 [AuthGuide]）；null = 没有这回事。 */
+    blockedNote: String? = null,
 ) {
+    // **采集前面还缺哪些项**（2026-10-02）：采集卡上要写清"先办什么"，否则用户在那张卡上按下去
+    // 就会离开 App（画面切到游戏），回来还得为上面几项再切一趟。
+    // ⚠ 用 `map`（inline）取标签：`joinToString` 不是 inline，里面**不能**调 `stringResource`。
+    val blockers = AuthGuide.blockingCapture(statuses)
+    val blockerLabels = blockers.map { stringResource(itemLabel(it)) }.joinToString("、")
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         // 与清单页同一套：**inset 只由壳消费一次**（这个 `Scaffold` 只为给页面一个落脚容器，
@@ -254,6 +303,15 @@ fun AuthorizationScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // 用户刚点了「去授权与权限 / ⟳ 重新授权采集」，而采集被**判据**挡住 ⇒ 当场说清为什么不弹窗
+            // （2026-10-02：把"点了没反应"变成"一句话告诉你先办什么"）
+            if (blockedNote != null) {
+                Text(
+                    text = blockedNote,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Warning40,
+                )
+            }
             statuses.forEach { status ->
                 AuthorizationCard(
                     status = status,
@@ -264,14 +322,20 @@ fun AuthorizationScreen(
                         AuthItem.RESIDENT -> onStartResident
                         AuthItem.NOTIFICATIONS -> onRequestNotifications
                     },
-                    hint = if (
+                    hint = when {
+                        // 守护在跑但通知不可见（2026-10-01 口径：提示类信息用琥珀，不用红）
                         status.item == AuthItem.RESIDENT &&
-                        status.state == AuthState.GRANTED &&
-                        !notificationsEnabled
-                    ) {
-                        stringResource(R.string.resident_notify_warning)
-                    } else {
-                        null
+                            status.state == AuthState.GRANTED &&
+                            !notificationsEnabled -> stringResource(R.string.resident_notify_warning)
+
+                        // **采集留到最后**（2026-10-02）：前面还有缺项 ⇒ 这张卡自己说清"先办什么"，
+                        // 免得用户在这里按下去就直接离开 App，回来还得为上面几项再切一趟。
+                        status.item == AuthItem.SCREEN_CAPTURE &&
+                            status.state == AuthState.MISSING &&
+                            blockers.isNotEmpty() ->
+                            stringResource(R.string.auth_capture_last_hint, blockerLabels)
+
+                        else -> null
                     },
                     trailing = when {
                         status.item == AuthItem.SCREEN_CAPTURE && status.state == AuthState.GRANTED -> {

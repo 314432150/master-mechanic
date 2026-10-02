@@ -229,8 +229,15 @@ fun MasterMechanicApp(
             ) {
                 // 一级：运行 —— **U2 起是本页自己的内容**（状态卡 + 停止/继续；不含"发起执行"，用户拍板）
                 composable(Routes.RUN) {
-                    // 「重新授权采集」也走同一条一键通路（原来只是"跳到授权页"，用户还得自己再点一次）
-                    RunRoute(resumeTick = resumeTick, onOpenAuth = { requestReauth() })
+                    RunRoute(
+                        resumeTick = resumeTick,
+                        // ⚠ 这两条**不是同一个动作**（2026-10-02 用户报障后拆开，原来都接 `requestReauth`）：
+                        // ①「去「授权与权限」」= **只导航**：缺项可能有无障碍 / 守护，而采集一授权就会切到游戏，
+                        //   先拉采集就等于把用户送走、还得为别的事切回来 ✗；
+                        // ②「重新授权采集」/「建立采集会话」= **修采集**，用户此刻就是要重建会话 ⇒ 直接拉弹窗。
+                        onOpenAuth = { go(Routes.AUTH) },
+                        onRequestCapture = { requestReauth() },
+                    )
                 }
                 // 抽屉：授权与权限 —— 同样先接现有授权页（U6 会拆成引导式四步）
                 composable(Routes.AUTH) {

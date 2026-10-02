@@ -68,6 +68,7 @@ private const val POLL_MS = 500L
 fun RunRoute(
     resumeTick: Int,
     onOpenAuth: () -> Unit,
+    onRequestCapture: () -> Unit,
 ) {
     val context = LocalContext.current
     var tick by remember { mutableIntStateOf(0) }
@@ -108,15 +109,31 @@ fun RunRoute(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // ① 授权
+        //
+        // ⚠ **采集永远最后一步**（2026-10-02 用户报障，见 `RunPageLogic.AuthAction`）：这颗按钮原来无论
+        // 缺哪几项都直接去拉系统采集弹窗 ⇒ 用户一确认画面就切到游戏，而"无障碍 / 守护"还没启动，
+        // 只能再切回来补 ✗。现在只有"**只剩采集**"时才一键拉起，其余情况它只是去授权页。
+        val authAction = RunPageLogic.authAction(statuses)
         StatusCard(
             title = stringResource(R.string.run_card_auth),
-            body = if (RunPageLogic.authReady(statuses)) {
-                stringResource(R.string.run_auth_ready)
-            } else {
-                stringResource(R.string.run_auth_missing, RunPageLogic.missingAuthCount(statuses))
+            body = when {
+                RunPageLogic.authReady(statuses) -> stringResource(R.string.run_auth_ready)
+                // 只剩采集 ⇒ 直说"点下去会切到游戏"，别让用户以为还能回来接着点别的
+                authAction == RunPageLogic.AuthAction.CAPTURE ->
+                    stringResource(R.string.run_auth_only_capture)
+
+                else -> stringResource(R.string.run_auth_missing, RunPageLogic.missingAuthCount(statuses))
             },
         ) {
-            TextButton(onClick = onOpenAuth) { Text(stringResource(R.string.run_open_auth)) }
+            when (authAction) {
+                RunPageLogic.AuthAction.OPEN_AUTH ->
+                    TextButton(onClick = onOpenAuth) { Text(stringResource(R.string.run_open_auth)) }
+
+                RunPageLogic.AuthAction.CAPTURE ->
+                    TextButton(onClick = onRequestCapture) {
+                        Text(stringResource(R.string.run_open_capture))
+                    }
+            }
         }
 
         // ② 画面
@@ -131,9 +148,11 @@ fun RunRoute(
                 RunPageLogic.FrameState.LIVE -> stringResource(R.string.run_frame_live, frameAgeMs)
             },
         ) {
-            // 只有真出问题时才给这条入口（正常跑着时不给 —— 免得被当成"随手点一下"的按钮）
+            // 只有真出问题时才给这条入口（正常跑着时不给 —— 免得被当成"随手点一下"的按钮）。
+            // ⚠ 这一条是**修采集**（不是"去授权"）：用户点它就是要立刻重建会话 ⇒ 直接拉起系统弹窗，
+            // 不受上面那条"采集放最后"的引导约束（否则采集一断就修不回来了）。
             if (frameState != RunPageLogic.FrameState.LIVE) {
-                TextButton(onClick = onOpenAuth) {
+                TextButton(onClick = onRequestCapture) {
                     Text(stringResource(R.string.floating_menu_reauthorize))
                 }
             }

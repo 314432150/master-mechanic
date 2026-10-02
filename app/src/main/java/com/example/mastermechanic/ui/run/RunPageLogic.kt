@@ -1,5 +1,7 @@
 package com.example.mastermechanic.ui.run
 
+import com.example.mastermechanic.auth.AuthGuide
+import com.example.mastermechanic.auth.AuthItem
 import com.example.mastermechanic.auth.AuthStatus
 import com.example.mastermechanic.auth.AuthorizationSummary
 import com.example.mastermechanic.patrol.PatrolFlow
@@ -97,4 +99,28 @@ object RunPageLogic {
     /** 还缺几项授权（0 = 全就绪）。 */
     fun missingAuthCount(statuses: List<AuthStatus>): Int =
         AuthorizationSummary.missingItems(statuses).size
+
+    /**
+     * 授权卡那颗按钮**该干什么**（2026-10-02 用户报障后加）。
+     *
+     * 用户原话："点击『去授权与权限』的逻辑有问题，目前是**直接拉起采集授权操作**，一同意就跳转到游戏了，
+     * 此时**无障碍和守护可能还没启动**，又要切换回 app 来启动这两项。"
+     *
+     * 所以判据只有一条：**采集前面还有缺项 ⇒ 老老实实只导航**（去授权页按顺序办），
+     * **只剩采集** ⇒ 才允许一键拉起（那时它确实是最后一步，点完就该去游戏了）。
+     */
+    enum class AuthAction {
+        /** 只导航到「授权与权限」，**不**拉系统采集弹窗。 */
+        OPEN_AUTH,
+
+        /** 只剩「屏幕采集」⇒ 一键拉起系统采集弹窗。 */
+        CAPTURE,
+    }
+
+    fun authAction(statuses: List<AuthStatus>): AuthAction =
+        if (AuthGuide.captureIsTheOnlyMissing(statuses)) AuthAction.CAPTURE else AuthAction.OPEN_AUTH
+
+    /** 采集前面还缺哪些项（给界面提示用；空 = 可以直接采集）。见 [AuthGuide.blockingCapture]。 */
+    fun captureBlockers(statuses: List<AuthStatus>): List<AuthItem> =
+        AuthGuide.blockingCapture(statuses)
 }
