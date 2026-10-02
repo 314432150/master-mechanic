@@ -4139,9 +4139,19 @@ class CaptureService : Service() {
         recognitionLoop.lastSignalCostMs.forEach { (name, costMs) ->
             val summary = signalCostStats.getOrPut(name) { FrameTimingStats() }.record(costMs)
                 ?: return@forEach
+            // **样式数（2026-10-03 N6-1 归因加）**：`SignalDetector.detectSignal` 对元素里
+            // **每个模板各跑一遍** `findPeaks`（`flatMap`）⇒ 这一行的耗时是**若干个模板之和**。
+            // 不写出来的话，"60~80ms 到底贵在哪"只能靠猜（活动弹窗那条有 4 个样式 ⇒ 4 倍）。
+            val styles = calibrationData?.signals.orEmpty()
+                .firstOrNull { it.id == name }?.templates?.size ?: 0
+            val styleNote = if (styles > 1) {
+                "（**$styles 个样式，成本 ≈ $styles × 单模板**）"
+            } else {
+                ""
+            }
             MmLog.i(
                 TAG,
-                "信号耗时统计: $name 连续 ${summary.sampleCount} 次，P95 ${summary.p95DisplayMs}ms，" +
+                "信号耗时统计: $name$styleNote 连续 ${summary.sampleCount} 次，P95 ${summary.p95DisplayMs}ms，" +
                     "平均 ${summary.avgDisplayMs}ms，最大 ${summary.maxDisplayMs}ms",
             )
         }

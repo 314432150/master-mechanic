@@ -166,12 +166,48 @@ object TemplateMatcher {
     }
 
     /**
+     * **分段计时探针**（N6-1，2026-10-03）：把 [findPeaks] 的墙钟拆成五段，回答
+     * **"单条信号那 60~80ms 到底花在哪"**。
+     *
+     * ## 为什么需要它
+     *
+     * 成本模型（[estimateCoarseOps]）只算**粗搜乘加**：健康标志 3~8M ops ⇒ 按 6~10ms/百万 应该是
+     * 21~56ms，而**真机实测 60~80ms**（逐信号 P95，见 `MM-Capture: 信号耗时统计`）⇒
+     **有 2~3 倍的耗时不在这个模型里**。不先归因，后面任何提速手段（重框 / 采样 / 提并行度）
+     **都是在猜**。
+     *
+     * ## 契约
+     *
+     * - **默认 `null` ⇒ 生产零开销**：每段只多一次空判断，不改变任何判定值、结果与顺序；
+     * - 只**观测**，不许改任何行为（探针拿到的是已算完的分段耗时）；
+     * - 段名固定为 [PHASE_PREFIX] / [PHASE_COARSE] / [PHASE_PICK] / [PHASE_REFINE] / [PHASE_SUPPRESS]，
+     *   顺序即执行顺序；段和应约等于整段墙钟（探针自检会断言这一点）。
+     */
+    interface MatchCostProbe {
+        fun phase(name: String, ms: Double, note: String = "")
+    }
+
+    const val PHASE_PREFIX = "prefix"
+    const val PHASE_COARSE = "coarse"
+    const val PHASE_PICK = "pick"
+    const val PHASE_REFINE = "refine"
+    const val PHASE_SUPPRESS = "suppress"
+
+    /**
      * 在 [image] 的 [window] 范围内扫描 [template]，返回候选峰值（分数降序、彼此分离）。
      *
      * 峰值 = 经非极大抑制的局部最优位置：抑制半径 [effectiveSuppressRadius] 内的
      * 候选视为同一处、只保留最高分——最高与次高分构成「竞争位置」审计基础（§5-1/§5-2）。
+     *
+     * [probe] 只做分段计时（N6-1 归因用），默认 null。
      */
-    fun findPeaks(image: GrayImage, template: Template, window: SearchWindow, params: MatchParams): List<MatchPeak> {
+    fun findPeaks(
+        image: GrayImage,
+        template: Template,
+        window: SearchWindow,
+        params: MatchParams,
+        probe: MatchCostProbe? = null,
+    ): List<MatchPeak> {
         if (template.centeredSumSq <= VARIANCE_EPS) return emptyList() // 常量模板：无有效纹理
 
         val bounds = window.pixelBounds(image.width, image.height)
@@ -179,11 +215,14 @@ object TemplateMatcher {
         val maxY = bounds.y1 - template.height
         if (maxX < bounds.x0 || maxY < bounds.y0) return emptyList() // 窗口装不下模板
 
+        val prefixStarted = System.nanoTime()
         val prefix = WindowPrefixSums.build(image, bounds)
         val sample = SampleView.of(template, image.width)
         val area = template.width * template.height
+        probe?.phase(PHASE_PREFIX, msSince(prefixStarted), "窗口 ${bounds.x1 - bounds.x0}×${bounds.y1 - bounds.y0}")
 
         // 粗搜：固定网格 + 采样打分（近似值，仅用于挑选精搜邻域）
+        val coarseStarted = System.nanoTime()
         val xs = gridPositions(bounds.x0, maxX)
         val ys = gridPositions(bounds.y0, maxY)
         val coarse = ArrayList<MatchPeak>(xs.size * ys.size)
@@ -198,12 +237,17 @@ object TemplateMatcher {
                 if (score > 0.0) coarse.add(MatchPeak(score, x, y))
             }
         }
+        val coarseMs = msSince(coarseStarted)
+        probe?.phase(PHASE_COARSE, coarseMs, "${xs.size}×${ys.size} 位置")
         if (coarse.isEmpty()) return emptyList()
         // 代表点贪心：若直接取前 K 名，同一峰簇的邻近网格点会占满名额、漏掉远处的
         // 次强峰（多峰 / 竞争位置场景）；互距约束保证各峰簇均有代表点进入精搜。
+        val pickStarted = System.nanoTime()
         val anchors = selectRepresentatives(coarse, maxOf(params.peakMinDistance, COARSE_STEP), COARSE_TOP_K)
+        probe?.phase(PHASE_PICK, msSince(pickStarted), "候选 ${coarse.size} → 锚点 ${anchors.size}")
 
         // 精搜：锚点邻域内全精度重算（候选分数与穷举实现一致）
+        val refineStarted = System.nanoTime()
         val radius = COARSE_STEP / 2
         val candidates = ArrayList<MatchPeak>(anchors.size * (2 * radius + 1) * (2 * radius + 1))
         for (anchor in anchors) {
@@ -218,8 +262,15 @@ object TemplateMatcher {
                 }
             }
         }
-        return suppressPeaks(candidates, effectiveSuppressRadius(params, template.width, template.height))
+        probe?.phase(PHASE_REFINE, msSince(refineStarted), "锚点 ${anchors.size} × 邻域 ${(2 * radius + 1) * (2 * radius + 1)}")
+
+        val suppressStarted = System.nanoTime()
+        val peaks = suppressPeaks(candidates, effectiveSuppressRadius(params, template.width, template.height))
+        probe?.phase(PHASE_SUPPRESS, msSince(suppressStarted), "候选 ${candidates.size} → 峰值 ${peaks.size}")
+        return peaks
     }
+
+    private fun msSince(startedNs: Long): Double = (System.nanoTime() - startedNs) / 1_000_000.0
 
     /**
      * 覆盖 [from, to] 的粗搜网格点：步长 ≤ [COARSE_STEP]、末点必为 [to]、

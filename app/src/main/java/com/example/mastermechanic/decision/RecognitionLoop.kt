@@ -295,8 +295,11 @@ class RecognitionLoop(
      * 这是"窗口未变即复用"的判据（见 [reuseUnchangedWindows]）：比对的是**判定真正读到的那块像素**，
      * 不是整帧 —— 大厅里动画在别处动、我们窗口不动时同样能复用。
      * 窗口取不到（空窗口 / 越界）返回 null ⇒ 该信号按"没快照"处理，一律实算（不猜）。
+     *
+     * ⚠ 2026-10-03 从 `private` 放宽为 `internal`：**只为了让 N6-1 归因探针能量到这段真实拷贝的耗时**
+     *（它是"每条信号开销"里不在模板匹配内的部分）。行为零变化。
      */
-    private fun windowSnapshot(gray: GrayImage, signal: SignalSpec): ByteArray? {
+    internal fun windowSnapshot(gray: GrayImage, signal: SignalSpec): ByteArray? {
         val bounds = signal.window.pixelBounds(gray.width, gray.height)
         val width = bounds.x1 - bounds.x0
         val height = bounds.y1 - bounds.y0
