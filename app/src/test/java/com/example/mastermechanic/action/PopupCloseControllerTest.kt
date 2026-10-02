@@ -618,7 +618,7 @@ class PopupCloseControllerTest {
     @Test
     fun recognizingANewPopupStillWaitsForTheAnimationFloor() {
         // 判出"新弹窗"只换来"**不停手**"这一个结论，**一个闸都没放宽**：这一枪照样要过动画下限
-        //（[PopupCloseController.DEFAULT_RENDERED_FLOOR_MS] = 350ms —— 别点在淡出 / 淡入中间）。
+        //（[PopupCloseController.DEFAULT_RENDERED_FLOOR_MS] = 300ms —— 别点在淡出 / 淡入中间）。
         val controller = PopupCloseController()
         val first = tick()
         click(
@@ -761,7 +761,7 @@ class PopupCloseControllerTest {
     fun renderedChangeThresholdIsTwentyPercent() {
         // 口径钉死（用户口径 20%）：实测"换一个弹窗"是 39.8~43.5%、"弹窗没了"是 68.6~82%
         assertEquals(20.0, PopupCloseController.DEFAULT_RENDERED_CHANGE_PERCENT, 1e-9)
-        assertEquals(350L, PopupCloseController.DEFAULT_RENDERED_FLOOR_MS)
+        assertEquals(300L, PopupCloseController.DEFAULT_RENDERED_FLOOR_MS)
     }
 
     @Test

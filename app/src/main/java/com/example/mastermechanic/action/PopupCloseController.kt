@@ -208,7 +208,7 @@ class PopupCloseController(
      */
     private val renderedChangePercent: Double = DEFAULT_RENDERED_CHANGE_PERCENT,
     /**
-     * 上面那条的**下限时长**（ms）：新弹窗实测在上一枪之后 ≈0.27s 就完整画好了，取 350ms
+     * 上面那条的**下限时长**（ms）：新弹窗实测在上一枪之后 ≈0.27s 就完整画好了，取 300ms
      * 跳过淡出 / 淡入那几帧（别点在动画中间）。默认 [DEFAULT_RENDERED_FLOOR_MS]。
      */
     private val renderedFloorMs: Long = DEFAULT_RENDERED_FLOOR_MS,
@@ -539,7 +539,7 @@ class PopupCloseController(
             // 实测：换一个弹窗的整帧变化是 **36.6%~43.5%**，弹窗没了 / 露出下层是 53.3%~77.2%（走上面那条停手）。
             //
             // [renderedFloorMs] 是"别点在动画中间"的下限：实测新弹窗在**上一枪之后 ≈0.27s** 就已完整画出，
-            // 取 350ms 跳过淡出/淡入那几帧（那几帧上锚点可能正压在半透明的旧弹窗上）。
+            // 取 300ms 跳过淡出/淡入那几帧（那几帧上锚点可能正压在半透明的旧弹窗上）。
             if (changed != null && changed >= renderedChangePercent) {
                 if (input.frameAtMs - lastClickAtMs < renderedFloorMs) {
                     return outcome(
@@ -728,12 +728,15 @@ class PopupCloseController(
         const val DEFAULT_RENDERED_CHANGE_PERCENT = 20.0
 
         /**
-         * 上一条的**下限时长**（ms，取 350）。
+         * 上面那条的**下限时长**（ms，**2026-10-02 由 350 收到 300**，用户拍板"试试看"）。
          *
          * 实测新弹窗在**上一枪之后 ≈0.27s** 就已完整画出（23:36 那段："只比上一枪晚 266ms、整帧变化
-         * 已 35.0%"）⇒ 350ms 足够跳过淡出/淡入那几帧 —— 那几帧上锚点可能正压在半透明的旧弹窗上。
+         * 已 35.0%"；23:20~23:21 那三串里"晚 311ms / 312ms"两次都被 350 挡过）⇒ **300ms 仍留 30ms 余量**
+         * 跳过淡出/淡入那几帧（那几帧上锚点可能正压在半透明的旧弹窗上），而每枪省 ≈50ms。
+         *
+         * ⚠ 真机若出现"点在动画中间 / 认不出关闭控件"，第一个要怀疑的就是这个数（往回调即可）。
          */
-        const val DEFAULT_RENDERED_FLOOR_MS = 350L
+        const val DEFAULT_RENDERED_FLOOR_MS = 300L
 
         /**
          * **决策帧的新鲜度上限**（ms，2026-09-29 加；**同日由 500 调到 1500**，见下）。

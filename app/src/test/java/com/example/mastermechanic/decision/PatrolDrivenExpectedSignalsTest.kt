@@ -100,4 +100,60 @@ class PatrolDrivenExpectedSignalsTest {
             expected.expected(rules.flatMap { it.signalNames }.toSet()),
         )
     }
+
+    // ===== 2026-10-02 用户提速：弹窗在屏时，流程预期 / 待命起点那一组本轮不搜 =====
+
+    private val allNames = rules.flatMap { it.signalNames }.toSet()
+
+    @Test
+    fun whileAnOverlayIsUpTheStepScreensAreNotSearched() {
+        // 用户原话："弹窗在屏时一轮为什么要搜 8 个信号这么多" ⇒ 弹窗盖着屏幕时，流程预期的那几屏
+        // （启动页 / 选服页 / 农场…）**本来就看不见**，搜了必然不命中 ⇒ 纯浪费。
+        // 保留：弹窗标志 + **上一轮还看得见**的那些画面（真机 23:21:00 那轮「命中：活动弹窗、大厅」——
+        // 大厅的标志露在弹窗外，弹窗一关就是它让状态当轮就能回落）。
+        val expected = subject()
+        expected.watch(listOf(UiState.HALL, UiState.FARM))
+        expected.onRound(setOf(UiState.ACTIVITY_POPUP, UiState.HALL))
+
+        assertEquals(
+            "只留弹窗 + 底下还看得见的大厅；农场那一组本轮不搜",
+            setOf("popup_close", "popup_close2", "hall_marker"),
+            expected.expected(allNames),
+        )
+    }
+
+    @Test
+    fun whileAnOverlayIsUpWithNothingVisibleBehindItOnlyThePopupIsSearched() {
+        val expected = subject(standbyStates = setOf(UiState.HALL, UiState.FARM, UiState.LAUNCH_PAGE))
+        expected.onRound(setOf(UiState.ACTIVITY_POPUP))
+
+        assertEquals(setOf("popup_close", "popup_close2"), expected.expected(allNames))
+    }
+
+    @Test
+    fun asSoonAsTheOverlayIsGoneTheStepScreensComeBack() {
+        // 关键：收窄**只持续到下一轮**。弹窗一走就立刻恢复流程预期 —— 否则状态会掉「未知」，
+        // 而"未知 ⇒ 零点击"会连**下一个**弹窗都关不掉（真机是弹窗**一串 3 个**、间隔 0.8 秒）。
+        val expected = subject()
+        expected.watch(listOf(UiState.HALL, UiState.FARM))
+        expected.onRound(setOf(UiState.ACTIVITY_POPUP, UiState.HALL))
+        assertEquals(setOf("popup_close", "popup_close2", "hall_marker"), expected.expected(allNames))
+
+        expected.onRound(setOf(UiState.HALL)) // 弹窗没了
+        assertEquals(
+            "恢复成弹窗 + 当前步骤的两屏",
+            setOf("popup_close", "popup_close2", "hall_marker", "farm_marker"),
+            expected.expected(allNames),
+        )
+    }
+
+    @Test
+    fun theNarrowingNeverDropsThePopupMarkers() {
+        // 收窄是为了省时间，**不是**为了少看见弹窗：弹窗标志任何时候都必须在（FR-01 的命根子）
+        val expected = subject()
+        expected.watch(listOf(UiState.FARM))
+        expected.onRound(setOf(UiState.ACTIVITY_POPUP, UiState.FARM))
+        val set = expected.expected(allNames)
+        assertTrue("弹窗记录必须在：$set", set.containsAll(setOf("popup_close", "popup_close2")))
+    }
 }
