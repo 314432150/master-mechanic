@@ -9508,6 +9508,16 @@
     adb -s <serial> exec-out run-as com.example.mastermechanic cat files/logs/mm-log-YYYYMMDD.txt > _tmp_check\mm-log-YYYYMMDD.txt
     ```
 
+430. **日志来源标签按实际上游打**（2026-10-03 用户："小瑕疵顺手改掉"）
+  - 症状（第 429 条 ⑧）：跑 FR-02（新手引导 / 新手大厅）那几轮，`logPopupVerification` 打的是
+    `FR-01 点击后仍命中弹窗…`，而紧跟其后的"不动作"行是 `FR-02 …` ⇒ **同一段日志两种来源标签**，
+    排障容易误读成"两套东西在同时动"。
+  - 根因：那个前缀**写死成 `FR-01`**，而三屏共用同一个闭环（`ClickSource` 本来就带在 `PopupRoundInput` 里、
+    审计与 `MM-Click` 都在用）。⇒ 改成 `logPopupVerification(source, outcome, change)` + `${source.tag}`，
+    两处前缀（"弹窗已消失" / "点击后仍命中弹窗"）都按实际来源打。
+  - 验证：`-PfastTests` **984 例 0 失败** ✓ ＋ `assembleDebug` ✓ ＋ `adb install -r` ✓。
+  - ⏳ 走查：下次跑到新手两屏时，日志里应出现 `FR-02 点击后仍命中弹窗…`（与同一段的 `FR-02 不动作` 对齐）。
+
 ## 待开发（用户列，2026-09-24）
 
 1. **优化 · 悬浮窗一级菜单底部加「返回 App」**：一级菜单最下方增加一个回到我们 App 的入口（现在只能靠后台/多任务切回去）。

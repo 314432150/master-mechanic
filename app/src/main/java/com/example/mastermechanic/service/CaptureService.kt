@@ -3693,7 +3693,7 @@ class CaptureService : Service() {
                 matchedOverlayMarkers = matchedOverlayMarkers,
             ),
         )
-        logPopupVerification(outcome, change)
+        logPopupVerification(source, outcome, change)
         when (val step = outcome.step) {
             is PopupStep.Skip -> {
                 // 同一原因只记一次：遮挡屏长期在屏时"未标定锚点"这类原因会每轮成立，记全套等于刷屏
@@ -4049,17 +4049,29 @@ class CaptureService : Service() {
             anchorNote
     }
 
-    /** FR-01 上一枪的验证结论（没有待验证的点击时不记）。 */
-    private fun logPopupVerification(outcome: PopupRoundOutcome, change: FrameChange) {
+    /**
+     * 上一枪的验证结论（没有待验证的点击时不记）。
+     *
+     * ⚠ **标签必须按实际来源打**（2026-10-03 用户验收时指出的小瑕疵）：三屏共用同一个闭环
+     * （活动弹窗 = FR-01；新手引导 / 新手大厅 = FR-02），而这里原来**写死成 `FR-01`** ⇒
+     * 跑 FR-02 的那几轮日志里，同一段会出现"FR-01 点击后仍命中弹窗"紧跟着"FR-02 不动作"，
+     * 两种来源标签同时出现 ⇒ 排障容易误读成"两套东西在同时动"。`ClickSource` 本来就带在输入里
+     * （审计要用），改一行即可。
+     */
+    private fun logPopupVerification(
+        source: ClickSource,
+        outcome: PopupRoundOutcome,
+        change: FrameChange,
+    ) {
         when (val verification = outcome.verification) {
             is PopupVerification.None -> Unit
 
             is PopupVerification.Closed -> {
                 MmLog.i(
                     TAG,
-                    "FR-01 弹窗已消失（本段共点击 ${verification.attempts} 次）",
+                    "${source.tag} 弹窗已消失（本段共点击 ${verification.attempts} 次）",
                 )
-                // 这一段结束了：扔掉基线，免得后续 FR-01 行拿着几分钟前的画面继续报"变化 X%"
+                // 这一段结束了：扔掉基线，免得后续这些行拿着几分钟前的画面继续报"变化 X%"
                 lastClickSignature = null
         lastClickAnchorSignature = null
         lastClickAnchorBounds = null
@@ -4070,7 +4082,7 @@ class CaptureService : Service() {
             // **但"同一张帧上不补点"**（2026-09-24 真机事故）：新帧没来就不再点，见 `PopupCloseController`。
             is PopupVerification.StillPresent -> MmLog.i(
                 TAG,
-                "FR-01 点击后仍命中弹窗（本段已点击 ${verification.attempts} 次）——" +
+                "${source.tag} 点击后仍命中弹窗（本段已点击 ${verification.attempts} 次）——" +
                     "可能没关掉、也可能是新弹窗；按上限继续，不做单次成败判定" +
                     "（本轮画面须晚于上一枪才补点，见 PopupCloseController）" +
                     frameChangeNote(change),
