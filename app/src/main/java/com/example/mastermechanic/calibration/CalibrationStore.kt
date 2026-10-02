@@ -104,7 +104,7 @@ object CalibrationStore {
         }
         val runtime = slimmed.tightenedWindows(exemptFromShrink)
         logWindowShrink(slimmed, runtime)
-        logStillHeavy(runtime)
+        logStillHeavy(runtime, exemptFromShrink)
         return runtime
     }
 
@@ -156,31 +156,103 @@ object CalibrationStore {
     }
 
     /**
-     * **重算之后仍然很贵**的记录，直接建议重框（2026-09-29）。
+     * **"重算之后仍然很贵"的排名**（纯逻辑，2026-10-03 从 [logStillHeavy] 里提出来，为了能单测）。
+     *
+     * ## 排名依据
+     *
+     * 对每条记录取**最大的那个模板**，用 [TemplateMatcher.estimateCoarseOps] 算**粗搜乘加次数**：
+     * `位置数（步进 2px）× 每位置采样（模板面积/2）`，只算粗搜（精搜恒小两个数量级）。
+     * 超过 [HEAVY_OPS] 的才算"贵"，按 ops 降序。
+     *
+     * ## ⚠ 为什么必须分三类（2026-10-03 真机发现：混排会点名错的东西）
+     *
+     * 原来的排名把三种**根本不是同一种成本**的记录混在一起排，于是"最贵前两名"恰好是
+     * **零匹配成本**的"只圈区域"锚点（`server_list_area` 604M / `friend_list_area` 334M）——
+     * 它们在 [com.example.mastermechanic.patrol.AnchorLocator] 构造时被排除、识别也只匹配标志
+     * ⇒ **一帧都不参与匹配**，框小它们只会在**没有任何提速效果**的前提下把 OCR 输入区域框小。
+     * 而真正该框的标志被挤出 `take(6)` ⇒ **用户照着日志干活，框的是错的东西**。
+     *
+     * | 类 | 判据 | 什么时候匹配 | 重框有没有用 |
+     * | --- | --- | --- | --- |
+     * | **每轮固定成本** | `role == MARKER` | **每轮**（当前状态期望集合内） | **有用**（成本 ∝ 模板面积） |
+     * | **按需成本** | `role == ANCHOR` 且不在 [nonLocatable] | 只有轮到那一步、这一步有事可做时 | 有用，但那一步才跑 |
+     * | **零成本** | `id ∈ [nonLocatable]`（"只圈区域"） | **从不** | **没用**（别框） |
+     *
+     * ⇒ 三类分开报：每轮固定成本那一组才是"该重框标志"的清单；按需那组只作提示；
+     * 零成本那组**点名排除**并说明原因（免得用户以为漏报了）。
+     */
+    data class StillHeavy(
+        /** 每轮都匹配的标志（降序）；该重框的就是这组。 */
+        val perRound: List<String>,
+        /** 按需匹配的动作锚点里最贵的（降序；空 = 没有）。 */
+        val onDemand: List<String>,
+        /** 被排除的"只圈区域"锚点名（说明为什么它们不在榜里）。 */
+        val excluded: List<String>,
+    )
+
+    fun stillHeavyRanking(
+        runtime: CalibrationData,
+        nonLocatable: Set<String>,
+        heavyOps: Long = HEAVY_OPS,
+        take: Int = 6,
+    ): StillHeavy {
+        val perRound = ArrayList<Pair<String, Long>>()
+        val onDemand = ArrayList<Pair<String, Long>>()
+        val excluded = ArrayList<String>()
+        for (entry in runtime.signals) {
+            val biggest = entry.templates.maxByOrNull { it.width.toLong() * it.height.toLong() }
+            if (entry.id in nonLocatable) {
+                if (entry.id !in excluded) excluded.add(entry.id)
+                continue
+            }
+            if (biggest == null) continue
+            val ops = TemplateMatcher.estimateCoarseOps(
+                entry.window, biggest.width, biggest.height, runtime.frameWidth, runtime.frameHeight,
+            )
+            if (ops < heavyOps) continue
+            val text = "${entry.id}（${entry.role.label}，模板 ${biggest.width}×${biggest.height}，${ops / 1_000_000}M）"
+            if (entry.role == SignalRole.MARKER) perRound.add(text to ops) else onDemand.add(text to ops)
+        }
+        return StillHeavy(
+            perRound = perRound.sortedByDescending { it.second }.take(take).map { it.first },
+            onDemand = onDemand.sortedByDescending { it.second }.take(2).map { it.first },
+            excluded = excluded,
+        )
+    }
+
+    /**
+     * 把 [stillHeavyRanking] 的结果打给用户看（真机上"还是慢"时唯一的 actionable 线索）。
      *
      * 为什么要有这一行：重算只能砍"多余的余量"，**砍不动"模板本身太大"** ——
      * 匹配成本 ≈ 位置数 × 模板采样数，固定余量下位置数恒定（≈49×49），
      * 于是成本**正比于模板面积**。真机实录（第 288 条）：`tutorial_guide_e1`（模板 181×51）重算后
      * 仍有 ≈11M、`tutorial_hall_e1`（248×80）≈24M ⇒ 它们只能靠**重框得更小**解决。
      * 不主动报的话，用户只会觉得"还是慢"，而屏上没有任何地方看得出"该重框哪一条"。
+     *
+     * ⚠ 措辞里的毫秒数是**线性外推**（[MS_PER_MILLION_OPS] ms/百万乘加），只适合当量级看：
+     * `TemplateMatcher` 的实测是"大信号 6~10ms/百万、小信号有固定开销"⇒ 小信号会明显高于外推值。
      */
-    private fun logStillHeavy(runtime: CalibrationData) {
-        val heavy = runtime.signals.mapNotNull { entry ->
-            val biggest = entry.templates.maxByOrNull { it.width.toLong() * it.height.toLong() }
-                ?: return@mapNotNull null
-            val ops = TemplateMatcher.estimateCoarseOps(
-                entry.window, biggest.width, biggest.height, runtime.frameWidth, runtime.frameHeight,
-            )
-            if (ops < HEAVY_OPS) return@mapNotNull null
-            "${entry.id}（${entry.role.label}，模板 ${biggest.width}×${biggest.height}，${ops / 1_000_000}M）" to ops
-        }.sortedByDescending { it.second }
-        if (heavy.isEmpty()) return
-        MmLog.w(
-            TAG,
-            "仍有 ${heavy.size} 条信号单轮匹配 ≥ ${HEAVY_OPS / 1_000_000}M 乘加（≈${HEAVY_OPS / 1_000_000 * 7}ms+）：" +
-                "**固定余量已经最小，只能靠把模板框小来提速**（成本 ∝ 模板面积，框小一半约快一半）⇒ " +
-                heavy.take(6).joinToString("、") { it.first },
-        )
+    private fun logStillHeavy(runtime: CalibrationData, nonLocatable: Set<String>) {
+        val ranking = stillHeavyRanking(runtime, nonLocatable)
+        if (ranking.perRound.isEmpty() && ranking.onDemand.isEmpty() && ranking.excluded.isEmpty()) return
+        val sb = StringBuilder()
+        if (ranking.perRound.isNotEmpty()) {
+            sb.append("每轮都匹配的标志里有 ${ranking.perRound.size} 条单轮 ≥ ${HEAVY_OPS / 1_000_000}M 乘加")
+                .append("（≈${HEAVY_OPS / 1_000_000 * MS_PER_MILLION_OPS}ms+，线性外推）⇒ 这是**每轮的固定成本**")
+                .append("，只能靠**把标志框小**提速（成本 ∝ 模板面积，框小一半约快一半）：")
+                .append(ranking.perRound.joinToString("、"))
+        }
+        if (ranking.onDemand.isNotEmpty()) {
+            if (sb.isNotEmpty()) sb.append("｜")
+            sb.append("按需匹配的动作锚点里最贵的是 ").append(ranking.onDemand.joinToString("、"))
+                .append("（只在轮到那一步时才跑，不是每轮固定成本）")
+        }
+        if (ranking.excluded.isNotEmpty()) {
+            if (sb.isNotEmpty()) sb.append("｜")
+            sb.append("已排除「只圈区域、不做模板匹配」的锚点 ").append(ranking.excluded.joinToString("、"))
+                .append("：它们从不参与匹配，框小**不会**提速（框小了只会让读文字的范围变小）")
+        }
+        MmLog.w(TAG, sb.toString())
     }
 
     /**
@@ -214,4 +286,13 @@ object CalibrationStore {
      * 于是 20M 大致对应"模板面积 ≥ 约 8 万像素"（`400×200` 那种大横幅）。
      */
     private const val HEAVY_OPS = 20_000_000L
+
+    /**
+     * **毫秒外推系数**（ms / 百万次乘加）：日志里那句"≈Nms+"用。
+     *
+     * ⚠ **只适合当量级看**（2026-10-03 注明）：[TemplateMatcher] 的实测是"**大信号** 6~10ms/百万、
+     * **小信号**另有固定开销"⇒ 20M 这一档的真实耗时通常**高于**线性外推值。
+     * 当初取 7 是大信号实测的中位；宁可低估，也不要让用户以为"20M 也就 140ms、等得起"。
+     */
+    private const val MS_PER_MILLION_OPS = 7L
 }
