@@ -44,6 +44,8 @@ import androidx.navigation.compose.rememberNavController
 import com.example.mastermechanic.R
 import com.example.mastermechanic.ui.AuthorizationRoute
 import com.example.mastermechanic.ui.CalibrationRoute
+import com.example.mastermechanic.ui.diagnostics.DiagnosticsRoute
+import com.example.mastermechanic.ui.help.HelpScreen
 import com.example.mastermechanic.ui.settings.AppSettingsRoute
 import com.example.mastermechanic.ui.FriendListRoute
 import com.example.mastermechanic.ui.ServerListRoute
@@ -277,11 +279,12 @@ fun MasterMechanicApp(
                         onRequestReauth = { requestReauth() },
                     )
                 }
-                // 抽屉：诊断（U6 建设 —— 只放**只读读数**：画面在不在来 / 识别结果 / 耗时 / 日志）
-                composable(Routes.DIAGNOSTICS) { StubDestination(R.string.nav_stub_diagnostics) }
+                // 抽屉：诊断（M5-U6 第二段：**只读读数** 画面 / 当前画面 / 单帧耗时 / 日志，数值与日志同源）
+                composable(Routes.DIAGNOSTICS) { DiagnosticsRoute(resumeTick = resumeTick) }
                 // 抽屉：设置 —— **已落地第一段**（识别参数：2026-10-02 从标定页搬来，用户"改东西归设置"）
                 composable(Routes.SETTINGS) { AppSettingsRoute(resumeTick = resumeTick) }
-                composable(Routes.HELP) { StubDestination(R.string.nav_stub_help) }
+                // 抽屉：帮助（M5-U6 第二段：术语与流程，一组一句）
+                composable(Routes.HELP) { HelpScreen() }
             }
         }
     }
@@ -364,21 +367,5 @@ private fun AccountsDestination(
     }
 }
 
-/**
- * **占位页**（U1 阶段）：把"这一页以后是什么"写在正中间。
- *
- * 为什么不留空白：空白会被当成 bug（用户看到底部导航能点、点进去啥都没有，第一反应是"坏了"），
- * 而写一句话既说明它是**在建**，也说清建成什么样。U3 / U6 各自替换掉自己的那一个。
- */
-@Composable
-private fun StubDestination(@StringRes bodyRes: Int) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(text = stringResource(bodyRes))
-    }
-}
+// ⚠ U6 第二段后已无占位页（诊断 / 帮助都换成真页，「设置」在 U3 已落地）⇒ StubDestination 与
+// nav_stub_* 文案已删除。留个口供将来：用户明确反对"点进去什么都没有"，宁可当场写清楚也不留空白。

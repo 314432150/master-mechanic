@@ -25,11 +25,56 @@
     <string name="nav_tab_friends">好友清单</string>
     <!-- U1 阶段的**占位页**（U3 / U6 会各自替换掉；每句 ≤60 字，见验收 V2）：
          写清"这一页以后是什么"，而不是留一片空白 —— 空白会被当成 bug。 -->
-    <!-- 抽屉「诊断」页（M5-U6 第一段，2026-10-02 先落「识别参数」）：其余诊断项**明确写"待补"**，不静默。 -->
+    <!-- 抽屉「诊断」页（M5-U6 第二段，2026-10-03）：**只读读数**——画面 / 当前画面 / 单帧耗时 / 日志。
+         判据：数值与 `MM-Capture` 日志**同源**（耗时读数由采集侧在写日志的同一位置 publish），
+         处置一律去「授权与权限」或「设置」——本页**不给任何改动入口**（"诊断 = 看问题"）。 -->
+    <string name="nav_diag_frame">画面</string>
+    <string name="nav_diag_state">当前画面</string>
+    <string name="nav_diag_cost">单帧处理耗时</string>
+    <string name="nav_diag_log">日志</string>
+    <string name="nav_diag_session_active">采集会话：进行中</string>
+    <string name="nav_diag_session_down">采集会话：不在（程序现在看不见游戏）</string>
+    <string name="nav_diag_frame_age">距上一新帧 %1$d 毫秒</string>
+    <string name="nav_diag_frame_never">这次授权还没收到过任何画面</string>
+    <string name="nav_diag_state_value">识别结论：%1$s</string>
+    <string name="nav_diag_foreground">目标应用：%1$s</string>
+    <string name="nav_diag_foreground_yes">在前台</string>
+    <string name="nav_diag_foreground_no">不在前台（识别与点击都已冻结）</string>
+    <string name="nav_diag_popup">自动关弹窗：%1$s</string>
+    <string name="nav_diag_popup_idle">待命（屏上没有遮挡屏）</string>
+    <string name="nav_diag_popup_closing">正在关，第 %1$d 次</string>
+    <string name="nav_diag_popup_stopped">已停手（%1$s）</string>
+    <string name="nav_diag_popup_paused">已暂停（悬浮窗菜单里恢复）</string>
+    <string name="nav_diag_cost_value">最近一窗（%1$d 帧）：P95 %2$s 毫秒（灰度 %3$s / 识别 %4$s）｜平均 %5$s｜最大 %6$s</string>
+    <string name="nav_diag_cost_unknown">还没攒够一窗（连续 100 帧）才有 P95</string>
+    <string name="nav_diag_cost_over">已超 NFR-01 的 20 毫秒线</string>
+    <string name="nav_diag_cost_ok">在 NFR-01 的 20 毫秒线内</string>
+    <string name="nav_diag_log_file">当前落盘：%1$s</string>
+    <string name="nav_diag_log_path">位置：%1$s</string>
+    <string name="nav_diag_log_hint">业务日志按天落盘（超过 512 KB 只留最近的后半）；排障时把当天那份整份取走即可。</string>
+
+    <!-- 抽屉「帮助」页（M5-U6 第二段，2026-10-03）：**术语与流程**，一组一句、每句 ≤60 字（验收 V2）。
+         口径只写"实际怎么做的"，不写愿景；名词与别处**同一套说法**（授权四名沿用授权页那四个标签）。 -->
+    <string name="nav_help_what">这程序在干什么</string>
+    <string name="nav_help_what_1">照着目标设备的画面自动操作：认界面、点按钮、关弹窗——不读也不改游戏数据。</string>
+    <string name="nav_help_auth">四项授权</string>
+    <string name="nav_help_auth_1">无障碍：代替手点（点击、悬浮窗、判前台）。</string>
+    <string name="nav_help_auth_2">常驻守护：接收跑号请求、放行点击；不启动它整套自动化都不动作。</string>
+    <string name="nav_help_auth_3">通知：让「守护运行中」可见，避免什么都不发生的静默失败。</string>
+    <string name="nav_help_auth_4">屏幕采集：识别游戏画面。必须选「共享一个应用」并选中游戏。</string>
+    <string name="nav_help_auth_5">屏幕采集留到最后：一授权画面就切到游戏，那时再补别的项就得切回来。</string>
+    <string name="nav_help_run">跑号与拜访</string>
+    <string name="nav_help_run_1">发起都在游戏的悬浮窗菜单里；App 只看状态，不提供第二个发起点。</string>
+    <string name="nav_help_run_2">换号按服务器清单轮换、拜访按好友清单；清单在「账号与好友」里维护。</string>
+    <string name="nav_help_popup">自动关弹窗</string>
+    <string name="nav_help_popup_1">看到活动弹窗 / 新手引导 / 新手大厅就点掉；认不出就不点——宁可漏关，不可错点。</string>
+    <string name="nav_help_calib">标定结果</string>
+    <string name="nav_help_calib_1">框出来的模板与参数是识别与点击的唯一数据源；换设备或换分辨率都要重新标定。</string>
+    <string name="nav_help_diag">出问题时</string>
+    <string name="nav_help_diag_1">先看「诊断」页的读数，再取走当天日志；日志里每一步都写了「为什么点 / 为什么不点」。</string>
 
     <string name="nav_stub_settings">本页在 M5-U6 建设：自动关弹窗、悬浮窗提示位置、退出 App。</string>
-    <string name="nav_stub_diagnostics">本页在 M5-U6 建设：画面是否在来、当前识别结果、单帧耗时、日志。</string>
-    <string name="nav_stub_help">本页在 M5-U6 建设：术语与流程说明。</string>
+    <!-- `nav_stub_diagnostics` / `nav_stub_help` 已随 U6 第二段删除（两页都换成真页）⇒ 零死文案。 -->
 
     <!-- ===== M5-U2「运行」页（2026-10-01）=====
          三张卡：授权 / 画面 / 流程。每句 ≤60 字（验收 V2）；「停止 / 继续 / 重新授权采集」**复用悬浮窗那几条**

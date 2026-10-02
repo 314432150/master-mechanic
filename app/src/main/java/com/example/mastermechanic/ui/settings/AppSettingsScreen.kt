@@ -62,8 +62,9 @@ import kotlinx.coroutines.withContext
  *
  * ## 本页后续（U6）
  *
- * 帧率 / 停更 / 当前识别画面与分数 / 单帧耗时 / 日志 —— 见 [R.string.nav_stub_settings] 那条占位说明；
- * 本轮只落参数这一段，其余留给 U6，**不静默**（页面明确写着"待补"）。
+ * 帧率 / 停更 / 当前识别画面 / 单帧耗时 / 日志 那些**只读读数** 2026-10-03 已落进抽屉「诊断」页
+ * （`ui/diagnostics/`）—— 判据：**诊断 = 看问题、设置 = 改东西**，所以它们不在本页；
+ * 本页剩下的待补项只有"自动关弹窗开关 / 提示位置 / 退出 App"，**不静默**（页面明确写着"待补"）。
  */
 @Composable
 fun AppSettingsRoute(resumeTick: Int) {

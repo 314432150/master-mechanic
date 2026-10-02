@@ -43,6 +43,7 @@ import com.example.mastermechanic.action.PopupStep
 import com.example.mastermechanic.action.PopupVerification
 import com.example.mastermechanic.action.PreFireRecheck
 import com.example.mastermechanic.action.ScreenSize
+import com.example.mastermechanic.capture.FrameCostSignal
 import com.example.mastermechanic.capture.FrameFreshness
 import com.example.mastermechanic.calibration.CalibrationFramePool
 import com.example.mastermechanic.calibration.CalibrationData
@@ -730,6 +731,8 @@ class CaptureService : Service() {
         lastLoopFrozen = null
         lastSearchedNames = null
         timingStats.reset()
+        // 耗时读数**不跨会话**（同 `timingStats.reset()`）：诊断页不能显示上一次会话的旧值
+        FrameCostSignal.clear()
         grayTimingStats.reset()
         detectTimingStats.reset()
         lastAppliedIntervalMs = ACTIVE_INTERVAL_MS
@@ -4098,6 +4101,18 @@ class CaptureService : Service() {
         val gray = grayTimingStats.record(grayNs / 1_000_000.0)
         val detect = detectTimingStats.record((totalNs - grayNs) / 1_000_000.0)
         val total = timingStats.record(totalNs / 1_000_000.0) ?: return
+        // M5-U6 诊断页：在写这条日志的同一个位置把读数 publish 出去 ⇒ 页面与日志永远同源
+        // （灰度 / 识别两段此刻也已满窗：与总耗时同窗推进，`record` 同时返回）
+        FrameCostSignal.update(
+            FrameCostSignal.Reading(
+                sampleCount = total.sampleCount,
+                totalP95Ms = total.p95DisplayMs,
+                grayP95Ms = gray?.p95DisplayMs ?: 0.0,
+                detectP95Ms = detect?.p95DisplayMs ?: 0.0,
+                avgMs = total.avgDisplayMs,
+                maxMs = total.maxDisplayMs,
+            ),
+        )
         MmLog.i(
             TAG,
             "单帧处理耗时统计: 连续 ${total.sampleCount} 帧，总 P95 ${total.p95DisplayMs}ms" +
