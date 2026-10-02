@@ -68,6 +68,17 @@ class PatrolFlowTest {
     // ---------------------------------------------------------------- 区间
 
     @Test
+    fun everyRangeSaysWhichFlowItIsInLogs() {
+        // 2026-10-03 用户定稿：日志前缀必须带**具体流程名** —— 上一版只写"流程"两个字，
+        // 用户问"**怎么区分具体是哪个流程？**"⇒ 菜单上有三种（换号 / 拜访 / 换号+拜访），日志要能对上。
+        // 取值标准 = **它到底在做什么**（= [Range] 决定的区间），不是"用户点了哪一行"：
+        // 「拜访（预设）」走的就是换号+拜访 ⇒ 日志写「换号+拜访」。
+        assertEquals("换号", Range.SWITCH_ONLY.logLabel)
+        assertEquals("拜访", Range.VISIT_ONLY.logLabel)
+        assertEquals("换号+拜访", Range.SWITCH_AND_VISIT.logLabel)
+    }
+
+    @Test
     fun rangesCoverTheRightSteps() {
         assertTrue(PatrolFlow.inRange(Step.LOGIN, Range.SWITCH_ONLY))
         assertFalse(PatrolFlow.inRange(Step.ENTER_FARM, Range.SWITCH_ONLY))
