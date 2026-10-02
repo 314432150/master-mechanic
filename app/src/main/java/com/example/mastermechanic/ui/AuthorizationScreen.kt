@@ -209,7 +209,7 @@ fun AuthorizationRoute(
             blockedNote = null
             requestCapture()
         } else {
-            val labels = blockers.map { context.getString(itemLabel(it)) }.joinToString("、")
+            val labels = blockers.map { context.getString(authItemLabelRes(it)) }.joinToString("、")
             blockedNote = context.getString(R.string.auth_capture_not_launched, labels)
             // 日志必须能读出"是**判据**挡住的"（用户排障就是拿日志看时间线：哪一刻该发生什么没发生）
             MmLog.w(
@@ -279,7 +279,7 @@ fun AuthorizationScreen(
     // 就会离开 App（画面切到游戏），回来还得为上面几项再切一趟。
     // ⚠ 用 `map`（inline）取标签：`joinToString` 不是 inline，里面**不能**调 `stringResource`。
     val blockers = AuthGuide.blockingCapture(statuses)
-    val blockerLabels = blockers.map { stringResource(itemLabel(it)) }.joinToString("、")
+    val blockerLabels = blockers.map { stringResource(authItemLabelRes(it)) }.joinToString("、")
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         // 与清单页同一套：**inset 只由壳消费一次**（这个 `Scaffold` 只为给页面一个落脚容器，
@@ -400,7 +400,7 @@ private fun AuthorizationCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = stringResource(itemLabel(status.item)),
+                    text = stringResource(authItemLabelRes(status.item)),
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
@@ -450,21 +450,13 @@ private fun SummaryText(statuses: List<AuthStatus>) {
         )
     } else {
         val missingLabels = AuthorizationSummary.missingItems(statuses)
-            .map { stringResource(itemLabel(it)) }
+            .map { stringResource(authItemLabelRes(it)) }
         Text(
             text = stringResource(R.string.auth_summary_missing, missingLabels.joinToString("、")),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.error,
         )
     }
-}
-
-@StringRes
-private fun itemLabel(item: AuthItem): Int = when (item) {
-    AuthItem.ACCESSIBILITY -> R.string.auth_accessibility_label
-    AuthItem.SCREEN_CAPTURE -> R.string.auth_capture_label
-    AuthItem.RESIDENT -> R.string.auth_resident_label
-    AuthItem.NOTIFICATIONS -> R.string.auth_notifications_label
 }
 
 @StringRes

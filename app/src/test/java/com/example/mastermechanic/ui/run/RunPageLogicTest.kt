@@ -98,6 +98,12 @@ class RunPageLogicTest {
         )
         assertFalse("缺两项不能说成就绪", RunPageLogic.authReady(missingTwo))
         assertEquals("要说得出缺几项", 2, RunPageLogic.missingAuthCount(missingTwo))
+        // 2026-10-02 用户："把名字也写上" ⇒ 不只报数，还要报**是哪几项**（顺序 = 授权页自上而下）
+        assertEquals(
+            "界面才念得出「还缺 2 项：屏幕采集、常驻守护」",
+            listOf(AuthItem.SCREEN_CAPTURE, AuthItem.RESIDENT),
+            RunPageLogic.missingAuthItems(missingTwo),
+        )
     }
 
     @Test

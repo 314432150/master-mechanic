@@ -25,6 +25,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.example.mastermechanic.R
 import com.example.mastermechanic.auth.AuthStatus
+import com.example.mastermechanic.ui.authItemLabelRes
 import com.example.mastermechanic.auth.AuthorizationChecks
 import com.example.mastermechanic.auth.CaptureSessionState
 import com.example.mastermechanic.capture.CaptureSessionSignal
@@ -114,6 +115,12 @@ fun RunRoute(
         // 缺哪几项都直接去拉系统采集弹窗 ⇒ 用户一确认画面就切到游戏，而"无障碍 / 守护"还没启动，
         // 只能再切回来补 ✗。现在只有"**只剩采集**"时才一键拉起，其余情况它只是去授权页。
         val authAction = RunPageLogic.authAction(statuses)
+        // **缺哪几项要当场点名**（用户 2026-10-02："把名字也写上"）：原来只写"还缺 1 项"，
+        // 用户得再进授权页才知道要办什么 —— 而"授权完被送去游戏、回来才发现还缺"正是这次踩的坑。
+        // ⚠ 用 `map`（inline）取标签：`joinToString` 不是 inline，里面**不能**调 `stringResource`。
+        val missingAuthLabels = RunPageLogic.missingAuthItems(statuses)
+            .map { stringResource(authItemLabelRes(it)) }
+            .joinToString("、")
         StatusCard(
             title = stringResource(R.string.run_card_auth),
             body = when {
@@ -122,7 +129,11 @@ fun RunRoute(
                 authAction == RunPageLogic.AuthAction.CAPTURE ->
                     stringResource(R.string.run_auth_only_capture)
 
-                else -> stringResource(R.string.run_auth_missing, RunPageLogic.missingAuthCount(statuses))
+                else -> stringResource(
+                    R.string.run_auth_missing,
+                    RunPageLogic.missingAuthCount(statuses),
+                    missingAuthLabels,
+                )
             },
         ) {
             when (authAction) {

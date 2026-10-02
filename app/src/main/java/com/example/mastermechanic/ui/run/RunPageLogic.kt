@@ -101,6 +101,15 @@ object RunPageLogic {
         AuthorizationSummary.missingItems(statuses).size
 
     /**
+     * **还缺哪几项**（按授权页显示顺序；界面要点名 ⇒ 用户 2026-10-02："把名字也写上"）。
+     *
+     * 原来只写"还缺 1 项"，用户得**再进授权页**才知道要办什么 —— 而"授权完被送去游戏、回来才发现还缺"
+     * 正是他这次踩的坑（`progress.md` 426 的 105.7 秒）。所以这句必须**当场说清是哪几项**。
+     */
+    fun missingAuthItems(statuses: List<AuthStatus>): List<AuthItem> =
+        AuthorizationSummary.missingItems(statuses)
+
+    /**
      * 授权卡那颗按钮**该干什么**（2026-10-02 用户报障后加）。
      *
      * 用户原话："点击『去授权与权限』的逻辑有问题，目前是**直接拉起采集授权操作**，一同意就跳转到游戏了，

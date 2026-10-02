@@ -38,7 +38,9 @@
     <string name="run_card_frame">画面</string>
     <string name="run_card_flow">流程</string>
     <string name="run_auth_ready">四项都就绪</string>
-    <string name="run_auth_missing">还缺 %1$d 项</string>
+    <!-- 2026-10-02 用户："把名字也写上" ⇒ 不只报数，还要报**是哪几项**
+         （"还缺 1 项：无障碍服务"；原来只写"还缺 1 项"，用户得再进授权页才知道要办什么）。 -->
+    <string name="run_auth_missing">还缺 %1$d 项：%2$s</string>
     <string name="run_open_auth">去「授权与权限」</string>
     <!-- 2026-10-02 用户报障：这个按钮原来**直接拉起系统采集弹窗**（一同意画面就切到游戏，而此时无障碍 /
          守护可能还没启动，用户还得切回 App 补）⇒ 现在只在**只剩采集**这一项缺时才一键拉起（判据 `AuthGuide`），
