@@ -211,6 +211,11 @@ class PopupCloseController(
     private val maxReArms: Int = MAX_RE_ARMS,
     /** 停手后**等多久**才允许复位重试（ms；默认 [RE_ARM_AFTER_MS]）—— 让画面先稳定下来（见 [onRound]）。 */
     private val reArmAfterMs: Long = RE_ARM_AFTER_MS,
+    /**
+     * **"关闭控件那一小块几乎没变"的阈值**（%，默认 [DEFAULT_ANCHOR_KEPT_PERCENT]）—— A2 局部证据。
+     * 只用于"整帧变化 ≥ [sceneReplacedPercent] 时分辨是哪一种大变"，判据见 [onRound] 那段说明。
+     */
+    private val anchorKeptPercent: Double = DEFAULT_ANCHOR_KEPT_PERCENT,
 ) {
 
     init {
@@ -223,6 +228,7 @@ class PopupCloseController(
         require(renderedFloorMs >= 0) { "画面换了一幅的下限时长不能为负：$renderedFloorMs" }
         require(maxReArms >= 0) { "复位重试次数不能为负：$maxReArms" }
         require(reArmAfterMs >= 0) { "复位重试的等待时长不能为负：$reArmAfterMs" }
+        require(anchorKeptPercent >= 0.0) { "『关闭控件那一小块几乎没变』的阈值不能为负：$anchorKeptPercent" }
         require(sceneReplacedPercent >= renderedChangePercent) {
             "「整幅换掉」阈值不能小于「画面换了一幅」：$sceneReplacedPercent < $renderedChangePercent"
         }
@@ -431,16 +437,40 @@ class PopupCloseController(
             // ⚠ 同一段实录里这一帧的变化量恰好是 **50.0%**（正贴着阈值）⇒ "变化多少 %"这条代理量
             // 分不开"换了新弹窗"与"弹窗没了"，这道闸本身也在等改造（另行方案）。
             if (changed != null && changed >= sceneReplacedPercent) {
-                gaveUp = true
-                gaveUpAtMs = input.nowMs
-                return outcome(
-                    verification,
-                    PopupStep.GiveUp(
-                        attempt,
-                        "本轮画面整幅换掉了（整帧变化 ${"%.1f".format(changed)}%）" +
-                            "——多半是弹窗已被关掉，或换成了另一屏遮挡屏",
-                    ),
-                )
+                // **A2（2026-10-02）：先用"局部证据"分辨是哪一种"大变"** —— 用户口径原话：
+                // "**阈值判断总是存在例外的情况，我记得之前好像应取消了阈值判断的方案？**"（他记得对）。
+                // 2026-09-29 撤销整帧比较时留下的口径就是答案：
+                // "**别再用整帧比较，改看『X 自己那一小块』（锚点窗口像素 / 命中分数这一轮有没有变）**"。
+                //
+                // ⇒ 这里看 [PopupRoundInput.anchorWindowChangedPercent]（**关闭控件锚点窗口那一小块**的变化）：
+                //   · 那一小块**几乎没变** ⇒ 屏上那个控件还在原样 ⇒ 判"**弹窗还在、只是内容换了一幅**"
+                //     ⇒ **不停手**，继续往下走（锚点定位 / 决策帧新鲜 / 观察窗 / 开火前复眼那些闸一道不减）；
+                //   · 那一小块**也变了**（或拿不到 ⇒ `null`）⇒ 按原来那条"整幅换掉 ⇒ 停手"处理。
+                //
+                // 为什么"局部没变"就敢不停手（安全依据）：2026-09-24"点进商城"那一枪的形态是
+                // **弹窗没了、下层的元素顶上来** —— 那时"关闭控件所在的那一小块"必然明显变样，
+                // 正是本条判据要分开的东西；而整帧 % 分不开它（两组数据只隔一道十几点的空档）。
+                val local = input.anchorWindowChangedPercent
+                if (local != null && local < anchorKeptPercent) {
+                    // 落到下面那些闸上：≥renderedChangePercent 时仍可当轮补枪（本就要求帧够老），
+                    // 否则退回观察窗。注意**没有**在这里放行任何点击 —— 放行由下面那些闸决定。
+                } else {
+                    gaveUp = true
+                    gaveUpAtMs = input.nowMs
+                    val localNote = if (local == null) {
+                        "关闭控件那一小块拿不到（不可比）"
+                    } else {
+                        "关闭控件那一小块也变了 ${"%.1f".format(local)}%"
+                    }
+                    return outcome(
+                        verification,
+                        PopupStep.GiveUp(
+                            attempt,
+                            "本轮画面整幅换掉了（整帧变化 ${"%.1f".format(changed)}%）且$localNote" +
+                                "——多半是弹窗已被关掉，或换成了另一屏遮挡屏",
+                        ),
+                    )
+                }
             }
             // **画面换了一幅（但没到"整幅换掉"）⇒ 上一枪的结果已经画出来了 ⇒ 立刻判下一枪**。
             //
@@ -688,6 +718,27 @@ class PopupCloseController(
          * 而"停手已过 3 秒 + 遮挡屏仍被滞回确认"足够说明这一屏是新的稳定状态了。
          */
         const val RE_ARM_AFTER_MS = 3_000L
+
+        /**
+         * **"关闭控件那一小块几乎没变"的阈值**（%，A2，2026-10-02，取 **10.0**）。
+         *
+         * ## 它取代的是什么（用户口径）
+         *
+         * 用户："**阈值判断总是存在例外的情况，我记得之前好像应取消了阈值判断的方案？**" —— 他记得对：
+         * 2026-09-29 撤销整帧比较那两刀时留下的口径是"**别再用整帧比较，改看『X 自己那一小块』
+         * （锚点窗口像素 / 命中分数这一轮有没有变）**"。
+         * 原来"整幅换掉 ⇒ 停手"只用整帧 % 这个**代理量**，它分不开"弹窗没了"与"弹窗还在、只是内容换了一幅"
+         * （真机 2026-10-02 00:40：点完一枪 60.6% ⇒ 误停手，而随后两轮标志仍以 0.9958 命中；
+         *  叠加 `RE_ARM_AFTER_MS` 的等待，一次关弹窗花 **7.9 秒 / 3 枪**）。
+         *
+         * ## 为什么取 10
+         *
+         * 如实说：**先给一个保守值，靠真机日志标定** —— 每条 FR-01 行都会带上实测的"锚点窗口变化 X%"
+         * （见 `CaptureService` 的 `frameChangeNote`），跑几次就知道"控件还在 / 弹窗没了"两组落在哪儿。
+         * 它不是"又一道靠猜的阈值"：量的是**同一个控件那一小块**（不是整帧），而且 `null`（拿不到 / 不可比）
+         * 时**一律退回停手** ⇒ 安全侧不变。
+         */
+        const val DEFAULT_ANCHOR_KEPT_PERCENT = 10.0
     }
 }
 
@@ -721,6 +772,18 @@ data class PopupRoundInput(
     val nowMs: Long,
     val frameAtMs: Long,
     val frameChangedPercent: Double? = null,
+    /**
+     * **关闭控件锚点窗口那一小块自上一枪以来的变化**（%，0..100；A2 局部证据，2026-10-02）。
+     *
+     * 采集层用 `capture/FrameSignature.sampleRegion` 采**同一个矩形**（= 这一枪点的那个锚点的搜索窗口，
+     * 运行帧像素）在"上一枪那张画面"与"本轮这张画面"上的签名，再 `changedPercent` 如实算出来。
+     * `null` = 拿不到（还没开过枪 / 几何变了 / 不知道锚点窗口 / 窗口变了 ⇒ 不可比）
+     * ⇒ **不参与**判据，按原来那条"整幅换掉 ⇒ 停手"走（不可比 ≠ 没变）。
+     *
+     * ⚠ 它是**局部**量，与 [frameChangedPercent]（整帧）互补：整帧回答"变了多少"、它回答"**我们关心的那个
+     * 控件变没变**"（见 [PopupCloseController.anchorKeptPercent] 的说明与 `docs/progress.md` 第 421/422 条）。
+     */
+    val anchorWindowChangedPercent: Double? = null,
     /**
      * **当前遮挡屏的身份**（2026-09-30 加，真机修）：三屏共用本闭环，而游戏会**背靠背弹两个遮挡屏**
      * （实测 2026-09-30 01:39：新手引导关掉后 **0.46s** 就是新手大厅，整帧变化 82.7%）。

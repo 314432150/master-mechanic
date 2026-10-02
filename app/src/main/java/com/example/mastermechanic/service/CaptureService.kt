@@ -806,6 +806,8 @@ class CaptureService : Service() {
         frameExpectationNoted = false
         // "自上一枪以来画面变化"的基准不跨会话
         lastClickSignature = null
+        lastClickAnchorSignature = null
+        lastClickAnchorBounds = null
         FrameExpectationSignal.reached()
         // "本轮吃的是哪张画面"同样不跨会话（见 [currentFrameAtMs]）
         currentFrameAtMs = 0L
@@ -3656,6 +3658,8 @@ class CaptureService : Service() {
                 // 或点击前就拍下的那一张；拿旧画面上的"弹窗仍在"去补枪 ⇒ 点到下层界面（真机点进了商城）
                 frameAtMs = currentFrameAtMs,
                 frameChangedPercent = change.percent,
+                // A2 局部证据：关闭控件那一小块变没变（分清"内容换了一幅"与"弹窗没了"）
+                anchorWindowChangedPercent = change.anchorPercent,
                 // **这一屏的身份**（2026-09-30 真机修）：换了它 = 新的一段 ⇒ 背靠背的两个遮挡屏
                 // （新手引导 → 新手大厅）各点一次；未确认时传 null（= 没有遮挡屏，走原来的复位路径）
                 overlayKey = overlay?.name,
@@ -3715,7 +3719,19 @@ class CaptureService : Service() {
                         // 于是被复眼 / 门禁挡住时标签照旧写"正在关"，用户看到"显示了正在关弹窗却没关掉"）
                         PopupCloseSignal.clearBlocked()
                         // 记下"这一枪是在哪张画面上打出去的"：后面几轮要算"自上一枪以来画面变了多少"
-                        rememberClickSignature(frameBytes, frameWidth, frameHeight, frameStride)
+                        // （A2 起同时拍下**这一枪那个锚点窗口那一小块**：局部证据的比对面）
+                        rememberClickSignature(
+                            rgba = frameBytes,
+                            width = frameWidth,
+                            height = frameHeight,
+                            rowStride = frameStride,
+                            anchorBounds = anchorLocator?.windowInFrame(
+                                frameWidth = frameWidth,
+                                frameHeight = frameHeight,
+                                state = result.state,
+                                anchorName = step.request.anchorName,
+                            ),
+                        )
                         useFastGear("刚下发一击（${source.tag} 关遮挡屏）")
                         // 屏幕必然变了 ⇒ 期待一帧新画面（期待落空 ⇒ 闸掉后续点击，见 [checkFrameExpectation]）；
                         // `gateEligible = true` 同理（点的是游戏里的遮挡屏）
@@ -3890,9 +3906,44 @@ class CaptureService : Service() {
      */
     private var lastClickSignature: ByteArray? = null
 
-    /** 记下"这一枪打在哪张画面上"（只留一份：够算"自上一枪以来"）。 */
-    private fun rememberClickSignature(rgba: ByteArray, width: Int, height: Int, rowStride: Int) {
+    /**
+     * **A2 局部证据的两个伴生量**（2026-10-02）：这一枪那个锚点的**窗口矩形**（运行帧像素）
+     * 与它在那一小块上的签名。与 [lastClickSignature] 同时拍、同时清。
+     *
+     * 为什么需要：只靠整帧变化 % **分不开**"弹窗没了"与"弹窗还在、只是内容换了一幅"
+     * （真机 00:40：点完一枪 60.6% ⇒ 误停手 3 秒才复位，一次关弹窗 7.9 秒）。见
+     * `action/PopupCloseController.DEFAULT_ANCHOR_KEPT_PERCENT`。
+     */
+    private var lastClickAnchorBounds: PixelBounds? = null
+    private var lastClickAnchorSignature: ByteArray? = null
+
+    /**
+     * 记下"这一枪打在哪张画面上"（只留一份：够算"自上一枪以来"）。
+     *
+     * @param anchorBounds 这一枪那个锚点的**搜索窗口**（运行帧像素；`null` = 拿不到 ⇒ 局部证据不参与）
+     *   —— 与整帧签名**同一时刻、同一帧**拍，否则比出来的是两张画面上不同区域的差。
+     */
+    private fun rememberClickSignature(
+        rgba: ByteArray,
+        width: Int,
+        height: Int,
+        rowStride: Int,
+        anchorBounds: PixelBounds?,
+    ) {
         lastClickSignature = FrameSignature.sample(rgba, width, height, rowStride)
+        lastClickAnchorBounds = anchorBounds?.takeIf { it.x1 <= width && it.y1 <= height }
+        lastClickAnchorSignature = lastClickAnchorBounds?.let { bounds ->
+            FrameSignature.sampleRegion(
+                rgba = rgba,
+                width = width,
+                height = height,
+                rowStride = rowStride,
+                left = bounds.x0,
+                top = bounds.y0,
+                right = bounds.x1,
+                bottom = bounds.y1,
+            )
+        }
     }
 
     /**
@@ -3901,18 +3952,58 @@ class CaptureService : Service() {
      * @param percent 与上一枪那张画面的整帧变化（0..100）；`null` = **不可比**（还没开过枪 / 几何变了）
      * @param points 采样点数（0 = 没采样）
      */
-    private data class FrameChange(val percent: Double?, val points: Int)
+    private data class FrameChange(
+        val percent: Double?,
+        val points: Int,
+        /**
+         * **关闭控件锚点窗口那一小块**的变化（%，A2 局部证据）；`null` = 不可比（没基线 / 几何变了 / 不知道窗口）。
+         * 整帧回答"变了多少"、它回答"**我们关心的那个控件变没变**"。
+         */
+        val anchorPercent: Double? = null,
+    )
 
     /**
      * 与上一枪那张画面比：多少比例的采样点亮度差 ≥ [FrameSignature.PIXEL_DELTA]。
      *
      * 一轮只算一次（日志与 `PopupCloseController` 那道"同一张画面不重复点"的闸共用这个数）。
      * 没开过枪时直接返回（**不采样**）—— 平时这条测量不花任何代价。
+     *
+     * A2（2026-10-02）：同时算一遍**关闭控件锚点窗口那一小块**的变化（[FrameSignature.sampleRegion]）。
+     * 那一小块**采同样的步长、同样的矩形** ⇒ 两次签名等长可比；矩形拿不到 / 变了 ⇒ `null`（不可比 ≠ 没变）。
      */
     private fun frameChangeOf(rgba: ByteArray, width: Int, height: Int, rowStride: Int): FrameChange {
         val before = lastClickSignature ?: return FrameChange(null, 0)
         val after = FrameSignature.sample(rgba, width, height, rowStride)
-        return FrameChange(FrameSignature.changedPercent(before, after), before.size)
+        return FrameChange(
+            percent = FrameSignature.changedPercent(before, after),
+            points = before.size,
+            anchorPercent = anchorChangeOf(rgba, width, height, rowStride),
+        )
+    }
+
+    /**
+     * **关闭控件锚点窗口那一小块**自上一枪以来的变化（%，A2 局部证据）。拿不到就给 `null`。
+     *
+     * 为什么量这一小块（而不是继续看整帧）：用户口径 —— "阈值判断总是存在例外的情况"；
+     * 2026-09-29 撤销整帧比较时留下的口径是"**别再用整帧比较，改看『X 自己那一小块』**"。
+     * 详见 `action/PopupCloseController.DEFAULT_ANCHOR_KEPT_PERCENT` 与 `docs/progress.md` 第 421/422 条。
+     */
+    private fun anchorChangeOf(rgba: ByteArray, width: Int, height: Int, rowStride: Int): Double? {
+        val before = lastClickAnchorSignature ?: return null
+        val bounds = lastClickAnchorBounds ?: return null
+        // 几何变了 ⇒ 采样长度必然不同 ⇒ changedPercent 自己也会给 null；这里先挡一道，省掉一次采样
+        if (bounds.x1 > width || bounds.y1 > height) return null
+        val after = FrameSignature.sampleRegion(
+            rgba = rgba,
+            width = width,
+            height = height,
+            rowStride = rowStride,
+            left = bounds.x0,
+            top = bounds.y0,
+            right = bounds.x1,
+            bottom = bounds.y1,
+        )
+        return FrameSignature.changedPercent(before, after)
     }
 
     /**
@@ -3920,7 +4011,11 @@ class CaptureService : Service() {
      */
     private fun frameChangeNote(change: FrameChange): String {
         val percent = change.percent ?: return ""
-        return "｜自上一枪整帧变化 ${String.format(Locale.US, "%.1f", percent)}%（采样 ${change.points} 点）"
+        val anchorNote = change.anchorPercent?.let {
+            "｜关闭控件那一小块变化 ${String.format(Locale.US, "%.1f", it)}%"
+        }.orEmpty()
+        return "｜自上一枪整帧变化 ${String.format(Locale.US, "%.1f", percent)}%（采样 ${change.points} 点）" +
+            anchorNote
     }
 
     /** FR-01 上一枪的验证结论（没有待验证的点击时不记）。 */
@@ -3935,6 +4030,8 @@ class CaptureService : Service() {
                 )
                 // 这一段结束了：扔掉基线，免得后续 FR-01 行拿着几分钟前的画面继续报"变化 X%"
                 lastClickSignature = null
+        lastClickAnchorSignature = null
+        lastClickAnchorBounds = null
             }
 
             // 只作观测，**不是"失败"**：弹窗仍在既可能是没关掉，也可能是前一个关掉后冒出了新的那个

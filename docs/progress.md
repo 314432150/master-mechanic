@@ -9224,6 +9224,34 @@
       ＋ `MAX_RE_ARMS` 2 ⇒ 3 ⇒ 每次误停手省 ≈1.8s。风险最小。
   - 本轮**不改代码**；只记录口径出处、撤回理由与两条候选路线。
 
+422. **A2 落地：用"关闭控件那一小块"取代整帧百分比来分辨两种"大变"**（2026-10-02 用户："直接就做A2"）
+  - 口径来源：第 421 条（用户提醒 → 2026-09-29 第 254 条留下的"**别再用整帧比较，改看『X 自己那一小块』**"）。
+  - **新增"局部证据"**（三处）：
+    1. `capture/FrameSignature.sampleRegion(...)`：按矩形区域采样（与 `sample` 同一套亮度/步长口径；
+       同一矩形两次采样等长 ⇒ 可直接丢给 `changedPercent`；矩形不同 / 几何变了 ⇒ `null`，不可比 ≠ 没变）。
+    2. `CaptureService`：这一枪下发时**一并拍下"该锚点的搜索窗口"那一小块的签名**
+       （`rememberClickSignature(..., anchorBounds = anchorLocator.windowInFrame(帧几何, 状态, 锚点名))`）；
+       每轮 `frameChangeOf` 同时算出 `anchorPercent`；`FrameChange` 加一字段；日志 `frameChangeNote`
+       追加「**关闭控件那一小块变化 X%**」（真机标定用）；基线三处清理点（会话重建 / 本段 Closed / 复位）
+       与整帧基线**同生同灭**。
+    3. `action/PopupCloseController`：`PopupRoundInput.anchorWindowChangedPercent`（`null` = 不参与）
+       ＋ 构造参数 / 常量 `DEFAULT_ANCHOR_KEPT_PERCENT = 10.0`。判据改成：
+       **整帧变化 ≥ [sceneReplacedPercent] 时先看局部** —— 局部 < 10%（控件还在原样）⇒ 判"弹窗还在、
+       只是内容换了一幅"⇒ **不停手**（继续走锚点定位 / 决策帧新鲜 / 观察窗 / 复眼那些闸）；
+       局部也变了、或拿不到 ⇒ 仍按"整幅换掉 ⇒ 停手"（原因里写明是哪一半变了）。
+  - **为什么"局部没变"就敢不停手**：2026-09-24"点进商城"那一枪的形态是"**弹窗没了、下层元素顶上来**"
+    —— 那时关闭控件所在的那一小块**必然明显变样**；而整帧 % 分不开这两件事（两组数据只隔十几点空档）。
+  - **10% 这个数是"先保守取值 + 靠日志标定"**（如实记）：它是**局部**量、与整帧无关，且 `null` 一律退回停手。
+  - **向后兼容**：`anchorWindowChangedPercent` 默认 `null` ⇒ 老调用点与老用例行为**一字不变**
+    （`wholeScreenReplacedStopsTheSegment` / `replacedThresholdBoundary` / `anotherOverlayScreenStartsANewRun` /
+    `sameOverlayScreenKeepsTheRunStopped` 全部原样通过 ✓）。
+  - 单测：**+4**（局部没变 ⇒ 不停手 / 局部变了 ⇒ 停手且原因写明 / 拿不到 ⇒ 保守停手 / 阈值钉死 10 且拒绝负数）
+    ⇒ `-PfastTests` **970 例 0 失败** ✓ ＋ `assembleDebug` ✓ ＋ `adb install -r` + `am start` ✓。
+  - ⏳ **真机复验**（下次关弹窗时看）：日志 `FR-01 … ｜自上一枪整帧变化 X%（采样 57.0 万点）｜关闭控件那一小块变化 Y%`
+    —— 期望"弹窗还在、只是内容换了一幅"那一轮 **Y 很小（<10）** ⇒ **不再停手、不再白等 3 秒**；
+    而"弹窗没了、露出下层"那一轮 **Y 较大** ⇒ 仍停手 ✓。若 Y 的两组分不开（例如都 <10），
+    再按实测把 `DEFAULT_ANCHOR_KEPT_PERCENT` 收到 5 或放宽到 15（**只在真机数据上定**）。
+
 ## 待开发（用户列，2026-09-24）
 
 1. **优化 · 悬浮窗一级菜单底部加「返回 App」**：一级菜单最下方增加一个回到我们 App 的入口（现在只能靠后台/多任务切回去）。
