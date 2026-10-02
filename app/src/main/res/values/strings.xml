@@ -59,11 +59,11 @@
     <string name="nav_help_what_1">照着目标设备的画面自动操作：认界面、点按钮、关弹窗——不读也不改游戏数据。</string>
     <string name="nav_help_auth">四项授权</string>
     <string name="nav_help_auth_1">无障碍：代替手点（点击、悬浮窗、判前台）。</string>
-    <string name="nav_help_auth_2">常驻守护：接收跑号请求、放行点击；不启动它整套自动化都不动作。</string>
+    <string name="nav_help_auth_2">常驻守护：接收换号 / 拜访请求、放行点击；不启动它整套自动化都不动作。</string>
     <string name="nav_help_auth_3">通知：让「守护运行中」可见，避免什么都不发生的静默失败。</string>
     <string name="nav_help_auth_4">屏幕采集：识别游戏画面。必须选「共享一个应用」并选中游戏。</string>
     <string name="nav_help_auth_5">屏幕采集留到最后：一授权画面就切到游戏，那时再补别的项就得切回来。</string>
-    <string name="nav_help_run">跑号与拜访</string>
+    <string name="nav_help_run">换号与拜访</string>
     <string name="nav_help_run_1">发起都在游戏的悬浮窗菜单里；App 只看状态，不提供第二个发起点。</string>
     <string name="nav_help_run_2">换号按服务器清单轮换、拜访按好友清单；清单在「账号与好友」里维护。</string>
     <string name="nav_help_popup">自动关弹窗</string>
@@ -160,7 +160,7 @@
     <string name="auth_resident_label">常驻守护</string>
     <string name="resident_status_running">运行中</string>
     <string name="resident_status_stopped">未启动</string>
-    <string name="resident_desc">跑号请求由它接收、点击由它放行；不启动时整个自动化都不动作。切后台或熄屏不会中断。</string>
+    <string name="resident_desc">换号 / 拜访请求由它接收、点击由它放行；不启动时整个自动化都不动作。切后台或熄屏不会中断。</string>
     <string name="resident_notify_warning">通知不可见：通知权限未开启，运行状态将仅在本页可见。</string>
     <string name="resident_action_start">启动守护</string>
     <string name="resident_action_stop">停止</string>
@@ -308,7 +308,7 @@
     <string name="floating_menu_glyph_resume">↻</string>
     <string name="floating_menu_running">运行中</string>
     <string name="floating_menu_nothing_to_resume">当前没有可继续的流程（未在跑，或没有中止 / 暂停）。</string>
-    <string name="floating_menu_no_resident">常驻守护服务未启动：请求没人接，跑号不会开始（请在 App 授权页启动它）</string>
+    <string name="floating_menu_no_resident">常驻守护服务未启动：请求没人接，换号 / 拜访都不会开始（请在 App 授权页启动它）</string>
     <string name="floating_reason_no_session">尚未建立采集会话：请先到「授权状态」页授予屏幕采集权限。</string>
     <!-- 会话**曾经建立、现在断了**（2026-09-28 用户报障后分的第二句）：不能说"尚未建立 / 请先授予"——
          凭证是一次性的，"重新授予"才是用户该做的动作。判据见 FloatingWindow.noSessionReason()。 -->
@@ -625,7 +625,7 @@
     <!-- 有引用（或没能确认引用）时**先问一句**再删（2026-09-22 用户口径） -->
     <string name="server_delete_title">删除「%1$s」？</string>
     <string name="server_delete_body_preset">拜访规则还固定用它。删掉之后换号那一步会找不到区服、流程中止，得先去拜访规则里改掉。</string>
-    <string name="server_delete_body_ref_unknown">没能确认下游引用（%1$s）。不先看一遍就删，跑号可能会在运行时莫名中止。</string>
+    <string name="server_delete_body_ref_unknown">没能确认下游引用（%1$s）。不先看一遍就删，换号 / 拜访可能会在运行时莫名中止。</string>
     <string name="server_delete_confirm">仍要删除</string>
     <!-- 清空的引用信息放在**动手前的确认框**里（单行删除默认不弹框，所以那一边是删后说） -->
     <string name="server_clear_body_referenced">将清空当前全部 %1$d 条服务器清单；其中 %2$d 条还被拜访规则固定用着 —— 清空后换号会找不到区服。清空后短时间内可以撤销。</string>
@@ -674,13 +674,13 @@
     <string name="friend_deleted_ref_check_failed">已删除「%1$s」；但没能确认下游引用（%2$s）</string>
     <!-- 有引用（或没能确认引用）时**先问一句**再删（2026-09-22 用户口径）：动手前说清后果，比删完再靠撤销挽回强 -->
     <string name="friend_delete_title">删除「%1$s」？</string>
-    <string name="friend_delete_body_preset">拜访规则还在拜访这个人。删掉之后跑号会在这一步中止，得先去拜访规则里改掉。</string>
+    <string name="friend_delete_body_preset">拜访规则还在拜访这个人。删掉之后换号 / 拜访会在这一步中止，得先去拜访规则里改掉。</string>
     <string name="friend_delete_body_anchors">还有 %1$d 条头像标定记录归在它名下；删掉之后那些头像不会再被认作它的农场。</string>
     <string name="friend_delete_body_both">拜访规则还在拜访这个人，另有 %1$d 条头像标定记录归在它名下。</string>
-    <string name="friend_delete_body_ref_unknown">没能确认下游引用（%1$s）。不先看一遍就删，跑号可能会在运行时莫名中止。</string>
+    <string name="friend_delete_body_ref_unknown">没能确认下游引用（%1$s）。不先看一遍就删，换号 / 拜访可能会在运行时莫名中止。</string>
     <string name="friend_delete_confirm">仍要删除</string>
     <!-- 清空的引用信息放在**动手前的确认框**里（单行删除默认不弹框，所以那一边是删后说） -->
-    <string name="friend_clear_body_referenced">将清空 %1$d 位好友；其中 %2$d 位还被拜访规则或标定记录引用 —— 清空后跑号会中止。清空后短时间内可以撤销。</string>
+    <string name="friend_clear_body_referenced">将清空 %1$d 位好友；其中 %2$d 位还被拜访规则或标定记录引用 —— 清空后换号 / 拜访会中止。清空后短时间内可以撤销。</string>
     <string name="friend_clear_body_ref_unknown">将清空 %1$d 位好友。没能确认下游引用（%2$s）。清空后短时间内可以撤销。</string>
     <string name="friend_undo">撤销</string>
     <string name="friend_field_label">好友名称</string>

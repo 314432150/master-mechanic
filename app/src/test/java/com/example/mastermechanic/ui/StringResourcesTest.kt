@@ -34,6 +34,41 @@ import org.junit.Test
  */
 class StringResourcesTest {
 
+    /**
+     * **术语守卫：用户可见文案里不许再出现「跑号」**（2026-10-03 用户报："现在的悬浮窗菜单文案是
+     * 换号和拜访，已经没有跑号了"）。
+     *
+     * ## 为什么单独钉一道
+     *
+     * 「跑号」是 **M4 之前**的旧叫法（那时的功能叫"跑号"、清单叫"跑号清单"）；M4 之后用户看到的是
+     * **换号**（换区服 + 重新登录那套流程）与**拜访**（去好友农场）。所以用户可见文案必须写"换号 / 拜访"，
+     * 否则界面上会出现"菜单写换号、提示里写跑号"的自相矛盾（用户看着两个词，不知道说的是不是同一件事）。
+     *
+     * ## 判据范围（刻意窄）
+     *
+     * **只查 `<string>` 的正文** ⇒ `strings.xml` 里的**注释**可以继续写"跑号"（那些是给后来人看的历史说明，
+     * 例如"这里原有 61 条跑号清单时代的文案，已全部删除"）；**日志与 KDoc 也不在本用例范围内** ——
+     * 日志是内部排障口径（`MM-Capture` 至今仍写 `跑号: 第 N 步`，是有意保留的，见下）。
+     */
+    @Test
+    fun noUserVisibleStringStillSaysPaohao() {
+        val stringsFile = File(findModuleDir(), "src/main/res/values/strings.xml")
+        assertTrue("找不到 strings.xml：${stringsFile.absolutePath}", stringsFile.isFile)
+
+        val stale = Regex("<string\\s+name=\"([^\"]+)\"[^>]*>(.*?)</string>", RegexOption.DOT_MATCHES_ALL)
+            .findAll(stringsFile.readText())
+            .filter { it.groupValues[2].contains("跑号") }
+            .map { it.groupValues[1] }
+            .toList()
+
+        assertTrue(
+            "用户可见文案里还有 ${stale.size} 条写着「跑号」（旧叫法）⇒ 改成「换号 / 拜访」：" +
+                "\n（注释里可以写跑号，那是历史说明；本用例只看 <string> 正文）\n" +
+                stale.joinToString("\n") { "  · $it" },
+            stale.isEmpty(),
+        )
+    }
+
     @Test
     fun everyStringResourceIsReferenced() {
         val moduleDir = findModuleDir()
