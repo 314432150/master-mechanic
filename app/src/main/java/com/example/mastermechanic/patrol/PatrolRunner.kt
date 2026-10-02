@@ -469,7 +469,15 @@ object PatrolRunner {
     private fun timeoutReason(current: PatrolFlow.State, input: RoundInput): String {
         val waitedSec = PatrolFlow.waitedMs(current, input.nowMs) / 1000
         val expected = PatrolScenes.expectedState(current.step)?.label ?: current.step.label
-        return "第 ${current.step.number} 步（${current.step.label}）：等了 $waitedSec 秒仍未识别出" +
+        // ⚠ **说清是从哪一刻起算的**（2026-10-03 乙方案）：耐心现在从"最后一次真动手"起算（[PatrolFlow.budgetBase]），
+        // 而"还没动手"的老口径仍从进入这一步起算 —— 两种口径的 N 秒含义不同，日志必须读得出是哪一种，
+        // 否则真机上看到"等了 15 秒"会以为是同一件事（项目老规矩：日志要能读出用的是哪条判据）。
+        val since = if (PatrolFlow.budgetBase(current) > current.stepEnteredAtMs) {
+            "点下去之后等了"
+        } else {
+            "等了"
+        }
+        return "第 ${current.step.number} 步（${current.step.label}）：$since $waitedSec 秒仍未识别出" +
             "要等的画面（期望「$expected」，现在${PatrolScenes.describe(input.state)}）"
     }
 

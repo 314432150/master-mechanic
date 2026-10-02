@@ -134,7 +134,8 @@ object PatrolFlow {
      *   （2026-09-21，真机实测每步白等 ≈1.1~1.4s）。null 时退化为"窗口内一律等"的老行为，
      *   于是纯逻辑调用方（单测 / 离线重跑）不受影响。
      * @param stepEnteredAtMs **进入这一步**的时刻（0 = 未记录 → 不做超时判定，纯逻辑单测不受影响）。
-     *   编排层用它算"这一步等多久了"（[STEP_TIMEOUT_MS]，见那里的说明）。
+     *   编排层用它算"这一步等多久了"（[STEP_TIMEOUT_MS]，见那里的说明）；⚠ **它不是唯一的起算点** ——
+     *   2026-10-03 起耐心从 [budgetBase]（进入这一步 / 最后一次真动手，两者取晚）起算。
      */
     data class State(
         val range: Range,
@@ -169,6 +170,21 @@ object PatrolFlow {
      *    同样 3 次重试在墙钟上只剩一半时间。要谈耐心，就得用**时间**谈。
      *
      * 取值：15s ≈ 实测最慢一次（6.6s）的 2 倍余量；到点即中止并说明等了多久（不静默卡住）。
+     *
+     * ## 2026-10-03：耐心从「我们最后一次真动手」起算（[budgetBase]）
+     *
+     * 上面那句"从**进入这一步**起算"本身是个坑，真机撞过一次（2026-10-03 01:03）：
+     * 第 7 步（进入农场）进入后**先有 7.5 秒我们下不了手**——① 这一步自带的让路窗 2.5s、
+     * ② 游戏自己弹了「新手引导」→「新手大厅」两层，③ FR-02 逐个关掉它们；
+     * 而游戏真正加载农场又花了 **8.7 秒** ⇒ 准备 7.5 + 加载 8.7 = **16.3s > 15s** ⇒
+     * **在「未知 -> 农场」命中前 1.24 秒中止**（用户报："换号+拜访中止在了自己的农场"）。
+     *
+     * ⇒ 一句话口径：**"我们还没动手的那段时间不该扣耐心"**（那是在等条件齐，不是白等）。
+     * 与 [rebaseStepBudget]（画面停更顺延）/ [resume]（暂停不计入）**同源**：都是"刚才那段等待不作数"。
+     *
+     * ⚠ **不加"3 份"硬上界**：现状设计下每步**至多推一次**起点（口径 A 一步一击 + 搜索链中间小步
+     * `advanceStep = false` 不记 + 第 5 步滚屏刻意不记）⇒ 总时长天然 ≈ 准备时间 + 一份耐心；
+     * "迟迟不敢动手"仍由 `lastActionAtMs == 0` 那段（从进入步骤起算 15s）快速发现 ✓。
      */
     const val STEP_TIMEOUT_MS = 15_000L
 
@@ -212,12 +228,39 @@ object PatrolFlow {
     const val LOGOUT_TIMEOUT_MS = 60_000L
 
     /**
-     * **这一步**的时间预算：第 6 步是"等游戏登录加载"、第 3 步是"等退出登录后游戏重启"
-     * （见 [LOGIN_TIMEOUT_MS] / [LOGOUT_TIMEOUT_MS]），其余步骤仍是 [STEP_TIMEOUT_MS]。
+     * **第 7 步（进入农场）的时间预算**（ms，2026-10-03 加，取 **20s**）。
+     *
+     * ## 取值：实测最慢 × 2（和第 3 / 6 / 9 步同一个取法，不是随手拍的）
+     *
+     * 两次真机实测"点下农场入口 → 状态确认「农场」"：**6.6s**（2026-09-20）/ **8.7s**（2026-10-03）⇒
+     * 最慢 8.7s，20s ≈ **2.3 倍**余量。（第 3 步 35s→60s 是 1.7 倍；第 6 步 14.2s→30s 是 2.1 倍；
+     * 第 9 步 ~12s→25s 是 2 倍。）
+     *
+     * ## 为什么不是 15s、也不是 30s
+     *
+     * - **不是 15s**：15/8.7 = 1.7 倍，**偏薄**——已经有两个样本 6.6 / 8.7，第三次落 12 秒就又白中止一次。
+     * - **不是 30s**：30s 是**第 6 步（登录）**的档位（要启动游戏、拉资源）；第 7 步只是"点一下进农场"，
+     *   它的失败模式（点歪了 / 入口没了 / 被带进活动页）用户**一眼能看出来** ⇒ 干等 30 秒是纯亏，
+     *   而且会**掩盖真故障**（2026-10-01 `03:26` 那次"点进活动页"就是靠这个超时报出来的）。
+     * - ⚠ 那 8.7 秒里**约 1.2 秒是识别慢造成的**（状态"连续 2 次命中"确认 + 识别 P95 215ms）⇒
+     *   NFR-01 提速后同样这次约 7.5 秒 ⇒ 20s 的余量自动升到 2.7 倍。**余量该在识别侧挣，不该用加时间买。**
+     *
+     * 📌 **别的步骤不同步加长**（用户 2026-10-03 问过"可否统一 30s"，答复是不）：第 1/2/4/5/8 步
+     * 点完画面 0.7~2.1 秒就变（真机：第 4 步 0.7s、第 5 步 2.1s）⇒ 15s 已是 7~15 倍余量，
+     * 提到 30s 只会把"点不动 / 进错界面"这类**真故障**的发现时间白拉长一倍。
+     */
+    const val FARM_ENTER_TIMEOUT_MS = 20_000L
+
+    /**
+     * **这一步**的时间预算：第 6 步是"等游戏登录加载"、第 3 步是"等退出登录后游戏重启"、
+     * 第 7 步是"进农场要加载一整屏"、第 9 步是"搜索链 + 结果页"
+     * （见 [LOGIN_TIMEOUT_MS] / [LOGOUT_TIMEOUT_MS] / [FARM_ENTER_TIMEOUT_MS] / [FRIEND_TIMEOUT_MS]），
+     * 其余步骤仍是 [STEP_TIMEOUT_MS]。
      */
     fun timeoutFor(step: Step): Long = when (step) {
         Step.LOGIN -> LOGIN_TIMEOUT_MS
         Step.LOGOUT -> LOGOUT_TIMEOUT_MS
+        Step.ENTER_FARM -> FARM_ENTER_TIMEOUT_MS
         Step.VISIT_FRIEND -> FRIEND_TIMEOUT_MS
         else -> STEP_TIMEOUT_MS
     }
@@ -328,8 +371,8 @@ object PatrolFlow {
     fun fail(state: State, reason: String, nowMs: Long = 0L): State {
         if (!state.isRunning) return state
         val retries = state.retries + 1
-        val timedOut = state.stepEnteredAtMs > 0 && nowMs > 0 &&
-            nowMs - state.stepEnteredAtMs >= timeoutFor(state.step)
+        val base = budgetBase(state)
+        val timedOut = base > 0 && nowMs > 0 && nowMs - base >= timeoutFor(state.step)
         return if (retries >= MAX_RETRIES || timedOut) {
             state.copy(retries = retries, outcome = Outcome.FAILED, reason = reason)
         } else {
@@ -337,17 +380,40 @@ object PatrolFlow {
         }
     }
 
-    /** 这一步已经等了多久（毫秒）；0 = 没记录过进入时刻。 */
-    fun waitedMs(state: State, nowMs: Long): Long =
-        if (state.stepEnteredAtMs > 0 && nowMs > state.stepEnteredAtMs) {
-            nowMs - state.stepEnteredAtMs
-        } else {
+    /**
+     * **这一步的耐心从哪一刻起算**（2026-10-03 加，乙方案；被 [waitedMs] / [timedOut] / [fail] 共用）。
+     *
+     * 口径一句话：**"我们还没动手的那段时间不该扣耐心"** ⇒
+     * `max(进入这一步的时刻, 这一步最后一次真动手的时刻)`。
+     *
+     * - 还没动手（[State.lastActionAtMs] == 0）⇒ 就是 [State.stepEnteredAtMs]（**老行为**）
+     *   ⇒ "迟迟不敢动手 / 锚点定位不到"仍能在 15 秒内快速发现，不会因为这条口径而永远等下去；
+     * - 动过手 ⇒ 从那一击起算 ⇒ 游戏自己的加载时间才由 [timeoutFor] 判，**"准备"（等弹层关掉、
+     *   等让路窗过去）不再扣耐心**；
+     * - [stepEnteredAtMs] == 0（纯逻辑调用方 / 单测没给时刻）⇒ 返回 0 ⇒ **永不超时**，
+     *   与这条口径上线前逐字段一致；
+     * - 那一击被[作废](withoutPendingAction)（门禁拒发 / 被遮挡屏吞掉）⇒ 标记已清 ⇒ 起点自动回退，
+     *   **"没点成"绝不会被当成"动过手"**（不会白赚一份耐心）。
+     *
+     * ⚠ 注意 [PatrolRunner] ⑦b 那个让路窗（`ENTER_FARM_SETTLE_MS`）**故意仍以 [State.stepEnteredAtMs]
+     * 起算** —— 它的语义是"刚进大厅这一小会儿别抢着点"，与耐心是两件事，别顺手也改成"最后一次动手"。
+     */
+    fun budgetBase(state: State): Long =
+        if (state.stepEnteredAtMs <= 0L) {
             0L
+        } else {
+            maxOf(state.stepEnteredAtMs, state.lastActionAtMs)
         }
+
+    /** 这一步已经等了多久（毫秒）；0 = 没记录过进入时刻。起算点见 [budgetBase]。 */
+    fun waitedMs(state: State, nowMs: Long): Long {
+        val base = budgetBase(state)
+        return if (base > 0 && nowMs > base) nowMs - base else 0L
+    }
 
     /** 是否已经超过这一步的时间预算（没记录进入时刻 → 永不超时：纯逻辑调用不受影响）。 */
     fun timedOut(state: State, nowMs: Long): Boolean =
-        state.stepEnteredAtMs > 0 && nowMs > 0 && waitedMs(state, nowMs) >= timeoutFor(state.step)
+        budgetBase(state) > 0 && nowMs > 0 && waitedMs(state, nowMs) >= timeoutFor(state.step)
 
     /** 游戏离开前台：**暂停**（不动作、不计数）。已经暂停 / 已结束就原样返回。 */
     fun pause(state: State): State =

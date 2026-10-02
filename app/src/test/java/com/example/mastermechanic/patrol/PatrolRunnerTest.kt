@@ -219,9 +219,11 @@ class PatrolRunnerTest {
         )
 
         // 到预算 → 如实中止，并说明等了多久
+        // ⚠ 2026-10-03 乙方案：耐心从**动手那一刻**（5_000）起算，不是从进入步骤（1_000）⇒
+        // 到点时刻要按 5_000 + 预算 算，否则这一轮会**不够预算**（真机 2026-10-03 就这样白等过）。
         val timedOut = PatrolRunner.onRound(
             PatrolFlow.acted(startSwitch().copy(stepEnteredAtMs = 1_000L), 5_000L),
-            input(UiState.LAUNCH_PAGE, nowMs = 1_000L + PatrolFlow.STEP_TIMEOUT_MS),
+            input(UiState.LAUNCH_PAGE, nowMs = 5_000L + PatrolFlow.STEP_TIMEOUT_MS),
         )
         assertEquals(PatrolFlow.Outcome.FAILED, timedOut.state?.outcome)
         assertTrue(timedOut.state?.reason.orEmpty().contains("秒"))
@@ -456,12 +458,14 @@ class PatrolRunnerTest {
     @Test
     fun waitingTooLongAbortsAndSaysHowLongItWaited() {
         // 时间预算兜底：等超了就中止并说明等了多久（不静默卡住）
+        // ⚠ 2026-10-03：第 7 步（进入农场）**有自己的 20s 预算**（实测加载 8.7s），这里跟着改用
+        // [PatrolFlow.FARM_ENTER_TIMEOUT_MS]；用旧的 15s 会与新常量打架（15s < 20s ⇒ 不会超时）。
         val state = PatrolFlow.State(
             range = PatrolFlow.Range.VISIT_ONLY,
             step = PatrolFlow.Step.ENTER_FARM,
             stepEnteredAtMs = 1_000L,
         )
-        val nowMs = 1_000L + PatrolFlow.STEP_TIMEOUT_MS
+        val nowMs = 1_000L + PatrolFlow.FARM_ENTER_TIMEOUT_MS
 
         val result = PatrolRunner.onRound(state, input(UiState.UNKNOWN, nowMs = nowMs))
 
@@ -469,6 +473,58 @@ class PatrolRunnerTest {
         assertTrue(
             "原因要能被用户读懂：${result.state?.reason}",
             result.state?.reason.orEmpty().contains("秒"),
+        )
+    }
+
+    @Test
+    fun theAbortReasonSaysWhichPatienceClockWasUsed() {
+        // 乙方案（2026-10-03）：耐心有两种起算点，中止原因**必须读得出是哪一种** ——
+        // 否则真机上看到"等了 15 秒"分不清是"等了 15 秒还没动手"还是"点下去 15 秒画面还没来"。
+        val notYetActed = PatrolRunner.onRound(
+            PatrolFlow.State(
+                range = PatrolFlow.Range.SWITCH_AND_VISIT,
+                step = PatrolFlow.Step.OPEN_FRIENDS,
+                stepEnteredAtMs = 1_000L,
+            ),
+            // 第 8 步（打开好友列表）站在「农场」上、锚点没给 ⇒ 必定走 ⑨「没定位到 → 等 / 到预算中止」那条路。
+            // ⚠ 刻意**不用第 5 步**（按名称定位那两步在 `NamePlan.Waiting` 时**只说一句就返回**、不查预算，
+            //   见 PatrolRunner ⑦）—— 那样断言不到中止原因。
+            input(UiState.FARM, nowMs = 1_000L + PatrolFlow.STEP_TIMEOUT_MS),
+        ).state!!
+        assertTrue(
+            "还没动手 ⇒ 老口径那句：${notYetActed.reason}",
+            notYetActed.reason.orEmpty().contains("等了 ${PatrolFlow.STEP_TIMEOUT_MS / 1000} 秒"),
+        )
+        assertFalse(
+            "没动手时不该说成『点下去之后』",
+            notYetActed.reason.orEmpty().contains("点下去之后"),
+        )
+
+        val acted = PatrolFlow.acted(
+            PatrolFlow.State(
+                range = PatrolFlow.Range.SWITCH_AND_VISIT,
+                step = PatrolFlow.Step.ENTER_FARM,
+                stepEnteredAtMs = 1_000L,
+            ),
+            5_000L,
+        )
+        val afterAction = PatrolRunner.onRound(
+            acted,
+            input(UiState.UNKNOWN, nowMs = 5_000L + PatrolFlow.FARM_ENTER_TIMEOUT_MS),
+        ).state!!
+        assertTrue(
+            "动过手 ⇒ 要说清是从点击那刻起算的：${afterAction.reason}",
+            afterAction.reason.orEmpty().contains("点下去之后等了 ${PatrolFlow.FARM_ENTER_TIMEOUT_MS / 1000} 秒"),
+        )
+        // 复刻当天那次：进入步骤 7.5 秒才动手、游戏再加载 8.7 秒 ⇒ 旧口径 16.3s 中止，新口径 20s 内通过
+        val stillWaiting = PatrolRunner.onRound(
+            acted,
+            input(UiState.UNKNOWN, nowMs = 5_000L + 8_700L),
+        ).state!!
+        assertEquals(
+            "复刻 2026-10-03 那次：点下去 8.7 秒时**不该**再判超时（真机就是在命中前 1.24 秒中止的）",
+            PatrolFlow.Outcome.RUNNING,
+            stillWaiting.outcome,
         )
     }
 
