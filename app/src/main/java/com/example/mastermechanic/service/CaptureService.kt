@@ -251,7 +251,7 @@ class CaptureService : Service() {
 
     /**
      * 跑号期间的期望集合（T4-4b）：**弹窗 ∪ 当前步骤要认的画面**。
-     * 未跑号时它等价守护集合（只搜弹窗）——所以整条链路不必在"跑号 / 没跑号"之间换实现。仅帧线程访问。
+     * 没有流程在跑时它等价守护集合（只搜弹窗）——所以整条链路不必在"跑 / 没跑"之间换实现。仅帧线程访问。
      */
     private var patrolExpected: PatrolDrivenExpectedSignals? = null
 
@@ -779,7 +779,7 @@ class CaptureService : Service() {
      * 20:11:39.735  屏幕尺寸已更新: 屏幕 3168x1440   ← 用户重新授权、游戏在前台，才恢复横屏
      * 20:11:46.767  点击下发 ✓ (2912, 429)          ← **同一个坐标**放行
      * ```
-     * ⇒ 后果不只是"少点一下"：跑号把"被拒"当成"刚点过"，白等一整个步骤预算（16 秒）后中止，
+     * ⇒ 后果不只是"少点一下"：流程把"被拒"当成"刚点过"，白等一整个步骤预算（16 秒）后中止，
      * 而用户看到的是"卡在了打开好友列表"。
      *
      * 成本：一次 `FloatingScreen.spec` 读 + 一次比较（值没变就什么都不做），相对一次真实点击可忽略。
@@ -2167,7 +2167,7 @@ class CaptureService : Service() {
                     "节流间隔切换: ${lastAppliedIntervalMs}ms -> ${target}ms" +
                         when {
                             closingPopup -> "（弹窗闭环进行中：逐帧级轮询）"
-                            patrolRunning -> "（跑号进行中：恒用快档）"
+                            patrolRunning -> "（流程进行中：恒用快档）"
                             result.settled -> "（确实稳定轮）"
                             else -> "（变化 / 过渡 / 未达预期轮）"
                         },
@@ -3247,7 +3247,7 @@ class CaptureService : Service() {
                     "待命期画面判定"
                 } else {
                     // 跑号期把"这一步在等哪一屏"一起打出来：认不出画面时这是唯一能对症的信息
-                    "跑号第 ${step.number} 步画面判定（期望「${PatrolScenes.expectedState(step)?.label ?: "无"}」）"
+                    "流程第 ${step.number} 步画面判定（期望「${PatrolScenes.expectedState(step)?.label ?: "无"}」）"
                 }
                 // 「帧」这一项是本次新增（2026-09-24）：「帧流活着」≠「这一轮用的是新画面」——
                 // 判定基于旧画面时，看到的分数与结论全都是过期的（FR-01 补点事故只能靠它定性）
@@ -3332,7 +3332,7 @@ class CaptureService : Service() {
         outcome.note?.let {
             if (it != lastPatrolNote) {
                 lastPatrolNote = it
-                MmLog.i(TAG, "跑号: $it")
+                MmLog.i(TAG, "流程: $it")
             }
         }
         PatrolSession.note(outcome.note)
@@ -3351,7 +3351,7 @@ class CaptureService : Service() {
             )
             MmLog.i(
                 TAG,
-                "跑号判定: 第 ${current.step.number} 步点「${request.anchorName}」" +
+                "流程判定: 第 ${current.step.number} 步点「${request.anchorName}」" +
                     // 中文说法一并打出来（2026-10-01）：日志既要能 grep（英文契约名），也要能一眼读懂
                     "（${SignalNames.of(calibrationData, request.anchorName)}）" +
                     "(${request.frameX.toInt()}, ${request.frameY.toInt()})（运行帧坐标；真正下发的屏幕坐标见 " +
@@ -3371,7 +3371,7 @@ class CaptureService : Service() {
                 // `gateEligible = true`：这一击打在被采集的那个 App 身上 ⇒ 内容必然变了、出帧是必然的，
                 // 与采集模式无关 ⇒ 落空可以升级成硬闸 ✓（面板类期待不能，见 [FrameExpectationSignal]）
                 FrameExpectationSignal.arm(
-                    "刚下发一击（跑号第 ${current.step.number} 步）",
+                    "刚下发一击（流程第 ${current.step.number} 步）",
                     gateEligible = true,
                 )
             } else {
@@ -3395,7 +3395,7 @@ class CaptureService : Service() {
                     lastClickDenyDetail = verdict.detail
                     MmLog.w(
                         TAG,
-                        "跑号: 第 ${current.step.number} 步点击**被拒**（${verdict.detail}）⇒ " +
+                        "流程: 第 ${current.step.number} 步点击**被拒**（${verdict.detail}）⇒ " +
                             "已撤销「已点过」标记，下一轮重新定位、重新提议（不再白等一个步骤预算）",
                     )
                 }
@@ -3429,7 +3429,7 @@ class CaptureService : Service() {
                 // 滑动同样是"屏幕必然变了" ⇒ 期待一帧新画面（见 [checkFrameExpectation]）；
                 // `gateEligible = true` 同理（滑的是被采集的那个 App 的列表）
                 FrameExpectationSignal.arm(
-                    "刚下发一次滑动（跑号第 ${current.step.number} 步）",
+                    "刚下发一次滑动（流程第 ${current.step.number} 步）",
                     gateEligible = true,
                 )
             } else {
@@ -3440,7 +3440,7 @@ class CaptureService : Service() {
             }
             MmLog.i(
                 TAG,
-                "跑号判定: 第 ${current.step.number} 步滑动「${swipe.anchorName}」" +
+                "流程判定: 第 ${current.step.number} 步滑动「${swipe.anchorName}」" +
                     "(${swipe.fromFrameX.toInt()}, ${swipe.fromFrameY.toInt()}) -> " +
                     "(${swipe.toFrameX.toInt()}, ${swipe.toFrameY.toInt()})" +
                     "（运行帧坐标；真正下发的屏幕坐标见 MM-Click 那一行）" +
@@ -3462,19 +3462,19 @@ class CaptureService : Service() {
             PatrolSession.stop()
             lastPatrolNote = null
             lastAbortAnnounced = null
-            MmLog.i(TAG, "跑号: 已完成（区间终点）")
+            MmLog.i(TAG, "流程: 已完成（区间终点）")
         } else if (outcome.failed) {
             // **同一句只记一次**（2026-09-20 修）：中止后流程停在 FAILED，但每轮还会走进来；
             // 不去重的后果是日志被同一行刷爆（真机一次测试 3445 行里大半是它），排障时把关键行冲掉。
             val reason = outcome.state?.reason
             if (reason != null && reason != lastAbortAnnounced) {
                 lastAbortAnnounced = reason
-                MmLog.w(TAG, "跑号: 已中止 —— $reason")
+                MmLog.w(TAG, "流程: 已中止 —— $reason")
             }
         } else if (outcome.state?.paused == true && !current.paused) {
             // **刚**进入暂停（切到后台 / 离开游戏）：回游戏时用户要立刻知道"得手动点继续"（FR-05），
             // 标签会常驻显示"已暂停"，展开菜单就能点「继续」
-            MmLog.i(TAG, "跑号: 已暂停 —— ${outcome.state.reason}")
+            MmLog.i(TAG, "流程: 已暂停 —— ${outcome.state.reason}")
         }
         // 跑号相位（启动 / 继续 / 步骤推进 / 停止）一变就回快档（2026-09-20 手感修）
         syncPatrolGear()
@@ -3510,7 +3510,7 @@ class CaptureService : Service() {
         lastPatrolPhase = phase
         // 本会话第一次见到相位（previous == null）不刷一行：那一轮还没建立"档位"的概念
         if (previous == null || previous == phase) return
-        useFastGear("跑号相位变化（$previous → $phase）")
+        useFastGear("流程相位变化（$previous → $phase）")
     }
 
     private fun anchorRegions(width: Int, height: Int): List<PixelBounds> {

@@ -74,7 +74,7 @@ object ClickDispatch {
      * `ClickEnvironment.foregroundSuspect` 的说明与 `ClickDenyReason.FOREGROUND_SUSPECT`）。
      *
      * 置位期间**任何来源的点击都会被拒** —— 与 [framesStalled] 同一套路：安全侧立刻生效，
-     * 而"暂停跑号 / 摘悬浮窗"那些用户可见的后果等下一次复核确认（两段式）。
+     * 而"暂停流程 / 摘悬浮窗"那些用户可见的后果等下一次复核确认（两段式）。
      */
     @Volatile
     var foregroundSuspect: Boolean = false

@@ -1856,7 +1856,7 @@ class FloatingWindow(private val context: Context) {
         updateLabelText(view, text)
     }
 
-    /** 上一次给读屏播报过的"跑号结局"（同一结局只说一次；null = 没说过 / 已复位）。 */
+    /** 上一次给读屏播报过的"流程结局"（同一结局只说一次；null = 没说过 / 已复位）。 */
     private var lastAnnouncedOutcome: String? = null
 
     /**
@@ -1909,7 +1909,7 @@ class FloatingWindow(private val context: Context) {
         // 采集侧已置位 `ClickDispatch.framesStalled` ⇒ 任何点击都被拒成 `STALE_FRAMES`）。
         // **取舍在纯逻辑 [FloatingLabelText.of]（有单测）**，这里只把事实递进去；
         // 背景见 `FrameFreshness`：停更是**现象**、不是"镜像失效"的证据 ⇒ 只提示 + 停止点击，
-        // **不再结束会话**（原来那条 60 秒判据会静默掐掉会话 ⇒ 用户只看到"跑号跑到一半被要求重新授权"）。
+        // **不再结束会话**（原来那条 60 秒判据会静默掐掉会话 ⇒ 用户只看到"流程跑到一半被要求重新授权"）。
         // ⚠ 不需要给 [FloatingLabelText.isIdle]：这一档只在"有活儿在等画面"时出现，
         // 而那时三件（读数 / 关弹窗 / 跑号）里至少有一件在 ⇒ 本来就非待命（见那里的说明）。
         // 停更分两段（2026-09-30 用户口径："停更持续时，提示里给'能做的事'"）：刚过 60 秒只说事实

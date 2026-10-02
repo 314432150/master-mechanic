@@ -11,7 +11,7 @@ import com.example.mastermechanic.decision.UiState
 enum class ClickSource(val tag: String, val label: String) {
     FR_01("FR-01", "FR-01 活动弹窗自动关闭"),
     FR_02("FR-02", "FR-02 新手引导 / 新手大厅自动关闭"),
-    PATROL_STEP("跑号", "巡查主流程步骤"),
+    PATROL_STEP("流程", "巡查主流程步骤"),
     FLOATING_MENU("菜单", "用户经悬浮窗菜单发起的操作"),
 }
 
@@ -30,7 +30,7 @@ enum class ClickDenyReason(val label: String) {
      *
      * 真机实录（用户报"**游戏在前台，却提示不在前台**"）：`com.bbk.launcher2`（vivo 桌面）会
      * **短暂抢走"活动窗口"**（`20:35:36.776` 判不在前台 ⇒ `20:35:39.478` 又回来，共 **2.7 秒**；
-     * 另一次 2.99 秒），而那段时间**游戏窗口一直在屏上** ⇒ "暂停跑号 + 摘悬浮窗"全是白挨的
+     * 另一次 2.99 秒），而那段时间**游戏窗口一直在屏上** ⇒ "暂停流程 + 摘悬浮窗"全是白挨的
      * （用户还得手动点「继续」）。
      * ⇒ 复核判"不在前台"时**先闸住点击**（本原因），等下一次复核确认后才真的改判
      * （两段式见 `MasterMechanicAccessibilityService.refreshForeground`）。正常路径不会出现它。
@@ -128,7 +128,7 @@ data class ClickEnvironment(
      * ⇒ 更可能是"别的窗口（桌面 / 系统弹窗）短暂抢走焦点"而不是"游戏被切走了"。
      *
      * 置位期间点击一律被拒（[ClickDenyReason.FOREGROUND_SUSPECT]）—— 安全侧不加延迟：
-     * 万一游戏真的被盖住，我们**一枪都不会打出去**；而"暂停跑号 / 摘悬浮窗"这些**用户可见的后果**
+     * 万一游戏真的被盖住，我们**一枪都不会打出去**；而"暂停流程 / 摘悬浮窗"这些**用户可见的后果**
      * 要等下一次复核确认才发生（见 `MasterMechanicAccessibilityService.refreshForeground`）。
      *
      * 默认 false ⇒ 既有调用路径（含全部单测）行为不变。

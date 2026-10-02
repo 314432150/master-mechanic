@@ -122,7 +122,7 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
                     // 12:00:44 悬浮窗已移除 / 12:00:45 跑号: 游戏不在前台，已暂停        ← 副作用立刻发生
                     // 12:00:46 前台: NOT_FOREGROUND -> FOREGROUND（来源: 周期复核）      ← 1.4 秒后又对了
                     // ```
-                    // ⇒ 游戏**一直在前台**，那是一次 1.4 秒的抖动，代价却是"悬浮窗被摘 + 跑号被暂停（要用户手动点继续）"。
+                    // ⇒ 游戏**一直在前台**，那是一次 1.4 秒的抖动，代价却是"悬浮窗被摘 + 流程被暂停（要用户手动点继续）"。
                     // ⇒ 判"不在前台"**立刻有副作用**（摘窗、暂停、冻结识别），值得比"回到前台"更保守；
                     //    而"回到前台"晚一点**没有代价** ⇒ 两个方向**不对称**处理。
                     if (verdict == ForegroundStatus.FOREGROUND) {
@@ -264,7 +264,7 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
                         TAG,
                         "前台**可疑**（$source：$detail）⇒ 立刻收起悬浮窗、先不放行任何点击，" +
                             "等下一次复核确认是否真的离开（2026-10-01 加的护栏：桌面抢焦点 2.7 / 2.99 秒、" +
-                            "以及「游戏窗口 0 个」这种一次性的瞬时结论，都不能只凭一票就暂停跑号）",
+                            "以及「游戏窗口 0 个」这种一次性的瞬时结论，都不能只凭一票就暂停流程）",
                     )
                 } else if (nowMs - since >= FOREGROUND_SUSPECT_CONFIRM_MS) {
                     // ⚠ **只在"真的还没改判"时记一次**（2026-10-01 真机日志刷屏修）：
@@ -276,7 +276,7 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
                         MmLog.w(
                             TAG,
                             "前台可疑持续 ${heldMs}ms ⇒ **认下「不在前台」**（$source：$detail）" +
-                                "：暂停跑号 + 摘悬浮窗（点击闸保持）",
+                                "：暂停流程 + 摘悬浮窗（点击闸保持）",
                         )
                         ForegroundSignal.update(
                             ForegroundStatus.NOT_FOREGROUND,
