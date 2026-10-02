@@ -144,14 +144,36 @@ class AnchorLocator(
      * 所以**第一条没命中时必须继续往下扫**（那条路旧行为会用第二条）。写成"只匹配第一条记录"
      * 是**行为变更**（会漏掉"第一条认不出、第二条认得"的场合）；单测
      * `stopsAtTheFirstHitYetStillScansPastAMiss` 把这两条语义都钉住。
+     *
+     * ## C′（2026-10-02）：[preferredNames] = "这一屏本轮确认在场的标志名" ⇒ 优先扫它们
+     *
+     * 一屏可以标**多套样式**（实测活动弹窗有 `activity_popup_e1` / `activity_popup_e2` 两条记录），
+     * 而"**上一枪关掉了一个弹窗、紧接着冒出另一个样式的弹窗**"时，必须用**新那套自己的**关闭控件 ——
+     * 老那套的锚点在新弹窗上根本不在原处（真机实测：关闭控件那一小块变了 66.6% / 99.3%）。
+     *
+     * 配对靠的是产物里的**现成不变量**：同一元素的标志与锚点**同名**（`…_e2|marker` 与 `…_e2|anchor`）
+     * ⇒ 把"本轮命中的标志名"传进来即可，**不用猜命名规律**。
+     *
+     * ⚠ 语义边界（空集合时与旧行为**逐字段一致**）：两组内部都保持**声明顺序**，
+     * 命中即停那条性质不变（优先组里第一条命中就返回）；优先组一条都不命中时自然落回其余锚点。
+     * [locate]（巡逻用的那条）**不受影响**：它仍旧全量、按名字取（见其注释里的真机事故）。
      */
-    fun locateFirstHit(gray: GrayImage, state: UiState): List<AnchorHit> {
+    fun locateFirstHit(
+        gray: GrayImage,
+        state: UiState,
+        preferredNames: Set<String> = emptySet(),
+    ): List<AnchorHit> {
         val specs = specsByState[state].orEmpty()
         if (specs.isEmpty()) return emptyList()
         val detector = SignalDetector(specs, params)
-        for (spec in specs) {
+        val ordered = if (preferredNames.isEmpty()) {
+            specs
+        } else {
+            specs.filter { it.name in preferredNames } + specs.filter { it.name !in preferredNames }
+        }
+        for (spec in ordered) {
             val hit = hitOf(spec, detector.detectSignal(gray, spec))
-            // 命中即停：这就是"声明顺序里第一条命中的"，与 [locate] + firstOrNull() 逐字段一致
+            // 命中即停：这就是"（优先组按声明顺序排最前时）第一条命中的"，空集合时与 [locate] + firstOrNull() 逐字段一致
             if (hit != null) return listOf(hit)
         }
         return emptyList()

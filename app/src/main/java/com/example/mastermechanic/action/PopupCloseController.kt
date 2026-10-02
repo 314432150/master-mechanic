@@ -102,6 +102,19 @@ import com.example.mastermechanic.decision.AnchorHit
  * 最后挡住那一枪的只剩"锚点没命中"（日志 `未命中关闭控件锚点`）—— 而那件事在 2026-09-24 恰恰不可靠。
  * 代价：万一"新弹窗"与上一个差得特别远（≥50%）会**漏关**那一个（红线 §3.1 可接受的那一侧，日志有据）。
  *
+ * ### 同一晚第三道（C′，2026-10-02）：**"换了个新弹窗（控件也换）"要能认出来**
+ *
+ * 上面那道闸把"≥50%"一律读成"弹窗没了"——而真机确实存在另一种形态：**前一个弹窗被关掉、
+ * 紧接着冒出另一个样式的弹窗**（用户自己标了两套：`activity_popup_e1` / `activity_popup_e2`）。
+ * 那种场合"关闭控件那一小块"**必然大变**（实测 **66.6% / 99.3%**：样式都换了）⇒ A2 的局部证据
+ * 也救不了它 ⇒ 停手 + 白等 [reArmAfterMs] 才重试（用户感受就是"慢"）。
+ *
+ * ⇒ 补一条**纯语义**判据（不是又一个阈值）：整帧 ≥ [sceneReplacedPercent] 时，只要同时成立
+ * **① 本轮定位到的关闭锚点不是上一枪那条** 且 **② 它自己的标志本轮也确认在场** ⇒ 判"换了新弹窗"
+ * ⇒ **不停手**，并改用**新那套**的锚点（同名配对，见 [PopupRoundInput.matchedOverlayMarkers]）。
+ * ①② 的语义与安全依据写在 [onRound] 那一支里；判不出来时**一个字都不放宽**：照旧停手。
+
+ *
  * ## ⚡ 2026-09-29：把"等满 1 秒"换成"**画面变了就认账**"（用户口径）
  *
  * 用户原话："**说实话我觉得自动关闭弹窗还没有我手动点击快**……**真人点击的逻辑就是
@@ -258,6 +271,13 @@ class PopupCloseController(
     /** 上一枪下发的时刻（0 = 本段还没点过；用于"这一帧比上一枪新吗"这条判据）。 */
     private var lastClickAtMs: Long = 0L
 
+    /**
+     * **上一枪点的是哪条锚点**（C′，2026-10-02）：判"是不是换了个新弹窗、连关闭控件都换了"要用它 ——
+     * 本轮定位到的锚点**不是**这一条、且它自己的标志本轮也确认在场 ⇒ 那是**另一套样式**的关闭控件
+     * （真机 2026-09-24 那种"老模板在大厅上满分命中"的假命中**永远是这一条**，见 [onRound]）。
+     */
+    private var lastAnchorName: String? = null
+
     /** 停手的时刻（0 = 本段没停过手；用于"停手后过了多久"这条自愈判据，见 [onRound]）。 */
     private var gaveUpAtMs: Long = 0L
 
@@ -281,6 +301,9 @@ class PopupCloseController(
         // 弹窗是否还在，用**本轮原始命中**（比滞回结论灵敏：弹窗刚弹出/刚消失都能立刻反映）
         val present = input.popupHit || input.popupConfirmed
         var verification: PopupVerification = PopupVerification.None
+        // C′（2026-10-02）：判出"换了个新弹窗（控件也换了）"时写的说明 —— 随 [PopupStep.Click] 进日志
+        // （那一枪点的是哪条锚点，日志里本来就打；这句说的是**为什么改用另一条**）
+        var newOverlayNote = ""
 
         // **换了一屏遮挡屏 = 新的一段**（2026-09-30 真机修，见 [PopupRoundInput.overlayKey]）：
         // 游戏会背靠背弹两个遮挡屏（新手引导 → 新手大厅，实测相隔 0.46s、整帧变化 82.7%）。
@@ -339,6 +362,8 @@ class PopupCloseController(
                 gaveUpAtMs = 0L
                 lastClickAtMs = 0L
                 firstClickAtMs = 0L
+                // C′：同上，"上一枪"这条账跟着 attempt 一起归零
+                lastAnchorName = null
                 return outcome(
                     verification,
                     PopupStep.Skip(
@@ -455,21 +480,54 @@ class PopupCloseController(
                     // 落到下面那些闸上：≥renderedChangePercent 时仍可当轮补枪（本就要求帧够老），
                     // 否则退回观察窗。注意**没有**在这里放行任何点击 —— 放行由下面那些闸决定。
                 } else {
-                    gaveUp = true
-                    gaveUpAtMs = input.nowMs
-                    val localNote = if (local == null) {
-                        "关闭控件那一小块拿不到（不可比）"
+                    // **C′（2026-10-02）：先问一句"是不是换了个新弹窗、连关闭控件都换了"** ——
+                    // 用户口径原话："**把『换了个新弹窗（控件也换）』识别出来**"。
+                    //
+                    // A2 的局部证据只覆盖"同一屏、内容换了一幅"（那种场合控件原样 ⇒ 局部几乎不变）；
+                    // 而**换了一个新样式的弹窗**时局部必然大变（真机实测 66.6% / 99.3%）⇒ 旧写法一律
+                    // 当成"弹窗被关掉了"⇒ 停手 ⇒ 白等 [reArmAfterMs] 才重试（用户看到的是"很慢"）。
+                    //
+                    // ## 判据：两条**语义证据**同时成立（不是又一个靠猜的阈值）
+                    //
+                    // ① **本轮定位到的关闭锚点不是上一枪那条**（[lastAnchorName]）：2026-09-24
+                    //    "点进商城"那一枪的形态是"弹窗没了、**老模板**在大厅上满分命中"——那种假命中
+                    //    **永远是上一枪那条**（同一条锚点 ⇒ 没换样式）⇒ 这条把它挡住。
+                    // ② **这条锚点自己的标志本轮也确认在场**（名字在 [PopupRoundInput.matchedOverlayMarkers]）：
+                    //    标志只回答"这一屏有没有它"（口径同 `SignalStateMapping`），而它用的是**新样式**的
+                    //    模板 —— 大厅上不会出现那个图形 ⇒ 比"锚点能定位到"更强（锚点那条路在真机骗过人）。
+                    //
+                    // 两条合起来的语义只有一句话：**"另有一套样式的遮挡屏正被确认在屏，而且它的关闭控件
+                    // 也定位到了"** ⇒ 接着关它，且这一枪点的是**它自己的**锚点（调用方已按"标志与锚点同名"
+                    // 这个产物不变量优先定位，见 `AnchorLocator.locateFirstHit` 的 `preferredNames`）。
+                    //
+                    // ⚠ 这里**只**决定"不停手"，一个闸都没放宽：这一枪照样要过"画面比上一枪新 / 决策帧
+                    // 新鲜 / 动画下限 [renderedFloorMs] / 开火前复眼 / 点击门禁"。判不出来（共用同一套模板、
+                    // 或标志没命中）⇒ 一律按老路停手（宁可漏关，不可错点）。
+                    val relocated = input.anchors.firstOrNull()?.name
+                    val isAnotherOverlayStyle = relocated != null && relocated != lastAnchorName &&
+                        relocated in input.matchedOverlayMarkers
+                    if (isAnotherOverlayStyle) {
+                        newOverlayNote = "（上一枪点的是「$lastAnchorName」，本轮定位到的是「$relocated」" +
+                            "、且它自己的标志也在屏 ⇒ 判「换了个新弹窗」，改用它的关闭控件）"
                     } else {
-                        "关闭控件那一小块也变了 ${"%.1f".format(local)}%"
+                        gaveUp = true
+                        gaveUpAtMs = input.nowMs
+                        val localNote = if (local == null) {
+                            "关闭控件那一小块拿不到（不可比）"
+                        } else {
+                            "关闭控件那一小块也变了 ${"%.1f".format(local)}%"
+                        }
+                        return outcome(
+                            verification,
+                            PopupStep.GiveUp(
+                                attempt,
+                                "本轮画面整幅换掉了（整帧变化 ${"%.1f".format(changed)}%）且$localNote" +
+                                    "——多半是弹窗已被关掉，或换成了另一屏遮挡屏" +
+                                    "（本轮没有认到『另一个样式的弹窗』：定位到的关闭控件还是上一枪那条，" +
+                                    "或它自己的标志没在屏）",
+                            ),
+                        )
                     }
-                    return outcome(
-                        verification,
-                        PopupStep.GiveUp(
-                            attempt,
-                            "本轮画面整幅换掉了（整帧变化 ${"%.1f".format(changed)}%）且$localNote" +
-                                "——多半是弹窗已被关掉，或换成了另一屏遮挡屏",
-                        ),
-                    )
                 }
             }
             // **画面换了一幅（但没到"整幅换掉"）⇒ 上一枪的结果已经画出来了 ⇒ 立刻判下一枪**。
@@ -529,7 +587,8 @@ class PopupCloseController(
             }
         }
 
-        // 多条锚点时取**产物声明顺序的第一个**（AnchorLocator 保持声明顺序）：标定先标一条最保险。
+        // 多条锚点时取**列表里的第一条**（= 产物声明顺序里第一条命中的；C′ 起，调用方会先把
+        // "**本轮确认在场的标志**"那一套锚点排到前面 —— 同名配对，见 `AnchorLocator.locateFirstHit`）。
         // 三屏各自只会有"一个关闭控件"（活动弹窗有多个相似样式，但那是**多条记录**、仍是同一类控件），
         // 所以统一取第一条即可 —— 这也正是新手两页**不需要"用途"**的原因（见 PatrolAnchors.purposesFor）。
         val anchor = input.anchors.firstOrNull()
@@ -551,7 +610,12 @@ class PopupCloseController(
         attempt += 1
         awaitingVerification = true
         lastClickAtMs = input.nowMs
-        return outcome(verification, PopupStep.Click(request, attempt = attempt))
+        // C′：记下这一枪点的是哪条锚点 —— 下一轮判"是不是换了个新弹窗"要用它（见 [lastAnchorName]）
+        lastAnchorName = anchor.name
+        return outcome(
+            verification,
+            PopupStep.Click(request, attempt = attempt, note = newOverlayNote),
+        )
     }
 
     private fun reset() {
@@ -561,6 +625,8 @@ class PopupCloseController(
         overlayKey = null
         lastClickAtMs = 0L
         firstClickAtMs = 0L
+        // C′：本段没有"上一枪"了 ⇒ 上一枪那条锚点也就无从谈起（下一段的第一枪重新记账）
+        lastAnchorName = null
         // 真正的新一段（弹窗消失 / 换屏 / 换成另一屏遮挡屏）⇒ "再给几次机会"的账也重置
         gaveUpAtMs = 0L
         reArms = 0
@@ -794,6 +860,18 @@ data class PopupRoundInput(
      * 判据安全：状态是滞回确认的（连续 2 次命中），不是单轮抖动。
      */
     val overlayKey: String? = null,
+    /**
+     * **本轮确认在场的遮挡屏标志名**（C′，2026-10-02）：`UiState.guardedOverlays` 各状态在产物里的
+     * 标志记录中，**本轮 `present`**（口径同 `SignalStateMapping`：标志只问"在不在"）的那些名字。
+     *
+     * 用来回答用户提的那个问题 —— "**把『换了个新弹窗（控件也换）』识别出来**"：
+     * A2 的局部证据只覆盖"同一屏、内容换了一幅"（那种场合控件原样 ⇒ 局部几乎不变）；而"换了一个
+     * **新样式**的弹窗"时局部**必然大变**（真机实测 66.6% / 99.3%）⇒ 旧逻辑一律当"弹窗没了"停手 ✗。
+     * ⇒ 这里带上"这一屏本轮有哪些标志在场"，判据见 [onRound] 的"整幅换掉"那一支。
+     *
+     * 默认空集 = **不做 C′ 判据**（老调用点 / 单测行为不变）。
+     */
+    val matchedOverlayMarkers: Set<String> = emptySet(),
 )
 
 /**
@@ -820,8 +898,14 @@ sealed interface PopupStep {
     /** 不动作，[note] 说明原因（写日志用；同一原因连续出现时调用方只记一次，避免刷屏）。 */
     data class Skip(val note: String) : PopupStep
 
-    /** 下发一次点击（**是否真的下发由门禁决定**：守护未启动 / 非前台 / 状态未知 / 落点屏外都会被拒并留痕）。 */
-    data class Click(val request: ClickRequest, val attempt: Int) : PopupStep
+    /**
+     * 下发一次点击（**是否真的下发由门禁决定**：守护未启动 / 非前台 / 状态未知 / 落点屏外都会被拒并留痕）。
+     *
+     * [note] = **这一枪为什么用这条锚点**（C′，2026-10-02）：常态为空串；只在判出"换了个新弹窗、
+     * 连关闭控件都换了"（改用新那套的锚点）时给一句说明，由调用方追加进点击日志 ——
+     * 否则真机上只看到"锚点名换了一个"，读不出这是**判据生效**还是**标定被改了**。
+     */
+    data class Click(val request: ClickRequest, val attempt: Int, val note: String = "") : PopupStep
 
     /**
      * **本段已停手** → 停止点击（换屏 / 弹窗消失后复位）。

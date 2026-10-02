@@ -3581,17 +3581,41 @@ class CaptureService : Service() {
         //（启动页的 `launch_switch` 与 `launch_login` 分别是第 4 / 6 步要的），2026-09-30 真机就是这样
         // 把换号卡在第 6 步（等满 30 秒中止，见 [AnchorLocator.locate] 的注释）。
         val locator = anchorLocator
-        val anchors = if (confirmed && locator != null) locator.locateFirstHit(gray, result.state) else emptyList()
+        // C′（2026-10-02）：**本轮确认在场的遮挡屏标志名**（`guardedOverlays` 各状态在产物里的标志
+        // 记录中本轮 `present` 的那些）—— 用来分辨"换了个新弹窗（控件也换）"，见 `PopupCloseController`。
+        // 口径与状态判定一致：标志只问"在不在"（`SignalStateMapping`），所以用 `present` 而不是 `matched`。
+        val overlayMarkerNames = calibrationData?.stateRules.orEmpty()
+            .filter { it.state in UiState.guardedOverlays }
+            .flatMap { it.signalNames }
+            .toSet()
+        val matchedOverlayMarkers = result.records.asSequence()
+            .filter { it.present && it.signalName in overlayMarkerNames }
+            .map { it.signalName }
+            .toSet()
+        // **优先定位"本轮在场的那一套"锚点**（C′）：一屏可以有多套样式（`activity_popup_e1` / `_e2`），
+        // 换了新弹窗时该用**新那套自己的**关闭控件 —— 配对靠产物里的现成不变量：同一元素的
+        // 标志与锚点**同名**（见 `AnchorLocator.locateFirstHit` 的 `preferredNames`）。
+        val anchors = if (confirmed && locator != null) {
+            locator.locateFirstHit(gray, result.state, preferredNames = matchedOverlayMarkers)
+        } else {
+            emptyList()
+        }
         // **"命中即停"的取证行**（2026-09-30，同一句话只记一次）：这次提速只体现在"少匹配了几条"上，
         // 而逐信号耗时统计**只覆盖标志**（锚点定位是另一条路径）⇒ 不记这一行，真机上没有任何地方
         // 看得出它生效了（用户问"到底省了没有"就只能靠猜）。
+        // ⚠ C′ 起这句话还要能读出"**为什么破例用了不是第一条的那条锚点**"（原来一律说"少匹配 N 条"，
+        // 换弹窗时那句话会自相矛盾 —— 明明扫了更多条）。
         if (anchors.isNotEmpty()) {
-            val declared = locator?.available(result.state)?.size ?: 0
-            val note = if (declared > 1) {
-                "锚点定位: 用「${anchors.first().name}」（本状态共 $declared 条，命中即停 ⇒ 少匹配 ${declared - 1} 条）"
-            } else {
-                "锚点定位: 用「${anchors.first().name}」" +
-                    "（${SignalNames.of(calibrationData, anchors.first().name)}）"
+            val declared = locator?.available(result.state).orEmpty()
+            val used = anchors.first().name
+            val note = when {
+                declared.firstOrNull() != used ->
+                    "锚点定位: 用「$used」（本轮在屏的标志里有它 ⇒ 按「标志与锚点同名」优先用它的关闭控件；" +
+                        "本状态共 ${declared.size} 条）"
+                declared.size > 1 ->
+                    "锚点定位: 用「$used」（本状态共 ${declared.size} 条，命中即停 ⇒ 少匹配 ${declared.size - 1} 条）"
+                else ->
+                    "锚点定位: 用「$used」（${SignalNames.of(calibrationData, used)}）"
             }
             if (note != lastAnchorNote) {
                 lastAnchorNote = note
@@ -3663,6 +3687,9 @@ class CaptureService : Service() {
                 // **这一屏的身份**（2026-09-30 真机修）：换了它 = 新的一段 ⇒ 背靠背的两个遮挡屏
                 // （新手引导 → 新手大厅）各点一次；未确认时传 null（= 没有遮挡屏，走原来的复位路径）
                 overlayKey = overlay?.name,
+                // C′（2026-10-02）：本轮**确认在场**的遮挡屏标志名 —— 判"换了个新弹窗（控件也换）"
+                // 那两条证据（谁在屏、用的是哪条锚点）全靠它，见 `PopupCloseController.onRound`
+                matchedOverlayMarkers = matchedOverlayMarkers,
             ),
         )
         logPopupVerification(outcome, change)
@@ -3709,6 +3736,9 @@ class CaptureService : Service() {
                         "${source.tag} 判定: 「${result.state.label}」已确认，关闭控件「${step.request.anchorName}」" +
                             "点击点 (${step.request.frameX.toInt()}, ${step.request.frameY.toInt()})" +
                             "（运行帧坐标；真正下发的屏幕坐标见 MM-Click 那一行），第 ${step.attempt} 次尝试" +
+                            // C′（2026-10-02）：判出"换了个新弹窗（控件也换）"时这里会多一句说明 ——
+                            // 否则真机上只看到锚点名换了一个，读不出是**判据生效**还是**标定被改了**
+                            step.note +
                             " → ${verdict.detail}（判定 ${step.request.decisionId}）" +
                             preFire.note +
                             frameChangeNote(change),
