@@ -104,7 +104,9 @@ object CalibrationStore {
         }
         val runtime = slimmed.tightenedWindows(exemptFromShrink)
         logWindowShrink(slimmed, runtime)
-        logStillHeavy(runtime, exemptFromShrink)
+        // ⚠ 传 **slimmed**（收窄**前**）而不是 runtime —— 2026-10-18 真机发现：传 runtime 会让
+        // 前两段榜单恒空（所有 ops 已被 8M 成本护栏压到 20M 门槛之下）⇒ "该重框哪一条"永不出现。
+        logStillHeavy(slimmed, exemptFromShrink)
         return runtime
     }
 
@@ -164,6 +166,27 @@ object CalibrationStore {
      * `位置数（步进 2px）× 每位置采样（模板面积/2）`，只算粗搜（精搜恒小两个数量级）。
      * 超过 [HEAVY_OPS] 的才算"贵"，按 ops 降序。
      *
+     * ## ⚠ 传错对象会让整个榜单恒空（2026-10-18 真机发现，已修）
+     *
+     * 原来这里收的是**运行时**那份窗口，而运行时窗口已经被 [CalibrationData.tightenedWindows]
+     * 重算过、又被 `TemplateMatcher.MATCH_OPS_BUDGET = 8M` 的成本护栏兜了一道
+     * ⇒ **每条记录的 ops 都被压在 8M 以下**，而门槛是 [HEAVY_OPS] = 20M
+     * ⇒ `perRound` 与 `onDemand` **永远为空**，用户永远看不到"该重框哪一条"。
+     * 真机已复现（2026-10-18）：日志里只剩第三段"已排除「只圈区域…」"，前两段一次都没出现过。
+     *
+     * ⇒ 现在必须传**产物里那份（收窄前）**窗口：它才代表"**你框的时候给了多大的搜索范围**"，
+     * 而 [HEAVY_OPS] 这个门槛本来就是照着"用户框的原始窗口"定的。
+     *
+     * ## ⚠⚠ 这份排名是**静态模型**，不是真机耗时（2026-10-18，尚未解决）
+     *
+     * 真机 census 推翻过一次它的用法：**每轮只搜 4~8 条**，桌面最贵的
+     * `scene_return_confirm_e1`（本榜第一名）真机只参与 **6%** 的轮次 ⇒ 照这份榜去框它收益 ≈ 0；
+     * 而真正每轮都在跑的 4 条标志，真机单条耗时 78~110ms 却**与模板面积几乎无关**
+     * ⇒ 真机有个 ~80ms 的固定底噪不在 ops 模型里。
+     *
+     * ⇒ **这份榜只回答"你框的搜索范围是不是离谱"，不回答"真机哪条最慢"。**
+     * 真机排名看「信号耗时统计」的 P95（见 `CaptureService.recordSignalCosts`）。
+     *
      * ## ⚠ 为什么必须分三类（2026-10-03 真机发现：混排会点名错的东西）
      *
      * 原来的排名把三种**根本不是同一种成本**的记录混在一起排，于是"最贵前两名"恰好是
@@ -190,8 +213,12 @@ object CalibrationStore {
         val excluded: List<String>,
     )
 
+    /**
+     * @param artifact **产物里那份窗口**（[loadForRuntime] 里是 `tightenedWindows` **之前**的 `slimmed`），
+     *   **不是**运行时那份 —— 见 KDoc「⚠ 传错对象会让整个榜单恒空」。
+     */
     fun stillHeavyRanking(
-        runtime: CalibrationData,
+        artifact: CalibrationData,
         nonLocatable: Set<String>,
         heavyOps: Long = HEAVY_OPS,
         take: Int = 6,
@@ -199,7 +226,7 @@ object CalibrationStore {
         val perRound = ArrayList<Pair<String, Long>>()
         val onDemand = ArrayList<Pair<String, Long>>()
         val excluded = ArrayList<String>()
-        for (entry in runtime.signals) {
+        for (entry in artifact.signals) {
             val biggest = entry.templates.maxByOrNull { it.width.toLong() * it.height.toLong() }
             if (entry.id in nonLocatable) {
                 if (entry.id !in excluded) excluded.add(entry.id)
@@ -207,7 +234,7 @@ object CalibrationStore {
             }
             if (biggest == null) continue
             val ops = TemplateMatcher.estimateCoarseOps(
-                entry.window, biggest.width, biggest.height, runtime.frameWidth, runtime.frameHeight,
+                entry.window, biggest.width, biggest.height, artifact.frameWidth, artifact.frameHeight,
             )
             if (ops < heavyOps) continue
             val text = "${entry.id}（${entry.role.label}，模板 ${biggest.width}×${biggest.height}，${ops / 1_000_000}M）"
@@ -232,8 +259,8 @@ object CalibrationStore {
      * ⚠ 措辞里的毫秒数是**线性外推**（[MS_PER_MILLION_OPS] ms/百万乘加），只适合当量级看：
      * `TemplateMatcher` 的实测是"大信号 6~10ms/百万、小信号有固定开销"⇒ 小信号会明显高于外推值。
      */
-    private fun logStillHeavy(runtime: CalibrationData, nonLocatable: Set<String>) {
-        val ranking = stillHeavyRanking(runtime, nonLocatable)
+    private fun logStillHeavy(artifact: CalibrationData, nonLocatable: Set<String>) {
+        val ranking = stillHeavyRanking(artifact, nonLocatable)
         if (ranking.perRound.isEmpty() && ranking.onDemand.isEmpty() && ranking.excluded.isEmpty()) return
         val sb = StringBuilder()
         if (ranking.perRound.isNotEmpty()) {
@@ -253,6 +280,15 @@ object CalibrationStore {
                 .append("：它们从不参与匹配，框小**不会**提速（框小了只会让读文字的范围变小）")
         }
         MmLog.w(TAG, sb.toString())
+        // ⚠ 必须说清这句话**管不到什么**（2026-10-18 真机 census）：
+        // 「哪条标志每轮都在搜」与「哪条真机最慢」是两回事 —— 真机每轮只搜 4~8 条，
+        // 本榜第一名可能只参与 6% 的轮次；而真机单条耗时还有 ~80ms 底噪不在 ops 模型里。
+        // 不加这句，用户会以为"照榜框完就快了"，而真机 P95 可能一点没动。
+        MmLog.w(
+            TAG,
+            "  ↳ 注意：上面按**静态乘加模型**排名，只回答「你框的搜索范围/模板是不是离谱」；" +
+                "真机「哪条最慢」看「信号耗时统计」的 P95（受每轮实际搜索集合与线程调度影响，不一定同序）。",
+        )
     }
 
     /**

@@ -9830,6 +9830,24 @@
     需重新授权（无障碍 → 常驻守护 → 通知 → **屏幕采集放最后**）。
   - ⏳ **待真机验证**：① `单帧处理耗时统计` 的 P95 是否落进 140ms；② 游戏是否掉帧 / 异常发烫；
     ③ 顺带做「并行度 1 vs 3 vs 6」同帧对照，把"~80ms 底噪 = worker 抢 CPU"那条**推断**坐实或否掉。
+442. **N6-0b 修好：`logStillHeavy` 不再恒空（传错对象 + 加"这份榜管不到什么"的提示）**（2026-10-18）
+  - **根因**：`loadForRuntime` 调的是 `logStillHeavy(runtime, …)`，而 `runtime` 的窗口已被
+    [CalibrationData.tightenedWindows] 重算、又被 `TemplateMatcher.MATCH_OPS_BUDGET = 8M` 兜了一道
+    ⇒ **每条 ops ≤ 8M < `HEAVY_OPS` = 20M** ⇒ `perRound` / `onDemand` **永远为空**
+    ⇒ 真机实测只打出第三段"已排除「只圈区域…」"，**"该重框哪一条"一次都没出现过**。
+  - **修法**：改成传 `slimmed`（**收窄前**的产物窗口）—— 门槛本来就是照"用户框的原始窗口"定的。
+    `stillHeavyRanking` 第一个参数随之改名 `runtime` → `artifact`（避免再被误传）。
+  - **⚠ 同时补上一条限缩说明**（这才是本次更值钱的一半）：静态 ops 榜**已被真机 census 推翻过一次用法**
+    —— 榜单第一名 `scene_return_confirm_e1` 真机只参与 **6%** 的轮次、真正每轮都在跑的 4 条
+    真机耗时与模板面积几乎无关 ⇒ 这份榜只回答"你框的范围/模板是不是离谱"，
+    **不回答"真机哪条最慢"**（那个看「信号耗时统计」P95）。不写这句，用户会以为"照榜框完就快了"。
+  - 验证：新增第 5 例单测 `theRankingMustSeeTheArtifactWindowsOtherwiseTheListIsAlwaysEmpty`
+    （同一条记录、**只改窗口**，模板一字未变 ⇒ 收窄前点得出、收窄后恒空，把真机那个现象钉住）
+    ；`StillHeavyRankingTest` **5 例 0 失败** ✓；`-PfastTests` **全绿** ✓。
+  - ⚠ **本轮装机主动推迟**（与 `AGENTS.md`"改了代码就装"的例外，如实记录）：改的是**纯诊断日志**，
+    不影响识别与判定；而设备上那份 N6-2（并行度 6）刚装完、用户**已完成无障碍授权**，
+    再装就要把 4 项授权重来一遍 ⇒ **等这轮 N6-2 真机验证跑完、下次装机一并带上**。
+    （查证方式：`adb shell settings get secure enabled_accessibility_services` 里已有本服务组件。）
 
 ## 待开发（用户列，2026-09-24）
 

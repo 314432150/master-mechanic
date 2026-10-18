@@ -158,4 +158,48 @@ class StillHeavyRankingTest {
             ranking.perRound.single().contains("模板 240×90"),
         )
     }
+
+    /**
+     * 同一条记录、**只改窗口**（模板不变）：模拟"运行时窗口已经被收窄过"。
+     *
+     * 收窄前后 ops 差 4 个数量级 ⇒ 排名从"点得出来"变成"恒空"，而**模板一个字没变**。
+     */
+    private fun sized(
+        id: String,
+        role: SignalRole,
+        window: SearchWindow,
+        templateWidth: Int,
+        templateHeight: Int,
+    ): CalibrationData.SignalEntry = CalibrationData.SignalEntry(
+        id,
+        window,
+        listOf(Template(templateWidth, templateHeight, SyntheticImages.pattern(templateWidth, templateHeight, 5))),
+        role,
+    )
+
+    @Test
+    fun theRankingMustSeeTheArtifactWindowsOtherwiseTheListIsAlwaysEmpty() {
+        // 2026-10-18 真机发现：传的是**运行时**窗口（已被 tightenedWindows 重算 + 8M 成本护栏兜过）
+        // ⇒ 每条 ops 都被压在 8M 以下，而门槛 20M ⇒ 前两段**永远为空**，"该重框哪一条"永不出现。
+        val userFramed = SearchWindow(0.0, 0.0, 1.0, 1.0)       // 用户框了整屏
+        val capped = SearchWindow(0.45, 0.45, 0.55, 0.55)       // 运行时已收窄到比模板还窄
+
+        val byArtifact = CalibrationStore.stillHeavyRanking(
+            data(listOf(sized("scene_return_confirm_e1", SignalRole.MARKER, userFramed, 240, 60))),
+            nonLocatable = emptySet(),
+        )
+        val byRuntime = CalibrationStore.stillHeavyRanking(
+            data(listOf(sized("scene_return_confirm_e1", SignalRole.MARKER, capped, 240, 60))),
+            nonLocatable = emptySet(),
+        )
+
+        assertTrue(
+            "用产物窗口（收窄前）必须点得出来 —— 否则用户永远看不到该重框哪一条：${byArtifact.perRound}",
+            byArtifact.perRound.isNotEmpty(),
+        )
+        assertTrue(
+            "用运行时窗口（收窄后）会恒空，这正是真机看到的现象（模板没变、只是窗口被收了）",
+            byRuntime.perRound.isEmpty(),
+        )
+    }
 }
