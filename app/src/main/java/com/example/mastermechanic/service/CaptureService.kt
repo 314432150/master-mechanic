@@ -4139,9 +4139,13 @@ class CaptureService : Service() {
         recognitionLoop.lastSignalCostMs.forEach { (name, costMs) ->
             val summary = signalCostStats.getOrPut(name) { FrameTimingStats() }.record(costMs)
                 ?: return@forEach
-            // **样式数（2026-10-03 N6-1 归因加）**：`SignalDetector.detectSignal` 对元素里
-            // **每个模板各跑一遍** `findPeaks`（`flatMap`）⇒ 这一行的耗时是**若干个模板之和**。
-            // 不写出来的话，"60~80ms 到底贵在哪"只能靠猜（活动弹窗那条有 4 个样式 ⇒ 4 倍）。
+            // **样式数（2026-10-03 N6-1 归因加，2026-10-18 更正口径）**：`SignalDetector.detectSignal`
+            // 对信号里**每个模板各跑一遍** `findPeaks`（`flatMap`）⇒ 这一行的耗时是**若干个模板之和**，
+            // 所以将来产物真出现"一条信号多个模板"时，这行耗时会是单模板的若干倍、而日志看不出来。
+            // ⚠ **当前产物恒为 1 个模板**：`CalibrationSignals` 装配时写死 `templates = listOf(template)`
+            // （`CalibrationSignals.kt:242`）⇒ 这段注记对本产物**恒不显示**，只是**未来护栏**。
+            // ⚠ 别再拿它解释耗时：2026-10-03 曾据此推断"活动弹窗 4 个样式 ⇒ 4 倍"，**该推断已证伪**
+            // （见 `docs/progress.md` 第 439 条）。真正的头号是 `scene_return_confirm_e1` 的模板面积。
             val styles = calibrationData?.signals.orEmpty()
                 .firstOrNull { it.id == name }?.templates?.size ?: 0
             val styleNote = if (styles > 1) {
