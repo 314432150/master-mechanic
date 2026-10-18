@@ -161,6 +161,25 @@ class PatrolDrivenExpectedSignalsTest {
     }
 
     @Test
+    fun closeIfOpenTellsTheTruth() {
+        // 调用方靠这个返回值决定打不打"窗口已关"那行日志 —— 它要是撒谎，
+        // 就没法判断"流程收尾后成本有没有立刻回落"（真机 2026-10-18 就是靠这条日志确认的）。
+        assertFalse("本来就是关着的，不该报告关掉了", StartProbeSignal.closeIfOpen())
+        StartProbeSignal.open()
+        assertTrue("开着时要真关并报告关了", StartProbeSignal.closeIfOpen())
+        assertFalse(StartProbeSignal.isOpen())
+        assertFalse("已经关过了，不该再报告一次", StartProbeSignal.closeIfOpen())
+    }
+
+    @Test
+    fun anExpiredProbeIsNotReportedAsClosed() {
+        // 已过期（等价于"早就关着"）与"还开着"必须分得开，否则日志会声称关了一个早就不存在的窗口
+        StartProbeSignal.open(nowMs = 1_000L)
+        val afterExpiry = 1_000L + StartProbeSignal.WINDOW_MS + 1
+        assertFalse(StartProbeSignal.closeIfOpenAt(afterExpiry))
+    }
+
+    @Test
     fun whileRunningTheStandbyScreensStepAside() {
         // 在跑 → 只看当前步骤要认的画面（起点已定，待命集合让位，成本不叠加）
         val expected = subject(standbyStates = setOf(UiState.HALL, UiState.FARM, UiState.LAUNCH_PAGE))

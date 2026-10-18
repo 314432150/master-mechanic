@@ -62,6 +62,25 @@ object StartProbeSignal {
         untilMs = 0L
     }
 
+    /**
+     * 仅当窗口开着时才关，并**如实报告是不是真关了**（2026-10-18 用户口径"流程收尾就直接关掉"）。
+     *
+     * 为什么要返回值而不是直接 [close]：调用方要打一行日志说明"窗口已关"。
+     * 若它本来就是关着的还打"已关"，日志就会骗人 —— 而这条日志正是判断"流程收尾后成本有没有
+     * 立刻回落"的唯一证据（真机 2026-10-18 靠它确认）。
+     */
+    fun closeIfOpen(): Boolean = closeIfOpenAt(nowMs())
+
+    /**
+     * 同 [closeIfOpen]，但由调用方指定"现在"（供单测钉住"**已过期**"那条分支：
+     * 一个已经自然过期的窗口与一个从未开过的窗口，对日志而言都是"没得关"）。
+     */
+    fun closeIfOpenAt(nowMs: Long): Boolean {
+        if (!isOpen(nowMs)) return false
+        untilMs = 0L
+        return true
+    }
+
     /** 探测窗口是否仍然开着（**由帧线程每轮问一次**）。 */
     fun isOpen(nowMs: Long = nowMs()): Boolean = nowMs < untilMs
 

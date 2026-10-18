@@ -84,6 +84,7 @@ import com.example.mastermechanic.decision.RecognitionLoop
 import com.example.mastermechanic.recognition.SignalDetector
 import com.example.mastermechanic.recognition.Verdict
 import com.example.mastermechanic.decision.RoundResult
+import com.example.mastermechanic.decision.StartProbeSignal
 import com.example.mastermechanic.decision.UiState
 import com.example.mastermechanic.decision.UiStateSignal
 import com.example.mastermechanic.floating.FloatingScreen
@@ -3496,6 +3497,20 @@ class CaptureService : Service() {
         }
         // 跑号相位（启动 / 继续 / 步骤推进 / 停止）一变就回快档（2026-09-20 手感修）
         syncPatrolGear()
+        // 流程收尾 ⇒ 起点探测窗口立刻没意义了（2026-10-18 用户口径「流程收尾就直接关掉」）。
+        //
+        // 为什么不等它自己 60s 到期：待命期只搜遮挡屏 4 条 vs 探测窗口期的 4~8 条，
+        // 流程跑完却还要按 8 条白搜到窗口到期，是**纯浪费**（真机实测白搜了 25 秒）。
+        //
+        // 覆盖 [outcome.failed]（中止）：中止后流程停在 FAILED、**不能再「继续」**，
+        // 用户只可能重新点菜单（那会重新开窗）⇒ 这里关掉不会让任何操作失效。
+        // ⚠ 暂停（[outcome.state]?.paused）**不关**：那是流程还在、只是等人回来，
+        //   而窗口开着与否对暂停期间的搜索集合没有影响（看的是 watching，不是窗口）。
+        if (outcome.finished || outcome.failed) {
+            if (StartProbeSignal.closeIfOpen()) {
+                MmLog.i(TAG, "起点探测窗口：$flowTag 已收尾 ⇒ 立即关闭（待命期搜索集合立刻回到遮挡屏 4 条）")
+            }
+        }
     }
 
     /**

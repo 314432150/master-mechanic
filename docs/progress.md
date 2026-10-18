@@ -9943,6 +9943,21 @@
     那之后到窗口到期之间成本仍是 8 条（本次 `22:19:57` 流程结束 → `22:20:22` 才降成本，中间白搜 4 条 × 25 秒）。
     ⇒ 应在**流程结束**（`PatrolSession` 收尾）时 `StartProbeSignal.close()`，让成本立刻回落。
     **本轮不单独装机**（收益只有那几十秒，合下次改动一起带上更划算）。
+446. **✅ 流程收尾立即关掉起点探测窗口**（2026-10-18 用户口径「应该在流程收尾时直接关掉探测窗口」）
+  - **改法**：`CaptureService` 流程收尾处（`syncPatrolGear()` 之后）调 `StartProbeSignal.closeIfOpen()`，
+    **覆盖两条收尾路径**：`outcome.finished`（跑完 → `PatrolSession.stop()`）与 **`outcome.failed`（中止）**。
+    ⚠ 覆盖 `failed` 的理由：中止后流程停在 FAILED 且**不能再「继续」**，用户只可能重新点菜单
+    （那会重新开窗）⇒ 关掉不会让任何操作失效。**暂停（paused）不关** —— 流程还在、只是等人回来，
+    且暂停期间看的是 `watching` 而不是窗口，开不开无差别。
+  - **新增 `closeIfOpen(): Boolean` 而不是直接 `close()`**：调用方要打一行"窗口已关"的日志，
+    若窗口本来就是关着的还打"已关"，**日志就在骗人** —— 而这条日志正是判断"成本有没有立刻回落"
+    的唯一证据。另配 `closeIfOpenAt(nowMs)` 让单测能钉住"**已自然过期**"那条分支
+    （已过期与从未开启，对日志而言都是"没得关"）。
+  - 验证：新增 2 例（`closeIfOpenTellsTheTruth` / `anExpiredProbeIsNotReportedAsClosed`）；
+    `-PfastTests` **1007 例 0 失败**；`assembleDebug` + `install -r` **Success** + `am start` ✓。
+  - ⏳ **待真机确认**：跑一轮换号+拜访，日志里应出现
+    `起点探测窗口：换号+拜访 已收尾 ⇒ 立即关闭`，且**紧跟一行**「本轮搜索集合变化」回到 4 条
+    （本次 3-B 验收里这段白搜了 25 秒，现在应当是 0）。
 
 ## 待开发（用户列，2026-09-24）
 
