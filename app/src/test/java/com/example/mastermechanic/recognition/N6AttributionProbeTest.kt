@@ -15,8 +15,9 @@ import java.util.Locale
  * `snapshot`（循环外的窗口像素拷贝）/ `prefix`（窗口前缀和，**随窗口面积**走）
  * / `coarse`（模型覆盖的那段）/ `pick` / `refine` / `suppress`。
  *
- * 输入：帧 = `docs/recognition/samples` 目录下的 .png（真实归档帧）；产物 = `_tmp_check/calibration.txt`
- * （设备当前产物）优先，否则 `_tmp_check/artifact*.txt` 最新一份。报告写 `out/n6-1-attribution.txt`。
+ * 输入：帧 = `docs/recognition/samples` 目录下的 .png（真实归档帧，**只计尺寸与产物 frame 一致的**，
+ * 见循环里那道跳过）；产物 = `_tmp_check/calibration.txt`（设备当前产物）优先，否则
+ * `_tmp_check/artifact*.txt` 最新一份。报告写 `out/n6-1-attribution.txt`。
  * 任一缺失即跳过（同其它探针约定）。
  */
 class N6AttributionProbeTest {
@@ -68,8 +69,18 @@ class N6AttributionProbeTest {
         out.append("信号 | 模板 | 窗口 | ops(M) | snapshot | prefix | coarse | pick | refine | suppress | 合计\n")
 
         val rows = ArrayList<Row>()
+        // ⚠ **只量"帧尺寸 == 产物 frame"的帧**（2026-10-18 补）。
+        // 之前不管尺寸一律量：窗口是**归一化**的（`pixelBounds` 按帧宽高换算）⇒ 拿早期竖屏帧去配
+        // 3168x1440 的产物，算出来的窗口尺寸与模板对不上（`estimateCoarseOps` 直接返回 0，
+        // 那几条的耗时也近乎 0）⇒ 这些行既不是"更窄的窗口"也不是真实成本，纯属错配的噪声，
+        // 而且会**把占比统计的分母带偏**（错配帧虽然单条便宜，但数量多）。
+        val mismatched = ArrayList<String>()
         for (frame in frames) {
             val gray = ReplayTool.decodeGrayPng(frame)
+            if (gray.width != data.frameWidth || gray.height != data.frameHeight) {
+                mismatched += "${frame.name}(${gray.width}x${gray.height})"
+                continue
+            }
             for (spec in specs) {
                 val tpl = spec.templates.maxBy { it.width.toLong() * it.height.toLong() }
                 val b = spec.window.pixelBounds(gray.width, gray.height)
@@ -121,6 +132,13 @@ class N6AttributionProbeTest {
         }
         out.append(String.format(Locale.ROOT, "  %-9s %8.1f ms%n", "snapshot", snapshotTotal))
         out.append("\n读表要点：ops 模型**只覆盖 coarse**；prefix 与 snapshot 随**窗口面积**走、与模板面积无关。\n")
+        if (mismatched.isNotEmpty()) {
+            out.append(
+                "\n已跳过 ${mismatched.size} 张**尺寸与产物 frame 不一致**的归档帧（错配 ⇒ 窗口与模板对不上，" +
+                    "数据无意义）：${mismatched.joinToString("、")}\n",
+            )
+        }
+        out.append("计入统计的帧：${frames.size - mismatched.size} 张 × ${specs.size} 条标志 = ${rows.size} 行\n")
 
         val report = File("out").apply { mkdirs() }.let { File(it, "n6-1-attribution.txt") }
         report.writeText(out.toString(), Charsets.UTF_8)
