@@ -52,6 +52,22 @@ class PatrolDrivenExpectedSignals(
      *
      * 只加**起点画面**而不是全集：其余画面（好友列表 / 设置页 / 确认框）搜了也启动不了流程；
      * 待命期的成本仍是"弹窗 + 5 屏标志"，没有退回 T2-1 取消的全扫。
+     *
+     * ## 2026-10-18 用户口径：待命期**不搜**起点候选，改成「用户去挑目标时才搜」
+     *
+     * 用户原话：「待命期其实只要关掉弹窗就可以了，只要发起流程时才需要认出当前在什么场景」
+     * ⇒ 待命期只留 [popup]（含活动弹窗 + 新手两屏，即 FR-01 / FR-02 的遮挡屏守护），
+     * 那 4 条「能当起点的画面」**不再每轮白搜**（真机 census：待命期 8 条里它们占 4 条，
+     * 14% 的轮次凑满 8 条 ⇒ 并行度 6 下仍要 2 批，是单帧 P95 的瓶颈）。
+     *
+     * **代价与两处配套**（缺一不可，少一个就是 2026-09-20 那个死锁）：
+     * - **起点判定**：待命期状态恒「未知」⇒ 点菜单时 [PatrolFlow.firstStep] 判不出起点。
+     *   ⇒ 用户**去挑目标的这段时间**（[StartProbeSignal] 窗口，由悬浮窗「菜单展开」开启）把起点候选加回来，
+     *   等挑完点「开始」时状态早已收敛。超时（60s）后状态退回「未知」，此时点「开始」会被
+     *   [com.example.mastermechanic.patrol.PatrolStartGate] 拦下 —— 再点一次菜单即可。
+     * - **节流降档**：待命期状态恒「未知」⇒ `RecognitionLoop.RoundResult.settled` 恒 false
+     *   ⇒ 会掉回 200ms 快档，**单核占用反而从 21% 升到 31%**（省下的那 4 条全被多跑的轮次吃掉）。
+     *   ⇒ 由 [standbyWatchOnly] 交给调用方另判：「待命守护口径下什么都没出现 = 确实稳定」。
      */
     private val standbyStates: Set<UiState> = emptySet(),
 ) : ExpectedSignals {
@@ -70,6 +86,27 @@ class PatrolDrivenExpectedSignals(
 
     /** 当前在看哪些画面（日志 / 排障用）。 */
     val watched: Set<UiState> get() = watching
+
+    /**
+     * **本轮是不是「待命守护口径」**（2026-10-18 用户口径 3-B 后新增，节流降档要用）。
+     *
+     * 口径：**流程没在跑，且没开起点探测窗口** —— 也就是"这一轮只搜了遮挡屏"。
+     *
+     * ## 为什么调用方需要它
+     *
+     * 3-B 之前，待命期认得出当前场景（因为起点候选每轮都在搜），所以
+     * `RecognitionLoop.RoundResult.settled`（判据：`当前状态 != UNKNOWN ∧ 本轮命中`）能成立 ⇒ 降到长间隔。
+     * 3-B 之后待命期状态**恒「未知」** ⇒ `settled` 恒 false ⇒ 会掉回 200ms 快档，
+     * **单核占用从 21% 升到 31%** —— 优化目标反而被推翻。
+     *
+     * ⇒ 调用方在**这个口径下**另判一条："什么都没出现"就是稳定（画面上没有挡屏的东西）⇒ 允许长间隔。
+     * 一旦有任何遮挡屏命中（弹窗 / 新手屏）就 `state != UNKNOWN` ⇒ 自然回到快档，**闭环逻辑不变**。
+     *
+     * ⚠ 只在这一个口径下开口子：跑号期间（[watching] 非空）仍是"认到了预期才算稳定"，
+     * 否则"这一步要认启动页却没认到"会被当成稳定而降频，那正是 T1-13 明确否掉的错误。
+     */
+    val standbyWatchOnly: Boolean
+        get() = watching.isEmpty() && !StartProbeSignal.isOpen()
 
     /**
      * **上一轮命中里有没有遮挡屏**（2026-10-02 用户提速要求："弹窗在屏时一轮为什么要搜 8 个信号这么多"）。
@@ -123,7 +160,15 @@ class PatrolDrivenExpectedSignals(
 
         // 没在跑 → 搜"能当起点的画面"（否则识别结论恒「未知」，起点判定永远不成立）；
         // 在跑 → 只搜当前步骤要认的画面（起点已定，不必再看别的）
-        val states = if (watching.isEmpty()) standbyStates else watching
+        //
+        // ⚠ **2026-10-18 用户口径（3-B）**：待命期**默认不搜**起点候选（"待命期只要关掉弹窗"），
+        // 只在 [StartProbeSignal] 窗口内（用户去挑目标那段时间，悬浮窗展开菜单时开启）加回来 ——
+        // 否则点「开始」时状态恒「未知」，就是 2026-09-20 那个"菜单点了永远启动不了"的死锁。
+        val states = when {
+            !watching.isEmpty() -> watching
+            StartProbeSignal.isOpen() -> standbyStates
+            else -> emptySet()
+        }
         val stepNames = states
             .mapNotNull { state -> rules.firstOrNull { it.state == state }?.signalNames }
             .flatten()

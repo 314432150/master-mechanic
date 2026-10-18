@@ -1,7 +1,10 @@
 package com.example.mastermechanic.decision
 
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -10,6 +13,15 @@ import org.junit.Test
  * 钉住两点：**弹窗永远在集合里**（FR-01 不能被跑号挤掉），以及**只加当前步骤要认的画面**（不外扩成全扫）。
  */
 class PatrolDrivenExpectedSignalsTest {
+
+    @Before
+    fun resetProbe() {
+        // StartProbeSignal 是全局单例（跨线程状态）⇒ 必须逐例重置，否则用例之间互相污染
+        StartProbeSignal.close()
+    }
+
+    @After
+    fun clearProbe() = StartProbeSignal.close()
 
     private val rules = listOf(
         SignalStateMapping.Rule(UiState.ACTIVITY_POPUP, setOf("popup_close", "popup_close2")),
@@ -67,14 +79,85 @@ class PatrolDrivenExpectedSignalsTest {
 
     @Test
     fun standbyAlsoWatchesTheStartScreens() {
-        // 待命期（没在跑）必须认得出"用户现在在哪一屏"，否则菜单的起点判定永远读到「未知」
-        // —— 2026-09-20 真机上第一次跑号就是被这个死锁卡住的。
+        // ⚠ **本例口径已于 2026-10-18 按用户要求反转**（3-B："待命期其实只要关掉弹窗就可以了"）：
+        // 待命期**不再**每轮搜起点候选 ⇒ 真正的口径在下面 [standbyDoesNotWatchTheStartScreensUnlessProbing]，
+        // 保留本例的名字与形状是为了让 git diff 看出"哪条口径被谁翻掉了"。
         val expected = subject(standbyStates = setOf(UiState.HALL, UiState.FARM))
+        StartProbeSignal.open()
 
         assertEquals(
+            "探测窗口开着（= 用户在挑目标）⇒ 起点候选要回来，否则起点判定永远读到「未知」",
             setOf("popup_close", "popup_close2", "hall_marker", "farm_marker"),
             expected.expected(rules.flatMap { it.signalNames }.toSet()),
         )
+    }
+
+    // ===== 2026-10-18 用户口径 3-B：待命期只搜遮挡屏，起点候选改成"挑目标时才搜" =====
+
+    @Test
+    fun standbyDoesNotWatchTheStartScreensUnlessProbing() {
+        // 用户原话："待命期其实只要关掉弹窗就可以了，只要发起流程时才需要认出当前在什么场景"
+        // 真机 census：待命期那 8 条里有 4 条就是起点候选，14% 的轮次凑满 8 条
+        // ⇒ 并行度 6 下仍要 2 批，是单帧 P95 的瓶颈。
+        val expected = subject(standbyStates = setOf(UiState.HALL, UiState.FARM, UiState.LAUNCH_PAGE))
+        val known = rules.flatMap { it.signalNames }.toSet()
+
+        assertEquals(
+            "待命期只留遮挡屏（弹窗）那几条",
+            setOf("popup_close", "popup_close2"),
+            expected.expected(known),
+        )
+        assertTrue("这一轮确实没在搜起点候选", expected.standbyWatchOnly)
+    }
+
+    @Test
+    fun theProbeWindowBringsTheStartScreensBack() {
+        // 用户点开菜单去挑目标 ⇒ 起点候选必须回来，且**不靠"菜单还开着"这种跨层状态**：
+        // StartProbeSignal 是带截止时刻的窗口（收起事件可能丢，泄漏的代价是优化完全失效）。
+        val expected = subject(standbyStates = setOf(UiState.HALL, UiState.FARM))
+        val known = rules.flatMap { it.signalNames }.toSet()
+        StartProbeSignal.open()
+
+        assertEquals(
+            setOf("popup_close", "popup_close2", "hall_marker", "farm_marker"),
+            expected.expected(known),
+        )
+        assertFalse("探测窗口开着就不算「只搜遮挡屏」了", expected.standbyWatchOnly)
+    }
+
+    @Test
+    fun aRunningStepIgnoresTheProbeWindow() {
+        // 跑号中只看当前步骤要认的画面 —— 探测窗口**不许**把起点候选再叠回来（成本会翻倍）
+        val expected = subject(standbyStates = setOf(UiState.HALL, UiState.FARM, UiState.LAUNCH_PAGE))
+        expected.watch(listOf(UiState.FARM))
+        StartProbeSignal.open()
+
+        assertEquals(
+            setOf("popup_close", "popup_close2", "farm_marker"),
+            expected.expected(allNames),
+        )
+        assertFalse("跑号期间绝不能算待命守护口径（否则节流会走错分支）", expected.standbyWatchOnly)
+    }
+
+    @Test
+    fun theProbeWindowExpiresOnItsOwn() {
+        // 窗口自带到期：不依赖任何"关闭"事件 ⇒ 不会因为一次事件丢失就永久白搜
+        assertFalse("初始状态是关着的", StartProbeSignal.isOpen())
+        StartProbeSignal.open(nowMs = 1_000L)
+        assertTrue("开着的时候就是开着", StartProbeSignal.isOpen(nowMs = 1_000L + StartProbeSignal.WINDOW_MS - 1))
+        assertFalse(
+            "到期自动关（>60s 之后）",
+            StartProbeSignal.isOpen(nowMs = 1_000L + StartProbeSignal.WINDOW_MS),
+        )
+        assertEquals(0L, StartProbeSignal.remainingMs(nowMs = 1_000L + StartProbeSignal.WINDOW_MS))
+    }
+
+    @Test
+    fun closingTheProbeIsImmediate() {
+        StartProbeSignal.open()
+        assertTrue(StartProbeSignal.isOpen())
+        StartProbeSignal.close()
+        assertFalse("close() 要立刻生效（流程启动后调用）", StartProbeSignal.isOpen())
     }
 
     @Test

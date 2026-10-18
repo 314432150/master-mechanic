@@ -44,6 +44,7 @@ import com.example.mastermechanic.servers.ServerEntry
 import com.example.mastermechanic.servers.ServerList
 import com.example.mastermechanic.servers.ServerListCapture
 import com.example.mastermechanic.servers.ServerListStore
+import com.example.mastermechanic.decision.StartProbeSignal
 import com.example.mastermechanic.decision.UiState
 import com.example.mastermechanic.decision.UiStateSignal
 import com.example.mastermechanic.patrol.FriendListOcrSignal
@@ -2437,13 +2438,26 @@ class FloatingWindow(private val context: Context) {
             }
             loadMenuOptions()
             renderMenu()
+            // 2026-10-18 用户口径（3-B）：待命期只搜遮挡屏、不搜起点候选（省每轮 4 条）。
+            // ⇒ 用户**挑目标的这段时间**把起点候选临时加回搜索集合（[StartProbeSignal] 窗口），
+            // 这样挑完点「开始」时场景早已认出来 —— 否则状态恒「未知」，就是 2026-09-20 那个
+            // "菜单点了永远启动不了"的死锁。窗口自带 60s 到期，**不靠收起事件关闭**
+            // （收起事件可能丢；泄漏的代价是优化完全失效）。
+            StartProbeSignal.open()
         } else {
             rememberResumeTarget()
             menuState = FloatingMenu.collapsed()
         }
         applyExpandedState()
         applyPositions()
-        MmLog.i(TAG, if (expanded) "悬浮窗菜单已展开（等待用户选择）" else "悬浮窗已收起")
+        MmLog.i(
+            TAG,
+            if (expanded) {
+                "悬浮窗菜单已展开（等待用户选择｜已开起点探测 ${StartProbeSignal.WINDOW_MS / 1000}s）"
+            } else {
+                "悬浮窗已收起"
+            },
+        )
     }
 
     /** 收起（操作成功结束后立即收起，FR-07 收起时机）：**层级栈一并清空**。 */

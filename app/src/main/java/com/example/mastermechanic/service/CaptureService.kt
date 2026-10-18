@@ -2156,9 +2156,19 @@ class CaptureService : Service() {
             val patrolRunning = PatrolSession.current?.isRunning == true
             val closingPopup = !popupClose.gaveUp &&
                 (popupClose.attempt > 0 || popupClose.awaitingVerification)
+            // 2026-10-18（3-B）：待命期**只搜遮挡屏** ⇒ 认不出当前场景 ⇒ `state` 恒「未知」
+            // ⇒ `result.settled` 恒 false ⇒ 会掉回快档，**单核占用反升**（21% → 31%：
+            // 省下的 4 条信号全被多跑的轮次吃回来）。所以在这个口径下另判一条：
+            // "一轮什么都没搜到 / 什么都没出现" = 画面上确实没有挡屏的东西 = **确实稳定**。
+            // ⚠ 一旦有遮挡屏命中（弹窗 / 新手屏），`state` 就不再是 UNKNOWN ⇒ 自然回快档，闭环逻辑不变。
+            val standbyQuiet = !patrolRunning &&
+                patrolExpected?.standbyWatchOnly == true &&
+                result.state == UiState.UNKNOWN &&
+                result.searched.isNotEmpty()
+            val stable = result.settled || standbyQuiet
             val target = when {
                 closingPopup -> POPUP_INTERVAL_MS
-                result.settled && !patrolRunning -> STABLE_INTERVAL_MS
+                stable && !patrolRunning -> STABLE_INTERVAL_MS
                 else -> ACTIVE_INTERVAL_MS
             }
             if (target != lastAppliedIntervalMs) {
@@ -2169,6 +2179,7 @@ class CaptureService : Service() {
                             closingPopup -> "（弹窗闭环进行中：逐帧级轮询）"
                             patrolRunning ->
                                 "（${PatrolSession.current?.range?.logLabel ?: "流程"}进行中：恒用快档）"
+                            standbyQuiet -> "（待命守护：一屏都没出现遮挡屏 = 确实稳定）"
                             result.settled -> "（确实稳定轮）"
                             else -> "（变化 / 过渡 / 未达预期轮）"
                         },
