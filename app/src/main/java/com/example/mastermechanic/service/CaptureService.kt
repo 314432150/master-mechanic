@@ -526,6 +526,18 @@ class CaptureService : Service() {
      */
     private val signalCostStats = mutableMapOf<String, FrameTimingStats>()
 
+    /**
+     * 分段耗时累加器（2026-10-18 N6-1 真机侧，见 [recordSignalPhases]）：段名 → 累计毫秒。
+     * 只统计本轮真正做了匹配的信号；每 [PHASE_LOG_EVERY] 轮打印后清零。仅帧线程访问。
+     */
+    private val signalPhaseTotalsMs = LinkedHashMap<String, Double>()
+
+    /** 单条信号**总**耗时累加（信号名 → 累计毫秒），用来算「其余开销」＝ 总耗时 − 分段之和。 */
+    private val signalCostTotalMs = LinkedHashMap<String, Double>()
+
+    /** 分段统计已累加的轮数（满 [PHASE_LOG_EVERY] 输出并清零）。仅帧线程访问。 */
+    private var signalPhaseRounds = 0
+
     /** 节流目标档位上次生效值（T1-9 切换日志用）。仅帧线程访问。 */
     private var lastAppliedIntervalMs = ACTIVE_INTERVAL_MS
 
@@ -4185,6 +4197,64 @@ class CaptureService : Service() {
                     "平均 ${summary.avgDisplayMs}ms，最大 ${summary.maxDisplayMs}ms",
             )
         }
+        recordSignalPhases()
+    }
+
+    /**
+     * **分段耗时统计**（2026-10-18 N6-1 真机侧）：把
+     * [com.example.mastermechanic.decision.RecognitionLoop.lastSignalPhaseMs] 按段名累加，
+     * 每 [PHASE_LOG_EVERY] 轮打一行占比。
+     *
+     * ## 为什么必须有它（这是 N6-4「采样提速」能不能做的**唯一前提**）
+     *
+     * 桌面探针已量出：单条标志里 **coarse（粗搜乘加）只占 43%**，固定开销（前缀和 / 精搜 / 去重 /
+     * 快照）占 57% ⇒ 采样再稀疏也动不了那 57% ⇒ **桌面天花板 ≈ 1.7 倍**。
+     * 而**真机的分段占比一直未知** —— 若真机上粗搜占比高得多（乘加算得慢、内存操作并不更慢），
+     * 采样提速的真机加速比会远大于 1.7 倍，N6-4 就从"收益不大"变成"核心手段"。
+     *
+     * ## 口径
+     * - 只统计**本轮真正做了匹配**的信号（复用掉的不算），与「信号耗时统计」同口径。
+     * - 「其余开销」= 单条总耗时之和 − 分段之和，即判定计算、合并抑制、逐条计时那部分；
+     *   它**同样吃不掉采样提速** ⇒ 报出来才能算出真实天花板，而不是拿"分段内占比"自我安慰。
+     * - 累加器在打印后清零 ⇒ 每行都是"最近 N 轮"的占比，不是全程累计。
+     */
+    private fun recordSignalPhases() {
+        val phases = recognitionLoop.lastSignalPhaseMs
+        if (phases.isEmpty()) return
+        signalPhaseRounds++
+        for ((name, bySignal) in phases) {
+            for ((phase, ms) in bySignal) {
+                signalPhaseTotalsMs[phase] = (signalPhaseTotalsMs[phase] ?: 0.0) + ms
+            }
+            recognitionLoop.lastSignalCostMs[name]?.let { whole ->
+                signalCostTotalMs[name] = (signalCostTotalMs[name] ?: 0.0) + whole
+            }
+        }
+        if (signalPhaseRounds < PHASE_LOG_EVERY) return
+
+        val rounds = signalPhaseRounds
+        val matchMs = signalPhaseTotalsMs.values.sum()
+        val costMs = signalCostTotalMs.values.sum()
+        signalPhaseTotalsMs.clear()
+        signalCostTotalMs.clear()
+        signalPhaseRounds = 0
+        if (matchMs <= 0.0) return
+
+        val outsideMs = (costMs - matchMs).coerceAtLeast(0.0)
+        val denominator = matchMs + outsideMs
+        val rows = LinkedHashMap(signalPhaseTotalsMs)
+        if (outsideMs > 0.0) rows[PHASE_KEY_OUTSIDE] = outsideMs
+        val share = rows.entries
+            .sortedByDescending { it.value }
+            .joinToString("｜") { (phase, ms) ->
+                "$phase ${"%.1f".format(ms / rounds)}ms（${100 * ms / denominator}%）"
+            }
+        MmLog.i(
+            TAG,
+            "分段耗时统计: 近 $rounds 轮（$denominator 分母＝匹配段 + 其余开销）｜$share" +
+                "｜$PHASE_KEY_OUTSIDE ＝ 判定/合并/计时，采样提速动不了" +
+                "（N6-1 真机侧；桌面口径 coarse 只占 43% ⇒ 天花板约 1.7 倍）",
+        )
     }
 
     private fun maybeLogStats(now: Long) {
@@ -4425,6 +4495,17 @@ class CaptureService : Service() {
 
         private const val STATS_WINDOW_MS = 10_000L
         private const val MAX_IMAGES = 2
+
+        /**
+         * 分段耗时统计的输出间隔（2026-10-18 N6-1 真机侧）：每 N 轮输出一行占比。
+         *
+         * 取 100 与「信号耗时统计」的窗口一致 ⇒ 两行可以对照着看同一段时间。
+         * ⚠ 500ms 慢档下 100 轮 ≈ 50 秒；快档（200ms）≈ 20 秒 ⇒ 够跑完一轮换号+拜访。
+         */
+        private const val PHASE_LOG_EVERY = 100
+
+        /** 「其余开销」这个虚拟段名（不是 `TemplateMatcher.PHASE_*` 里的真段）。 */
+        private const val PHASE_KEY_OUTSIDE = "outside"
 
         /**
          * **resize 前至少要收到的帧数**（2026-09-24 真机三次复现后的缓解，见 [applyMirrorResize]）：

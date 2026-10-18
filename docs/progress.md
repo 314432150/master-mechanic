@@ -9982,6 +9982,36 @@
     ⇒ 相当稳定。⚠ `22:29:37` 那次 93.6ms **不代表 4 条**（100 帧窗口跨过了 `22:28:58` 的集合变化）。
   - ✅ 本轮顺带对上：顺序轮换连续正确（`莲动渔舟 → 碧海之眼`）；弹窗闭环两次
     （`22:28:40.5~41.9` 120ms 逐帧 + FR-01 点击）；流程中恒 200ms、收尾后回 500ms 慢档。
+448. **✅ N6-1 真机侧接上：分段耗时统计（N6-4 的决策前提）**（2026-10-18）
+  - **为什么做这个**：N6-4（采样提速）值不值得做，**只能靠真机的分段占比判断** ——
+    桌面量出 **coarse 只占 43%**、固定开销占 57% ⇒ **桌面天花板 ≈1.7 倍**；
+    而真机若粗搜占比高得多（乘加算得慢、内存操作并不更慢），加速比会远大于 1.7 倍。
+    计划里 N6-1 的「⏳ 真机侧」一直是悬空的，这一手补上。
+  - **改法**（四处，全部默认零行为变化）：
+    | 文件 | 改什么 |
+    | --- | --- |
+    | `recognition/SignalDetector.kt` | `detectSignal` 加 `probe: MatchCostProbe? = null`，传给 `findPeaks`（锚点定位那条路径不传 ⇒ 仍是 null） |
+    | `recognition/MatchPhaseRecorder.kt`（**新增**） | probe 实现：把逐段回调**累加**成表（多模板会收到多组，不累加会重复计数） |
+    | `decision/RecognitionLoop.kt` | `MatchedSignal` 加 `phases`；在 `timedDetect`（**串行/并行共用**的唯一入口）建 recorder；新增 `lastSignalPhaseMs` |
+    | `service/CaptureService.kt` | `recordSignalPhases()`：按段名累加，每 100 轮输出一行占比（与「信号耗时统计」同窗口） |
+  - **口径两条**：
+    ① 沿用既有决定 `lastSignalCostMs` 的做法 —— **耗时数据刻意不进 `RoundResult`**（进数据类会破坏
+    「同一输入序列产生完全相同的 RoundResult」不变式，`sameSequenceProducesIdenticalResults` 钉着）。
+    ② 输出里**必须同时给「其余开销」**（＝单条总耗时 − 分段之和 ＝ 判定/合并/计时）——
+    它同样吃不掉采样提速 ⇒ 只报"分段内占比"会高估天花板、属于自我安慰。
+  - **开销**：`TemplateMatcher` 里五处插桩都是 `probe?.phase(...)` 短路形式 ⇒ probe 为 null 时连参数
+    （`msSince(...)`、note 字符串）都不求值；每条信号每轮多一个短命 recorder（并行分支里**每条信号各一个**
+    ⇒ 天然无共享、不加锁）。
+  - 验证：新增 2 例（`phaseBreakdownIsReportedPerMatchedSignalAndNeverExceedsTheTotal`
+    钉住「**Σ分段 ≤ 单条总耗时**」这个不变量 / `aReusedSignalHasNoPhaseSampleAndAFrozenRoundClearsThem`
+    钉住"复用与冻结轮都没有样本"）；`-PfastTests` **1009 例 0 失败**；
+    `N6AttributionProbeTest` 单跑通过（`detectSignal` 加默认参数没破坏桌面探针）；
+    `assembleDebug` + `install -r` **Success** + `am start` ✓。
+    ⚠ 写第一版测试时踩了自己的坑：第三轮传回**原来那张**画面，期望"重新实算"——
+    但复用判据是"窗口像素逐字节相同"，所以它**又复用了**（这是复用的本意）⇒ 改成传改动过的画面。
+  - ⏳ **待真机取数**：跑一轮换号+拜访，看新日志行
+    `分段耗时统计: 近 N 轮（… 分母＝匹配段 + 其余开销）｜coarse …%｜outside …%`
+    ⇒ 由此定 N6-4 做不做、以及 20ms 够不够。
 
 ## 待开发（用户列，2026-09-24）
 
