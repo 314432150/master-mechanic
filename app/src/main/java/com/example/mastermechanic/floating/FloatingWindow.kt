@@ -120,6 +120,14 @@ class FloatingWindow(private val context: Context) {
      */
     private var lastStatusSignature: String? = null
 
+    /**
+     * 上一次处理到哪一次「设置页重置提示位置」请求（2026-10-19 U6 第三段）。
+     *
+     * 与 [FloatingLabelResetSignal] 的计数比：变了就重置一次。放在巡检里而不是靠回调 ——
+     * 设置页与悬浮窗之间没有对象引用（见那个信号的说明）。
+     */
+    private var lastLabelResetRequest = 0
+
     /** 手柄位置 = 布局常量（2026-09-17 用户口径"取消状态标签"后，唯一剩下的位置）。 */
     private val positions: FloatingPosition = FloatingPosition.DEFAULT
     private var expanded = false
@@ -390,6 +398,8 @@ class FloatingWindow(private val context: Context) {
         // **放在签名短路之前**：读整屏"让开"的收尾有一条出口是**超时**（签名不会变），
         // 放在后面就永远等不到它 —— 面板会就此消失。
         resumeOcrPanelIfReady()
+        // 设置页点了「重置提示位置」⇒ 先把它落到窗口上（同样必须在签名短路之前：它不改签名）
+        applyLabelResetFromSettings()
         // 状态标签与菜单各自独立（标签收起态也在），同样放在签名短路之前
         refreshLabel()
         // 中止 / 暂停 / 完成说一句给读屏（底部浮窗提示移除后，这条通道改由标签承担）
@@ -2184,13 +2194,13 @@ class FloatingWindow(private val context: Context) {
      * 3. 在菜单里说一句 + 记一行日志（含落位坐标与尺寸）—— 待命期标签本来就没挂，
      *    不吭声的话用户会以为点了没反应。
      */
-    private fun resetLabelPosition() {
+    private fun resetLabelPosition(announce: Boolean = true) {
         labelRatios = null
         FloatingLabelStore.clear(context)
         val view = label
         if (view == null || !labelAttached) {
             MmLog.i(TAG, "提示位置已重置为默认（顶部居中）：标签当前未挂着，下次挂载按默认落位")
-            note(context.getString(R.string.floating_menu_reset_label_done))
+            if (announce) note(context.getString(R.string.floating_menu_reset_label_done))
             return
         }
         measureSelf(view)
@@ -2200,7 +2210,21 @@ class FloatingWindow(private val context: Context) {
         val at = labelPlacement(width, height)
         placeLabel(view, at, width, height)
         MmLog.i(TAG, "提示位置已重置为默认（顶部居中）：(${at.x},${at.y}) ${width}x$height")
-        note(context.getString(R.string.floating_menu_reset_label_done))
+        if (announce) note(context.getString(R.string.floating_menu_reset_label_done))
+    }
+
+    /**
+     * **设置页点了「重置提示位置」**（2026-10-19，U6 第三段）。
+     *
+     * 与「更多」里那一行共用 [resetLabelPosition]，但**不弹菜单回执**（`announce = false`）：
+     * 用户此刻在 App 里，把悬浮菜单展开给他看毫无意义（`note` 会 `expanded = true` 并把面板顶出来）。
+     * 回执由设置页自己的 Snackbar 给；这里只记一行日志、把标签当场挪回默认位置。
+     */
+    private fun applyLabelResetFromSettings() {
+        if (FloatingLabelResetSignal.requested == lastLabelResetRequest) return
+        lastLabelResetRequest = FloatingLabelResetSignal.requested
+        MmLog.i(TAG, "设置页请求重置提示位置（第 ${lastLabelResetRequest} 次）")
+        resetLabelPosition(announce = false)
     }
 
     /**

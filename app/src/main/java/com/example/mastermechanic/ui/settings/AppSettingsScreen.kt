@@ -10,12 +10,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -33,13 +35,25 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.mastermechanic.R
+import com.example.mastermechanic.action.PopupCloseSignal
 import com.example.mastermechanic.calibration.CalibrationSignals
 import com.example.mastermechanic.calibration.CalibrationStore
+import com.example.mastermechanic.floating.FloatingLabelResetSignal
+import com.example.mastermechanic.floating.FloatingLabelStore
+import com.example.mastermechanic.log.MmLog
+import com.example.mastermechanic.patrol.PatrolRequestSignal
 import com.example.mastermechanic.ui.ArtifactState
 import com.example.mastermechanic.ui.loadArtifact
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.os.Handler
+import android.os.Looper
+import android.os.Process
+import android.os.SystemClock
+
+/** 日志标签（与悬浮窗 / 诊断页同一套 `MM-` 前缀口径）。 */
+private const val TAG = "MM-Settings"
 
 /**
  * 抽屉「**设置**」页（M5-U6 的第一段；2026-10-02 先落「识别参数」这一块）。
@@ -60,11 +74,18 @@ import kotlinx.coroutines.withContext
  * 读写同一个文件、同样的"编辑合法即写入"语义、同样的默认值（`CalibrationSignals.DEFAULT_*_TEXT`）。
  * 标定页不再出现任何参数输入框 —— 产物里已有的值照旧生效（**行为零回归**）。
  *
- * ## 本页后续（U6）
+ * ## 本页内容（U6 第三段，2026-10-19 补齐）
  *
  * 帧率 / 停更 / 当前识别画面 / 单帧耗时 / 日志 那些**只读读数** 2026-10-03 已落进抽屉「诊断」页
- * （`ui/diagnostics/`）—— 判据：**诊断 = 看问题、设置 = 改东西**，所以它们不在本页；
- * 本页剩下的待补项只有"自动关弹窗开关 / 提示位置 / 退出 App"，**不静默**（页面明确写着"待补"）。
+ * （`ui/diagnostics/`）—— 判据：**诊断 = 看问题、设置 = 改东西**，所以它们不在本页。
+ * 本页 = 四块**可改的东西**：识别参数（产物）/ 自动关弹窗 / 提示位置 / 退出 App。
+ *
+ * 三块新卡的口径（与悬浮窗同一份数据，不新造开关）：
+ * - **自动关弹窗**：直接读写 `PopupCloseSignal.paused`（与「更多」层那一行同一个字段）⇒ 两边永远一致；
+ *   它是**用户意图、不是落盘配置**（见那个字段的说明），所以这里如实写"重启后恢复自动"。
+ * - **提示位置**：清落盘（`FloatingLabelStore.clear`）+ 发 [FloatingLabelResetSignal] ⇒ 悬浮窗当场重落位，
+ *   不是"等下次挂载才生效"。
+ * - **退出 App**：与「更多 → 退出」同一套（先发「停止」、再延迟一小拍杀进程）。
  */
 @Composable
 fun AppSettingsRoute(resumeTick: Int) {
@@ -78,6 +99,10 @@ fun AppSettingsRoute(resumeTick: Int) {
     var minDistanceText by remember { mutableStateOf(artifact.paramsText(2)) }
     var message by remember { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+    // 自动关弹窗是**进程内开关**（与悬浮窗「更多」同一份数据）⇒ 回到前台时重新对齐，免得显示旧值
+    var autoCloseOn by remember { mutableStateOf(!PopupCloseSignal.paused) }
+    var confirmExit by remember { mutableStateOf(false) }
+    LaunchedEffect(resumeTick) { autoCloseOn = !PopupCloseSignal.paused }
 
     /**
      * 参数编辑：**合法即写入产物**（无产物时不写 —— 参数会随首个信号一并写入）。
@@ -128,8 +153,68 @@ fun AppSettingsRoute(resumeTick: Int) {
         onThresholdChange = { thresholdText = it; applyParams() },
         onMarginChange = { marginText = it; applyParams() },
         onMinDistanceChange = { minDistanceText = it; applyParams() },
+        autoCloseOn = autoCloseOn,
+        onAutoCloseChange = { on ->
+            // 与悬浮窗「更多 → 暂停/恢复自动关弹窗」**同一个字段** ⇒ 两边不会各说各话
+            PopupCloseSignal.paused = !on
+            autoCloseOn = on
+            MmLog.i(
+                TAG,
+                if (on) "设置页：恢复自动关弹窗" else "设置页：暂停自动关弹窗（只识别、不动手）",
+            )
+            message = context.getString(
+                if (on) R.string.settings_auto_close_resumed else R.string.settings_auto_close_paused,
+            )
+        },
+        onResetLabel = {
+            FloatingLabelStore.clear(context)
+            FloatingLabelResetSignal.request()
+            MmLog.i(TAG, "设置页：重置悬浮窗提示位置（落盘已清 + 请求悬浮窗当场重落位）")
+            message = context.getString(R.string.settings_label_reset_done)
+        },
+        onExit = { confirmExit = true },
         snackbarHostState = snackbarHostState,
     )
+
+    if (confirmExit) {
+        AlertDialog(
+            onDismissRequest = { confirmExit = false },
+            title = { Text(stringResource(R.string.settings_exit_confirm_title)) },
+            text = { Text(stringResource(R.string.settings_exit_confirm_desc)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmExit = false
+                        exitApp()
+                    },
+                ) { Text(stringResource(R.string.settings_exit_action)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmExit = false }) {
+                    Text(stringResource(R.string.settings_exit_dismiss))
+                }
+            },
+        )
+    }
+}
+
+/**
+ * **退出 App**（2026-10-19；与悬浮窗「更多 → 退出」同一套）。
+ *
+ * 进程一死，无障碍服务 / 采集会话 / 悬浮窗一起停 —— 不会出现"只剩服务在跑、界面没了"的半死状态。
+ * 先发一次「停止」让消费方把流程状态清干净并留痕，再延迟一小拍杀进程（给日志落盘留时间）。
+ */
+private fun exitApp() {
+    MmLog.i(TAG, "设置页：用户点了「退出」⇒ 停止流程 + 结束进程")
+    runCatching {
+        PatrolRequestSignal.request(
+            PatrolRequestSignal.Request(
+                kind = PatrolRequestSignal.Kind.STOP,
+                nowMs = SystemClock.elapsedRealtime(),
+            ),
+        )
+    }
+    Handler(Looper.getMainLooper()).postDelayed({ Process.killProcess(Process.myPid()) }, 400L)
 }
 
 @Composable
@@ -142,6 +227,10 @@ private fun AppSettingsScreen(
     onThresholdChange: (String) -> Unit,
     onMarginChange: (String) -> Unit,
     onMinDistanceChange: (String) -> Unit,
+    autoCloseOn: Boolean,
+    onAutoCloseChange: (Boolean) -> Unit,
+    onResetLabel: () -> Unit,
+    onExit: () -> Unit,
     snackbarHostState: SnackbarHostState,
 ) {
     Scaffold(
@@ -169,8 +258,62 @@ private fun AppSettingsScreen(
                 onMarginChange = onMarginChange,
                 onMinDistanceChange = onMinDistanceChange,
             )
+            SettingCard(
+                title = stringResource(R.string.settings_auto_close_title),
+                description = stringResource(R.string.settings_auto_close_desc),
+            ) {
+                Switch(checked = autoCloseOn, onCheckedChange = onAutoCloseChange)
+            }
+            SettingCard(
+                title = stringResource(R.string.settings_label_title),
+                description = stringResource(R.string.settings_label_desc),
+            ) {
+                TextButton(onClick = onResetLabel) {
+                    Text(stringResource(R.string.floating_menu_reset_label))
+                }
+            }
+            SettingCard(
+                title = stringResource(R.string.settings_exit_title),
+                description = stringResource(R.string.settings_exit_desc),
+            ) {
+                TextButton(onClick = onExit) {
+                    Text(stringResource(R.string.settings_exit_action))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 设置页的一块：**左边标题 + 右边控件**，说明挂在标题下面一行。
+ *
+ * 统一这个形状的理由（ADR-009 决策三）：设置项一律"标题 + 一句说明 + 一个控件"，
+ * 控件放右侧、位置固定 ⇒ 扫一眼就知道哪几项是开关、哪几项是动作。
+ */
+@Composable
+private fun SettingCard(
+    title: String,
+    description: String,
+    action: @Composable () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                action()
+            }
             Text(
-                text = stringResource(R.string.nav_stub_settings),
+                text = description,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

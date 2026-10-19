@@ -73,8 +73,21 @@
     <string name="nav_help_diag">出问题时</string>
     <string name="nav_help_diag_1">先看「诊断」页的读数，再取走当天日志；日志里每一步都写了「为什么点 / 为什么不点」。</string>
 
-    <string name="nav_stub_settings">本页在 M5-U6 建设：自动关弹窗、悬浮窗提示位置、退出 App。</string>
-    <!-- `nav_stub_diagnostics` / `nav_stub_help` 已随 U6 第二段删除（两页都换成真页）⇒ 零死文案。 -->
+    <!-- 抽屉「设置」页的其余三块（2026-10-19 U6 第三段补齐；`nav_stub_settings` 随之删除）。
+         每条都按 ADR-009 决策三写成"标题 + 一句说明"：说明里只放**用户要判断的那一件事**。 -->
+    <string name="settings_auto_close_title">自动关弹窗</string>
+    <string name="settings_auto_close_desc">暂停只是不动手（识别照常）；重启 App 后恢复为自动。</string>
+    <string name="settings_auto_close_paused">已暂停：只识别、不动手</string>
+    <string name="settings_auto_close_resumed">已恢复自动关弹窗</string>
+    <string name="settings_label_title">提示位置</string>
+    <string name="settings_label_desc">顶部那条提示标签可以拖动；跑偏了就一键回顶部居中。</string>
+    <string name="settings_label_reset_done">已重置：下次出现时在顶部居中</string>
+    <string name="settings_exit_title">退出 App</string>
+    <string name="settings_exit_desc">停止流程并结束本进程（悬浮窗 / 无障碍 / 采集一起停）。</string>
+    <string name="settings_exit_action">退出</string>
+    <string name="settings_exit_confirm_title">退出 MasterMechanic？</string>
+    <string name="settings_exit_confirm_desc">正在跑的流程会停，悬浮窗与无障碍服务也会一起结束。</string>
+    <string name="settings_exit_dismiss">取消</string>
 
     <!-- ===== M5-U2「运行」页（2026-10-01）=====
          三张卡：授权 / 画面 / 流程。每句 ≤60 字（验收 V2）；「停止 / 继续 / 重新授权采集」**复用悬浮窗那几条**
