@@ -141,6 +141,39 @@ class CaptureService : Service() {
     private var frameAcquiresEmpty = 0L
 
     /**
+     * **探针自己的窗口起点**（2026-10-18，progress 第 452 条；0 = 还没起表）。
+     *
+     * ## 为什么要独立（原来它借用了 [lastStatsAt]）
+     *
+     * 原来 `logFrameProbeIfQuiet` 直接用 [lastStatsAt] 当窗口起点，而 [lastStatsAt] 是**统计行**的：
+     * 正常有帧时 [maybeLogStats] 每 10 秒把它推到当前时刻 ⇒ 探针刚想输出就被"让路"⇒ 只在
+     * **"统计行不再来"**（即停更）时才输出。**能工作，但它是副作用、不是显式设计**，代价有两个：
+     * ① 窗口相位与统计行**错位**（真机 2026-10-18 因此差点把"回调 35 次 / 取到 32 帧"误读成
+     * "平台冻结推送旧帧"——实际两个数字属于不同的窗）；② 探针还会**清零 [framesReceived]**，
+     * 而那是统计行"接收 N 帧"的同一个变量 ⇒ 两行互相截断。
+     *
+     * ⇒ 现在探针有自己的窗口（[PROBE_WINDOW_MS]）与自己的"取到帧"计数（[probeFramesReceived]），
+     * **不再碰 [lastStatsAt] / [framesReceived]**；"只在没有新帧时输出"改成**显式判据**
+     * （见 [logFrameProbeIfQuiet] 开头），不再依赖"统计行恰好没来"这个副作用。
+     */
+    private var probeWindowStartAtMs = 0L
+
+    /** 探针窗口内 `acquireLatestImage()` **成功**的次数（与统计行的 [framesReceived] 分开，见上）。 */
+    private var probeFramesReceived = 0L
+
+    /**
+     * **最后一次 `onImageAvailable` 回调**的时刻（[SystemClock.elapsedRealtime]；0 = 本会话一次都没回调过）。
+     *
+     * 为什么单列一个"最后时刻"（2026-10-18）：计数只能说"这一窗有多少次"，**说不出"从什么时候起没声了"**。
+     * 真机那次 3 分钟里每行都写「回调 0 次」，但**看不出停在哪一刻**——而"平台最后一次投喂的绝对时刻"
+     * 才是能与前后事件（点了什么、切了哪一步）对齐的唯一锚点。
+     *
+     * ⚠ 记的是**回调到达**，不是"帧被采纳"（后者是 [lastNewFrameAtMs]，还要过节流）⇒
+     * **这两者的差值本身就是信息**：回调一直在来而 [lastNewFrameAtMs] 不动 = 我们这一侧的问题。
+     */
+    private var lastFrameCallbackAtMs = 0L
+
+    /**
      * 「换镜像表面」已经试了几次（每个会话归零，见 [checkSurfaceRetry]）。
      *
      * 为什么要有上限：这是一次"死马当活马医"的动作（当前已经是零帧，试了最坏不更差），
@@ -811,6 +844,11 @@ class CaptureService : Service() {
         frameCallbacks = 0L
         frameAcquiresEmpty = 0L
         lastStatsAt = 0L
+        // 探针自己的窗口与计数也不跨会话（2026-10-18）：否则新会话刚开始，探针会把上一会话的
+        // "最后一次回调"带过来，打出"距今几百秒"这种假象（那正是本次要根治的毛病）。
+        probeWindowStartAtMs = 0L
+        probeFramesReceived = 0L
+        lastFrameCallbackAtMs = 0L
         surfaceRetries = 0
         nextSurfaceRetryAtMs = 0L
         surfaceRetryGaveUp = false
@@ -1504,8 +1542,8 @@ class CaptureService : Service() {
     }
 
     /**
-     * **帧迟迟不来时的探针行**（2026-09-30 加，见 [frameCallbacks]）：每 [STATS_WINDOW_MS] 一行，
-     * **只在"这一窗一帧都没到"时**输出 —— 正常工作时那一行由 [maybeLogStats] 负责，不必重复刷屏。
+     * **帧迟迟不来时的探针行**（2026-09-30 加，见 [frameCallbacks]）：每 [PROBE_WINDOW_MS] 一行，
+     * **只在"我们手上没有新帧"时**输出 —— 正常工作时那一行由 [maybeLogStats] 负责，不必重复刷屏。
      *
      * ## 怎么读它（一眼分清三种形态）
      *
@@ -1514,28 +1552,81 @@ class CaptureService : Service() {
      * | `回调 0 次` | **平台根本没往 surface 投喂** ⇒ 镜像通路停了 | [checkSurfaceRetry] 换表面 / 请用户重新授权 |
      * | `回调 N 次 / 取空 N 次 / 取到 0 帧` | **回调来了却拿不到 buffer** | 我们这一侧：缓冲没归还 / `MAX_IMAGES = $MAX_IMAGES` 队列卡死 |
      * | `回调 N 次 / 取到 N 帧` 而帧龄仍很大 | 三者不可能同时成立 | 说明还有别的口径（帧龄 / 计数）算错了，得查 |
+     *
+     * ## 「最后一次回调」这一项怎么用（2026-10-18 加）
+     *
+     * 它把"停更"从**一段时间的持续状态**变成**一个可对齐的时间点**：能直接和日志里"点了什么 / 切了哪一步"
+     * 对上，从而分辨三种完全不同的情况 ——
+     * ① 平台**从那一刻起**再没投喂（镜像通路断）；
+     * ② 平台**一直在投**，但我们**一帧都没采纳**（我们这一侧的问题：节流 / 复用把帧吃掉了）；
+     * ③ 平台在投、也在采纳，只是**内容确实相同**（画面真的静止）。
+     * 之前只能说"这一窗回调 0 次"，三种情况在日志里长得一样。
      */
     private fun logFrameProbeIfQuiet(now: Long) {
-        if (lastStatsAt == 0L) {
-            lastStatsAt = now // 第一次只起表（与 [maybeLogStats] 同一口径：否则窗口是个假数）
+        // ⚠ 显式判据，**不再借用** [lastStatsAt]（那是统计行的）：原先靠"统计行不再来 ⇒ 探针才输出"
+        //   这个副作用工作，但窗口与统计行错位、还会截断 [framesReceived]（见 [probeWindowStartAtMs]）。
+        val fresh = lastNewFrameAtMs > 0L && now - lastNewFrameAtMs < PROBE_WINDOW_MS
+        if (fresh) {
+            // 画面正在刷新 ⇒ 这一行由 [maybeLogStats] 说；顺手把探针窗口归零，下一次停更从头数。
+            probeWindowStartAtMs = 0L
+            frameCallbacks = 0L
+            frameAcquiresEmpty = 0L
+            probeFramesReceived = 0L
             return
         }
-        if (now - lastStatsAt < STATS_WINDOW_MS) return
+        if (probeWindowStartAtMs == 0L) {
+            probeWindowStartAtMs = now // 第一次只起表（否则"这一窗"是个假数）
+            return
+        }
+        if (now - probeWindowStartAtMs < PROBE_WINDOW_MS) return
+        val windowSec = (now - probeWindowStartAtMs) / 1000
         val ageSec = if (lastNewFrameAtMs == 0L) -1L else (now - lastNewFrameAtMs) / 1000
         val ageNote = if (ageSec < 0) "从未收到过帧" else "距上一新帧 ${ageSec}s"
         MmLog.w(
             TAG,
-            "帧回调探针（这一窗没有新帧）: onImageAvailable 回调 $frameCallbacks 次 / " +
-                "取到 $framesReceived 帧 / 取空 $frameAcquiresEmpty 次｜$ageNote｜" +
+            "帧回调探针（最近 ${windowSec}s 没有新帧）: onImageAvailable 回调 $frameCallbacks 次 / " +
+                "取到 $probeFramesReceived 帧 / 取空 $frameAcquiresEmpty 次｜$ageNote｜" +
+                "最后一次回调 ${wallClockTextOf(lastFrameCallbackAtMs)}" +
+                "（距今 ${lastCallbackGapSec(now)}s）｜" +
                 "目标${if (ForegroundSignal.isForeground) "在前台" else "不在前台"}｜" +
                 "缓冲 ${imageReader?.width}x${imageReader?.height}",
         )
-        lastStatsAt = now
-        framesReceived = 0
-        framesProcessed = 0
-        frameCallbacks = 0
-        frameAcquiresEmpty = 0
+        probeWindowStartAtMs = now
+        frameCallbacks = 0L
+        frameAcquiresEmpty = 0L
+        probeFramesReceived = 0L
     }
+
+    /**
+     * 把一个 [SystemClock.elapsedRealtime] 时刻翻成**日志时间戳同款**的墙上时刻（`HH:mm:ss.SSS`）。
+     *
+     * 为什么需要翻（2026-10-18）：日志每行的 `MM-DD HH:mm:ss.SSS` 是**墙上时钟**，而内部一律用
+     * `elapsedRealtime`（单调、不受用户改系统时间影响）。不翻的话，"最后一次回调"只能写成
+     * "距今 137s" —— 而**排障时要的恰恰是它落在哪一刻**，好和"点了什么 / 切了哪一步"对齐。
+     *
+     * 做法：在**输出这一刻**取一次 `currentTimeMillis` 与 `elapsedRealtime` 的差当偏移，
+     * 反推目标时刻。偏移在这几秒内不会变（两个时钟都按同一速率走）⇒ 不必缓存、也不会引入漂移累积。
+     */
+    private fun wallClockTextOf(elapsedMs: Long): String {
+        if (elapsedMs <= 0L) return "本会话从未回调过"
+        val offsetMs = System.currentTimeMillis() - SystemClock.elapsedRealtime()
+        val wallMs = elapsedMs + offsetMs
+        val t = java.time.Instant.ofEpochMilli(wallMs)
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalTime()
+        return String.format(
+            java.util.Locale.US,
+            "%02d:%02d:%02d.%03d",
+            t.hour,
+            t.minute,
+            t.second,
+            t.nano / 1_000_000,
+        )
+    }
+
+    /** "最后一次回调"距今多少秒（0 = 刚刚回调过；-1 = 本会话从没回调过）。 */
+    private fun lastCallbackGapSec(now: Long): Long =
+        if (lastFrameCallbackAtMs <= 0L) -1L else (now - lastFrameCallbackAtMs) / 1000
 
     /**
      * **停更时的自救：换一次镜像表面**（2026-09-30 加，真机"零帧"事故）。
@@ -1676,6 +1767,11 @@ class CaptureService : Service() {
                 TAG,
                 "「$reason」之后 ${(now - armed) / 1000} 秒没有新帧（最近一帧 ${ageMs / 1000} 秒前）" +
                     "⇒ **判定「画面采集已停」：停止一切点击**（手上那张画面是旧的，再点等于照着旧画面点）" +
+                    // ↓ 这一句是 2026-10-18 排障时最缺的那条事实（progress 第 449 条）：光说"最近一帧 7 秒前"
+                //   会让人以为是"点完画面就停了"，而真相是"**点下去之前**画面就已经静止那么久"
+                //   ⇒ 那一击落在**静态页**上（点开设置页这种页，平台按"静态不出帧"的正常行为一帧都不推）
+                //   ⇒ 这一击**本来就无法验证**，闸没有误判、也没有"照着旧画面点"。
+                    preClickStallNote(armed) +
                     "—— 不结束会话；画面一恢复就自动解除，若一直不更新请重新授权采集",
             )
             return
@@ -1688,6 +1784,35 @@ class CaptureService : Service() {
                 "—— **仅诊断、不结束会话**：选「共享一个应用」采集时我们的覆盖窗不在画面里，" +
                 "静态页不出新帧属正常；若之后画面一直不更新，请重新授权采集",
         )
+    }
+
+    /**
+     * "**点下去之前**画面就已经静止了多久"（2026-10-18，progress 第 449 条；只用于那行告警日志）。
+     *
+     * ## 为什么非要这一句
+     *
+     * 原来那行只说"「刚下发一击…」之后 3 秒没有新帧（最近一帧 7 秒前）" ⇒ 真机排障时被读成了
+     * "**点完**之后画面就停了"，于是怀疑到 resize / 镜像（实际那次 resize 一次都没执行）。
+     * 而真相是：**点下去之前**画面就已经静止了 3.6 秒 ⇒ 这一击**注定无法验证**。
+     *
+     * ⚠ **不要在这里断言"因为画面静止所以平台不投帧"**（2026-10-18 用户更正后作废）：
+     * 用户当场指出**大厅背景有动画 CG 在不断循环**，而同一段时间日志里 `onImageAvailable 回调 0 次`
+     * ⇒ **平台侧停投才是因，画面静止至多是并存现象**。所以这里只陈述后果
+     * （"这一击无法验证"），**不预判成因** —— 成因由[帧回调探针](logFrameProbeIfQuiet)那一行自己说话。
+     *
+     * 有了这一句，"闸误判了"与"这一击本来就验证不了"两种情形在日志里**一眼可分**。
+     *
+     * @param armedAt 这一击被下发的那一刻（[FrameExpectationSignal.armedAtMs]）
+     * @return 可直接接在告警里的说明；帧龄不可算时（还没收到过帧）返回空串
+     */
+    private fun preClickStallNote(armedAt: Long): String {
+        if (lastNewFrameAtMs <= 0L) return ""
+        val preMs = armedAt - lastNewFrameAtMs
+        if (preMs < 1_000L) {
+            return "｜**点下去之前画面正在刷新**（这一击本该能验证）"
+        }
+        return "｜⚠ **点下去之前画面就已经静止 ${preMs / 1000} 秒**" +
+            "⇒ 这一击**注定无法验证**（点下去之前就没有新画面可供确认），不是闸误判"
     }
 
     /**
@@ -1751,6 +1876,11 @@ class CaptureService : Service() {
         // **探针必须在所有提前 return 之前**（2026-09-30）：否则"回调来了但取不到 buffer"会不留痕，
         // 与"平台根本没投喂"在日志里长得一模一样（见 [frameCallbacks]）
         frameCallbacks++
+        // 「最后一次回调」的时刻（2026-10-18，progress 第 452 条）：探针里唯一能把"停更"钉成一个
+        // **时间点**的锚点（原来只能说"这一窗回调 0 次"，说不出从什么时候起没声了）。
+        // ⚠ 记的是**回调到达**，不是"帧被采纳"（那是 [lastNewFrameAtMs]，还要过节流）⇒
+        //   两者差距本身就是信息：回调一直在来而采纳不动 ⇒ 问题在我们这一侧。
+        lastFrameCallbackAtMs = SystemClock.elapsedRealtime()
         val reader = imageReader ?: return
         val image = try {
             reader.acquireLatestImage()
@@ -1776,6 +1906,9 @@ class CaptureService : Service() {
         // 真机数据：Java 堆 15 秒从 18MB 涨到 128MB（是留住了的增长，不是垃圾）⇒ 268MB 上限被打爆。
         // 在定位到那个"留住大数组"的地方之前，先把采集侧恢复成以前的写法做二分。
         framesReceived++
+        // 探针窗口自用的计数（2026-10-18）：**不读 [framesReceived]** —— 它是统计行"接收 N 帧"的同一个
+        // 变量、每 10 秒就被 [maybeLogStats] 清零，两个口径互相截断（见 [probeWindowStartAtMs]）。
+        probeFramesReceived++
         val now = SystemClock.elapsedRealtime()
         // 标定帧录制（T1-5b）：旁路于识别节流，每秒最多 1 帧；仅目标前台时保存
         CalibrationFramePool.maybeCapture(this, image, now, ForegroundSignal.isForeground)
@@ -2315,25 +2448,40 @@ class CaptureService : Service() {
     }
 
     /**
-     * **顺序轮换的游标推进**（2026-09-24）：第 5 步**真换成功**（选服 → 之后的步骤）时，
-     * 把"当前在哪个区服"记到盘上（`ServerRotation.saveCursor`）。
+     * **「下一个」游标的推进**（2026-09-24；2026-10-19 U8 放宽判据）：第 5 步**真换成功**
+     * （选服 → 之后的步骤）时，把"当前在哪个区服"记到盘上（`ServerRotation.saveCursor`）。
      *
      * 为什么在"通过"这一刻写、而不是在启动那一刻写：**成功才推进** —— 失败 / 中止时游标不动，
      * 用户重试仍指向同一个区服；启动时就写会让"没换成"被悄悄跳过去（表现是"有个号一直轮不到"）。
      *
+     * ⚠ **不看来路**（U8-8）：原来这里还有一道 `if (!PatrolSession.targetServerFromRotation) return`，
+     * 只有"轮换算出来的"才写；用户在菜单里**手选**一个区服换过去时不写 ⇒ 下次「下一个」仍从旧游标后面取，
+     * 与需求"手选 X 后「下一个」= X 的下一条"冲突。判据已收进纯逻辑 `ServerRotation.switchedTo`（有单测）。
+     * 参数层选固定区服**只是改草稿**、不会走到这里（没有真换过去 ⇒ 写了就是谎报）。
+     *
      * 写盘很小（一次覆盖写）且每次换号只发生一次，就地写，不另起线程（免得又给"谁在读盘"添乱）。
      */
     private fun commitServerRotationIfSwitched(before: PatrolFlow.Step, after: PatrolFlow.State?) {
-        if (before != PatrolFlow.Step.PICK_SERVER) return
-        if (after == null || after.step == PatrolFlow.Step.PICK_SERVER) return
-        if (!PatrolSession.targetServerFromRotation) return
         val name = PatrolSession.targetServer ?: return
+        if (!ServerRotation.switchedTo(
+                beforeStep = before.number,
+                afterStep = after?.step?.number,
+                targetServer = name,
+            )
+        ) {
+            return
+        }
+        val fromRotation = PatrolSession.targetServerFromRotation
         try {
             ServerRotation.saveCursor(this, name)
-            MmLog.i(TAG, "顺序轮换：已换到「$name」，游标已推进（下次「换一个」从这个的后面取）")
+            MmLog.i(
+                TAG,
+                "「下一个」：已换到「$name」（${if (fromRotation) "轮换算出来的" else "手动选择的"}）" +
+                    "，游标已推进（下次从这个的后面取）",
+            )
         } catch (e: Exception) {
             // 游标写不进去不影响本次换号（下一次会退回"从第一条开始"，并留一行日志说明）
-            MmLog.w(TAG, "顺序轮换：游标写盘失败（本次换号本身没受影响）：${e.message ?: e.javaClass.simpleName}")
+            MmLog.w(TAG, "「下一个」：游标写盘失败（本次换号本身没受影响）：${e.message ?: e.javaClass.simpleName}")
         }
     }
 
@@ -2376,7 +2524,7 @@ class CaptureService : Service() {
             ?: return PatrolRunner.NamePlan.Failed(
                 // 顺序轮换已在**启动前**解析成具体名字（`PatrolRequestConsumer.resolveNextServer`），
                 // 所以走到这里说明那份解析没成（清单空 / 读不了）——如实说清，不猜一个区服
-                "没指定要换到哪个区服（「顺序轮换」没能从服务器清单里算出下一个：清单是空的 / 读不了；" +
+                "没指定要换到哪个区服（「下一个」没能从服务器清单里算出来：清单是空的 / 读不了；" +
                     "详见 MM-Patrol 那一行日志）",
             )
         val data = calibrationData ?: return PatrolRunner.NamePlan.Failed("没有标定结果")
@@ -2808,7 +2956,7 @@ class CaptureService : Service() {
         val index = list.indexOfServerName(target)
         if (index < 0) {
             return RealmPickDecision.Result.Miss(
-                "服务器清单里没有「$target」这一条（「顺序轮换」算出来的名字与清单对不上）",
+                "服务器清单里没有「$target」这一条（「下一个」算出来的名字与清单对不上）",
             )
         }
         val entry = list.entries[index]
@@ -4494,6 +4642,14 @@ class CaptureService : Service() {
 
 
         private const val STATS_WINDOW_MS = 10_000L
+
+        /**
+         * **探针自己的输出间隔**（2026-10-18，progress 第 452 条）。
+         *
+         * 取值与 [STATS_WINDOW_MS] 相同（10 秒）⇒ 停更时两行仍是一一对应的节奏，读起来不别扭；
+         * 但**它们是两个独立计时**（[probeWindowStartAtMs] vs [lastStatsAt]）⇒ 窗口相位不再互相干扰。
+         */
+        private const val PROBE_WINDOW_MS = 10_000L
         private const val MAX_IMAGES = 2
 
         /**

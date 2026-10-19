@@ -584,8 +584,8 @@ class FloatingWindow(private val context: Context) {
     }
 
     /**
-     * 根层，顺序 = 换号 / 拜访 / 换号+拜访 / 更多 / 返回 App（+ 有流程时的进度块与控制行）
-     * （高频在上，误触代价最大的「停止」放最底）。
+     * 根层，顺序 = 换号 / 拜访 / 换号+拜访 / 返回 App / 更多（+ 有流程时的进度块与控制行）
+     * （高频在上；低频维护入口「更多」垫底，2026-10-19 用户口径；误触代价最大的「停止」仍在绝对最底）。
      *
      * 2026-09-30 用户口径：**根菜单再精简一行** —— 「拜访规则」撤掉，
      * 那份预设的入口改挂在「换号+拜访」行尾的 ⚙ 上（预设只被这一行用）。
@@ -734,18 +734,8 @@ class FloatingWindow(private val context: Context) {
                 onTrailing = { openSwitchVisitConfig() },
             ) { onVisitPreset() },
         )
-        // **「更多」**（2026-09-30 用户口径）：主菜单只留高频项；「导入服务器」「暂停自动关弹窗」「退出」这类
-        // **不启动流程 / 只维护数据**的动作都在这一层（原来它们与高频项并排占好几行）。
-        container.addView(
-            menuRow(
-                context.getString(R.string.floating_menu_glyph_more),
-                R.string.floating_menu_more,
-            ) { openGroup(FloatingMenu.Group.MORE) },
-        )
-        //（「退出」已按用户口径挪进「更多」层 —— 主菜单再短一行。）
-        // **返回 App**（T4-7，2026-09-24 用户要求）：把本 App 拉到前台。
-        // 位置：在「更多」之后、**流程控制行之前** —— 控制行"永远在最底、竖直零位移"是既定口径
-        // （见 [controlRow]：面板长高一行会让正在点的行整体位移 ⇒ 可能误触「换号+拜访」⇒ 立刻开一局）。
+        // **回 App**（T4-7，2026-09-24 用户要求；2026-10-19 文案精简）：把本 App 拉到前台。
+        // 位置：在「更多」**之前**、流程控制行之前。
         // 它是**动作**、误触代价为零（最坏就是回到 App），所以不必挤到最上面。
         // `context` 是无障碍 Service ⇒ **必须带 FLAG_ACTIVITY_NEW_TASK**；CLEAR_TOP 让已在栈里时回到原地。
         container.addView(
@@ -759,6 +749,18 @@ class FloatingWindow(private val context: Context) {
                 )
             },
         )
+        // **「更多」放菜单项的最后一行**（2026-10-19 用户口径：高频三项点完就往下走，
+        // 低频维护层别夹在中间挡道）。⚠ 它上面是「返回 App」、下面是**流程控制行**
+        // （「停止 / 继续」永远在绝对最底、竖直零位移，见 [controlRow]）—— 所以"最下面"= 静态菜单项的末行。
+        // 内容（2026-09-30 用户口径）：「导入服务器」「暂停自动关弹窗」「退出」这类
+        // **不启动流程 / 只维护数据**的动作都在这一层。
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_more),
+                R.string.floating_menu_more,
+            ) { openGroup(FloatingMenu.Group.MORE) },
+        )
+        //（「退出」已按用户口径挪进「更多」层 —— 主菜单再短一行。）
         // ⚠ 「⟳ 重新授权采集」这一行**已按用户口径取消**（2026-09-30）：它要做的事
         //（回本 App 的授权页）「返回 App」本来就能做到，留着只是重复一行。
         // **暂停 / 恢复「自动关弹窗」**（2026-09-30 加；**同日挪进「更多」** —— 主菜单只留高频项）：有些界面本来就有"关闭 / 返回"按钮
@@ -826,7 +828,14 @@ class FloatingWindow(private val context: Context) {
         LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
 
     /**
-     * 换号 → 选服务器：首行「下一个」（点一下立刻换下一个），下面才是服务器清单。
+     * 换号 → 选服务器：**上面一行「下一个」，下面两列区服名**（2026-10-19 U8）。
+     *
+     * ⚠ **「下一个」不占网格里的格子**（2026-10-19 用户口径，推翻当天早些时候的"第一格"）：
+     * App 的区服清单是**逐条复制游戏里那份两列排列**的 ⇒ 网格里一旦多一格「下一个」，
+     * 第 k 格就不再是清单第 k 条，玩家拿菜单和游戏选服页对照时**整块错位一格**。
+     * 所以「下一个」单独一行、在两列网格**上方**；网格里**只有区服名**，顺序 = 清单顺序。
+     *
+     * 这一层整层是"点了就走" ⇒ 点「下一个」= 选中该值**并立即执行一次**（U8-3 前半）。
      *
      * **这一层只有"换号"相关的东西**（2026-09-25 用户口径）：添加服务器**不属于**换号的下级动作
      * ⇒ 已搬到根菜单（与「试读这一屏」并排）。这里保留的判据是"这一层做的事 = 选一个区服切过去"。
@@ -838,21 +847,15 @@ class FloatingWindow(private val context: Context) {
                 R.string.floating_menu_switch,
             ) { backToRoot() },
         )
-        // 与下面的服务器名**同级、同一套行样式**（不带图标）—— 见 renderConfigServerPick 里的说明
         container.addView(
-            pickRow(context.getString(R.string.floating_menu_switch_next)) { onSwitchNext() },
+            pickRow(context.getString(R.string.floating_menu_server_next)) { onSwitchNext() },
         )
         if (serverNames.isEmpty()) {
             container.addView(noteRow(context.getString(R.string.floating_menu_no_server)))
             return
         }
         container.addView(
-            boundedScroll(
-                rows = serverNames.map { name ->
-                    pickRow(name) { onSwitchServer(name) }
-                },
-                rowCount = serverNames.size,
-            ),
+            pickGrid(serverNames.map { name -> pickRow(name) { onSwitchServer(name) } }),
         )
     }
 
@@ -903,30 +906,37 @@ class FloatingWindow(private val context: Context) {
         container.addView(
             menuRow(
                 context.getString(R.string.floating_menu_glyph_setting),
-                R.string.floating_menu_config_save,
+                R.string.floating_menu_config_run,
             ) { saveConfig() },
         )
     }
 
-    /** 设置页 → 选服务器（三级菜单）：首行「顺序轮换」，下面是服务器清单。 */
+    /** 设置页 → 选服务器（三级菜单）：上面一行「下一个」，下面两列区服名（顺序 = 清单顺序）。 */
     private fun renderConfigServerPick(container: LinearLayout) {
         container.addView(
-            menuRow(context.getString(R.string.floating_menu_glyph_back), R.string.floating_menu_switch) {
+            // 面包屑的"标题"就用这一层在做的事（2026-10-19 用户口径：原来错用「换号」，
+            // 从「拜访规则」进来却看见"换号"，像走错了层）
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_back),
+                R.string.floating_menu_server_title,
+            ) {
                 menuState = FloatingMenu.openConfigPick(menuState, FloatingMenu.Level.CONFIG)
                 rerender()
             },
         )
-        // 「顺序轮换」与下面的服务器名**同级、同一套行样式**：它不该带图标 ——
-        // 功能行才有图标槽，列表行没有；带图标会让它比服务器名多出一段、看起来像多了一层缩进
-        //（2026-09-16 用户口径）。当前策略就是"顺序轮换"时，它自己也带勾。
+        // 2026-10-19 U8：与换号层**同一个词、同一个位置** —— 「下一个」单独一行，在两列网格**上方**
+        //（原来它叫「顺序轮换」⇒ 两层说两套话，2026-09-19「策略名与动作名分开取词」已被推翻）。
+        // ⚠ **不进网格**：App 清单逐条复制游戏那份两列排列，网格里多一格就会整块错位（见 renderPickServer）。
+        // 差别只在**层的属性**：这一层"点了只存草稿" ⇒ 点它只把策略切回 NEXT，保存后才生效（U8-3 后半）。
         //
-        // 这里用 `floating_menu_config_server_auto`（"顺序轮换"）而**不是** `floating_menu_switch_next`
-        // （"下一个"）：本行是**策略选择**（把预设切回 NEXT），"点一下立刻换下一个"是换号那一层的动作
-        //（2026-09-19 用户口径：策略名与动作名分开取词）。
+        // 与下面的服务器名**同级、同一套行样式**：它不该带图标 —— 功能行才有图标槽，列表行没有；
+        // 带图标会让它比服务器名多出一段、看起来像多了一层缩进（2026-09-16 用户口径）。
+        // 当前策略就是"下一个"时，它自己也带勾。
+        val nextSelected = menuState.draft?.serverChoice == ServerChoice.NEXT
         container.addView(
             pickRow(
                 context.getString(R.string.floating_menu_config_server_auto),
-                selected = menuState.draft?.serverChoice == ServerChoice.NEXT,
+                selected = nextSelected,
             ) {
                 menuState = FloatingMenu.draftNextServer(menuState)
                 rerender()
@@ -939,14 +949,13 @@ class FloatingWindow(private val context: Context) {
         // 当前草稿里选中的那个 → 加勾号高亮
         val selectedServer = menuState.draft?.serverName
         container.addView(
-            boundedScroll(
-                rows = serverNames.map { name ->
+            pickGrid(
+                serverNames.map { name ->
                     pickRow(name, selected = name == selectedServer) {
                         menuState = FloatingMenu.draftServer(menuState, name)
                         rerender()
                     }
                 },
-                rowCount = serverNames.size,
             ),
         )
     }
@@ -980,7 +989,8 @@ class FloatingWindow(private val context: Context) {
 
     /**
      * 保存设置：写盘（临时文件 + rename），**写成功就直接按预设开始跑**（2026-10-01 用户口径：
-     * 「保存」= **保存并触发动作**；按钮文案同步改成「保存并开始」）。
+     * 「保存」= **保存并触发动作**；按钮文案 2026-10-19 缩短成「执行」—— 省下来的字宽留给菜单行，
+     * "会先保存"由点完后的「已保存：…」toast 说明）。
      *
      * 三条边界（都没变）：
      * - 草稿不完整（没选好友 / 指定区服却没选服）⇒ **不写盘、不触发**，原地说明缺什么；
@@ -1031,7 +1041,7 @@ class FloatingWindow(private val context: Context) {
         onVisitPreset()
     }
 
-    /** 服务器摘要（保存提示用）：「顺序轮换」或具体区服名。 */
+    /** 服务器摘要（保存提示用）：「下一个」或具体区服名。 */
     private fun serverSummary(preset: VisitPreset): String =
         when (preset.serverChoice) {
             ServerChoice.NEXT -> context.getString(R.string.floating_menu_config_server_auto)
@@ -1452,6 +1462,65 @@ class FloatingWindow(private val context: Context) {
         }
     }
 
+    /**
+     * 区服列表的**两列网格**（2026-10-19 U8）。
+     *
+     * - **顺序** = 传入顺序，按 [FloatingMenu.pickGridRows] 行优先填空（先左后右）⇒ 第 k 格 = 清单第 k 条，
+     *   **不重排、不分组**（验收 U8-1）；**网格里只放区服名** —— App 清单逐条复制游戏那份两列排列，
+     *   多塞一格（如「下一个」）会让玩家对照游戏选服页时**整块错位一格**（2026-10-19 用户口径）；
+     * - **每格显式给像素宽，不能用 `weight`**：菜单窗是 `WRAP_CONTENT`，[measureSelf] 用 **UNSPECIFIED**
+     *   规格量内容 —— 这种测量下"宽 0 + 权重"的子视图会算成 **0 宽**（格子直接消失，复核页踩过，
+     *   见 [captureCardRow]）；
+     * - 宽度按这一层**最长的名字**量（见 [pickCellWidthPx]）⇒ 面板宽度仍随区服名自适应（U8-7），
+     *   上下限见 [FloatingMenu.PICK_CELL_MIN_WIDTH_DP] / [FloatingMenu.PICK_CELL_MAX_WIDTH_DP]；
+     * - 限高的行数按**网格行数**算（[boundedScroll] 的 `rowCount`）—— 两列 ⇒ 同一份清单只占一半高度。
+     */
+    private fun pickGrid(cells: List<TextView>): ScrollView {
+        val cellWidthPx = pickCellWidthPx(cells)
+        val rows = FloatingMenu.pickGridRows(cells.size).map { indices ->
+            LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                indices.forEachIndexed { position, index ->
+                    addView(
+                        cells[index],
+                        LinearLayout.LayoutParams(
+                            cellWidthPx,
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                        ).apply {
+                            // 间隙只加在两格之间：末格不加右边距，否则面板右缘会多出一段空白
+                            if (position < indices.lastIndex) {
+                                rightMargin = dp(FloatingMenu.PICK_COLUMN_GAP_DP)
+                            }
+                        },
+                    )
+                }
+            }
+        }
+        return boundedScroll(rows = rows, rowCount = rows.size)
+    }
+
+    /**
+     * 网格单格的宽度（px）：取这层**最长的名字**，量的是**选中形态**（`✓ 名字`）⇒ 换选中项时面板宽度不跳、
+     * 勾号也不会把名字挤成省略号。夹在 [FloatingMenu.PICK_CELL_MIN_WIDTH_DP] ~
+     * [FloatingMenu.PICK_CELL_MAX_WIDTH_DP] 之间（两列合计 ≤ 260dp）。
+     *
+     * 用 `TextView.paint.measureText` 而不是 `View` 测量：格子还没挂进窗口，`measuredWidth` 还是 0。
+     */
+    private fun pickCellWidthPx(cells: List<TextView>): Int {
+        val first = cells.firstOrNull() ?: return dp(FloatingMenu.PICK_CELL_MIN_WIDTH_DP)
+        val paint = first.paint
+        val padPx = first.paddingLeft + first.paddingRight
+        val widest = cells.maxOf { cell ->
+            val name = cell.text.toString().removePrefix(PICK_SELECTED_PREFIX)
+            paint.measureText(PICK_SELECTED_PREFIX + name)
+        }
+        val desired = ceil(widest).toInt() + padPx
+        return desired.coerceIn(
+            dp(FloatingMenu.PICK_CELL_MIN_WIDTH_DP),
+            dp(FloatingMenu.PICK_CELL_MAX_WIDTH_DP),
+        )
+    }
+
     /** 纯说明行（不可点）：清单为空、待确认提示等。 */
     private fun noteRow(text: String): TextView = textView(12f, MENU_TEXT_COLOR).apply {
         this.text = text
@@ -1534,7 +1603,7 @@ class FloatingWindow(private val context: Context) {
         selected: Boolean = false,
         onClick: () -> Unit,
     ): TextView = textView(12f, if (selected) MENU_GLYPH_COLOR else MENU_TEXT_COLOR).apply {
-        text = if (selected) "✓ $name" else name
+        text = if (selected) PICK_SELECTED_PREFIX + name else name
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
         gravity = Gravity.CENTER_VERTICAL
@@ -3485,6 +3554,14 @@ class FloatingWindow(private val context: Context) {
         const val LABEL_TEXT_SIZE_SP = 11f
         const val LABEL_PADDING_H_DP = 14
         const val LABEL_PADDING_V_DP = 4
+
+        /**
+         * 列表行「被选中」的前置勾号（2026-09-16 起；2026-10-19 U8 提成常量）。
+         *
+         * 提出来是为了 [pickCellWidthPx] 能按**选中形态**量格宽 —— 两列网格里若按未选中形态量，
+         * 一旦选中项是最长的名字，勾号会把末字挤成省略号（U8-7「4 字名不塌」）。
+         */
+        const val PICK_SELECTED_PREFIX = "✓ "
 
         /** 失败原因文字的最大宽度（dp）：避免窗口被长文案撑宽（FR-07 尺寸紧凑）。 */
         const val REASON_MAX_WIDTH_DP = 200

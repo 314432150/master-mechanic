@@ -196,11 +196,31 @@ object PatrolRunner {
         // ⓪ **我们暂时"看不见"画面**（连续收不到新帧）：什么都不判、什么都不点，
         //    并且**把这一步的计时顺延到此刻**（闹钟暂停）—— 见 [RoundInput.framesStalled]。
         //    画面一回来，从那时起重新给足这一步的预算。
+        //⚠ **顺延有宽限上限**（2026-10-18，progress 第 450 条）：静态页是"**永远**不会有新帧"的形态
+        //    （真机：点开设置页之后平台一帧都不推，见第 449 条），若无上限则这一步**永远不会超时中止**
+        //    ⇒ 流程永远「运行中」、用户既等不到画面回来也看不到"已中止" ⇒ 实质是死等。
+        //    ⇒ 宽限（[PatrolFlow.STALL_REBASE_GRACE_MS]）用完后不再顺延 ⇒ 走既有的超时中止路径如实报失败。
         if (input.framesStalled) {
+            val rebased = PatrolFlow.rebaseOnStall(current, input.nowMs)
+            // ⚠ **本分支每轮都提前 return，所以超时判定必须写在这里**（`timedOut` 那几处在它后面，走不到）。
+            //   宽限用完后 [PatrolFlow.rebaseOnStall] 不再顺延 ⇒ 这一步的预算自然耗尽 ⇒ 到点如实中止。
+            if (PatrolFlow.timedOut(rebased, input.nowMs)) {
+                val reason = stallAbortReason(rebased, input)
+                return RoundResult(
+                    PatrolFlow.fail(rebased, reason, input.nowMs),
+                    null,
+                    "已中止：$reason",
+                )
+            }
             return RoundResult(
-                current.copy(stepEnteredAtMs = input.nowMs),
+                rebased,
                 null,
-                "画面久未更新（收不到新帧）：先不动手，这一步的计时暂停，等画面回来",
+                "画面久未更新（收不到新帧）：先不动手，这一步的计时暂停，等画面回来" +
+                    // ↓ 2026-10-18（progress 第 449 条）：光说"等画面回来"是空话 —— 用户能做的只有两件，
+                    //   **碰一下屏幕**或**重新授权采集**。这句话要说出来，否则用户只能干等。
+                    //   ⚠ 不写"多半是停在了静态页上"：用户当场更正过——**大厅背景有动画 CG 在循环**，
+                    //   而日志显示那段时间 `onImageAvailable 回调 0 次` ⇒ **成因是收不到帧，不是画面静止**。
+                    "。收不到新画面时碰一下屏幕，或重新授权采集",
             )
         }
 
@@ -479,6 +499,33 @@ object PatrolRunner {
         }
         return "第 ${current.step.number} 步（${current.step.label}）：$since $waitedSec 秒仍未识别出" +
             "要等的画面（期望「$expected」，现在${PatrolScenes.describe(input.state)}）"
+    }
+
+    /**
+     * **停更宽限用完后的中止原因**（2026-10-18，progress 第 450 条）。
+     *
+     * **刻意不套用[timeoutReason]**：那套话术是"等了 N 秒仍未识别出要等的画面（期望「X」，现在 Y）"——
+     * 而这里的根因**不是认不出画面，是根本收不到新画面**（`input.state` 读的是兜底重放的**旧**画面，
+     * 说它是"现在是什么画面"就是**拿旧画面冒充现状**，那正是第 266 条事故里"照着旧画面点"的同一类误导）。
+     *
+     * 必含的三件事实（用户能看到"发生了什么、要不要重授权、我这一击有没有用"）：
+     * ① 第几步、叫什么；② 等了多久；③ **这一击可能已经生效、只是无法确认** ——
+     * 真机那次就是这样：用户确认画面切到了设置页，而我们只拿到 8.6 秒前的大厅帧。
+     */
+    private fun stallAbortReason(current: PatrolFlow.State, input: RoundInput): String {
+        val stalledSec = if (current.framesStalledSinceMs > 0L) {
+            (input.nowMs - current.framesStalledSinceMs) / 1000
+        } else {
+            -1L
+        }
+        val acted = if (current.lastActionAtMs > 0L) {
+            "这一步已经点下去了（可能**已经生效**，只是无法确认）"
+        } else {
+            "这一步还没能动手"
+        }
+        return "第 ${current.step.number} 步（${current.step.label}）：收不到新画面，" +
+            "持续 ${stalledSec} 秒（宽限 ${PatrolFlow.STALL_REBASE_GRACE_MS / 1000} 秒已用完）⇒ 中止；" +
+            "$acted ⇒ 请让画面动一动或重新授权采集后点「继续」"
     }
 
     private fun waitOrAbort(current: PatrolFlow.State, input: RoundInput, what: String): RoundResult {

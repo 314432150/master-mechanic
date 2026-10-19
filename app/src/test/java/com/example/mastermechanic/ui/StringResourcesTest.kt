@@ -72,6 +72,33 @@ class StringResourcesTest {
         )
     }
 
+    /**
+     * **术语守卫：「顺序轮换」两层都改叫「下一个」**（2026-10-19 U8-2）。
+     *
+     * 用户口径：换号层与「拜访规则」参数层是**同一个值**（`ServerChoice.NEXT`），不该一层叫"顺序轮换"、
+     * 一层叫"下一个" —— 玩家看到两个词会以为这是两件事（"策略"与"动作"分开取词的旧口径已推翻）。
+     *
+     * 判据同 [noUserVisibleStringStillSaysPaohao]：**只查 `<string>` 正文**，注释里的历史说明可以留。
+     */
+    @Test
+    fun noUserVisibleStringStillSaysRotationStrategy() {
+        val stringsFile = File(findModuleDir(), "src/main/res/values/strings.xml")
+        assertTrue("找不到 strings.xml：${stringsFile.absolutePath}", stringsFile.isFile)
+
+        val stale = Regex("<string\\s+name=\"([^\"]+)\"[^>]*>(.*?)</string>", RegexOption.DOT_MATCHES_ALL)
+            .findAll(stringsFile.readText())
+            .filter { it.groupValues[2].contains("顺序轮换") }
+            .map { it.groupValues[1] }
+            .toList()
+
+        assertTrue(
+            "用户可见文案里还有 ${stale.size} 条写着「顺序轮换」⇒ 统一改成「下一个」" +
+                "（U8：两层是同一个值，只是层的属性不同）：\n" +
+                stale.joinToString("\n") { "  · $it" },
+            stale.isEmpty(),
+        )
+    }
+
     @Test
     fun everyStringResourceIsReferenced() {
         val moduleDir = findModuleDir()

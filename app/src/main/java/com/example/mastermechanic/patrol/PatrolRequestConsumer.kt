@@ -138,8 +138,8 @@ object PatrolRequestConsumer {
             // 带上时刻：每一步的时间预算从这里起算（PatrolFlow.STEP_TIMEOUT_MS）
             // 带上目标好友：第 9 步要在好友列表里按这个名字定位（2026-09-21）
             // 带上目标区服：第 5 步要在选服页里按这个名字定位（2026-09-24）；
-            // 顺序轮换时这里已经是**具体名字**，并记下"它是轮换算出来的"——
-            // 第 5 步真换成功后才推进游标（见 PatrolSession.targetServerFromRotation）
+            // 「下一个」时这里已经是**具体名字**，并记下"它是算出来的"——只用于日志；
+            // 游标推进**不看来路**（2026-10-19 U8）：任何真换到的区服都写，见 ServerRotation.switchedTo
             PatrolSession.start(
                 scene,
                 range,
@@ -183,7 +183,7 @@ object PatrolRequestConsumer {
         when (resolution) {
             is ServerRotation.Resolution.Next -> MmLog.i(
                 TAG,
-                "${kind.briefText}：顺序轮换 → 本次换到「${resolution.serverName}」（${resolution.detail}）",
+                "${kind.briefText}：「下一个」→ 本次换到「${resolution.serverName}」（${resolution.detail}）",
             )
 
             ServerRotation.Resolution.EmptyList -> MmLog.w(

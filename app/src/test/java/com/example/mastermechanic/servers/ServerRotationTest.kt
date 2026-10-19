@@ -1,5 +1,6 @@
 package com.example.mastermechanic.servers
 
+import com.example.mastermechanic.patrol.PatrolFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -7,6 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
+import java.time.LocalDate
 
 /**
  * 服务器「顺序轮换」游标单测（M4-T4-9 补齐，2026-09-24）：
@@ -119,5 +121,119 @@ class ServerRotationTest {
         // 清单存在但为空 ⇒ EmptyList（"没有下一个"是明确的结论，不是错误）
         ServerListStore.save(listFile, ServerList.EMPTY)
         assertEquals(ServerRotation.Resolution.EmptyList, ServerRotation.resolveNext(listFile, cursorFile))
+    }
+
+    // ---------------------------------------------------------------- U8：跨日重置 / 推进判据
+
+    private val day1 = LocalDate.of(2026, 10, 19)
+    private val day2 = LocalDate.of(2026, 10, 20)
+
+    @Test
+    fun theStepNumberMatchesTheFlow() {
+        // 本文件不依赖 patrol 包（纯数据层），所以"第 5 步"是常量 —— 靠这条钉住两边一致。
+        // 漂移的后果很隐蔽：判据里的 5 与 Step.PICK_SERVER 对不上 ⇒ 轮换与手选**都不再推进游标**。
+        assertEquals(
+            "ServerRotation.PICK_SERVER_STEP 必须等于 PatrolFlow.Step.PICK_SERVER.number",
+            PatrolFlow.Step.PICK_SERVER.number,
+            ServerRotation.PICK_SERVER_STEP,
+        )
+    }
+
+    @Test
+    fun cursorWrittenOnAnotherDayCountsAsNoCursor() {
+        // U8-4：跨日 ⇒ 从清单第一条开始，并把"跨日重置"写进说明（进日志）。
+        val dir = tempDir()
+        val listFile = File(dir, "servers/list.txt")
+        val cursorFile = File(dir, "servers/cursor.txt")
+        ServerListStore.save(listFile, list)
+
+        ServerRotation.saveCursor(cursorFile, "莲动渔舟", on = day1)
+
+        // 同一天：照常取它的下一条
+        val sameDay = ServerRotation.resolveNext(listFile, cursorFile, today = day1)
+        assertTrue("应当是 Next：$sameDay", sameDay is ServerRotation.Resolution.Next)
+        assertEquals("碧海之眼", (sameDay as ServerRotation.Resolution.Next).serverName)
+
+        // 跨日：游标视为空 ⇒ 清单第一条
+        val nextDay = ServerRotation.resolveNext(listFile, cursorFile, today = day2)
+        assertTrue("应当是 Next：$nextDay", nextDay is ServerRotation.Resolution.Next)
+        val pick = nextDay as ServerRotation.Resolution.Next
+        assertEquals("发条权杖", pick.serverName)
+        assertTrue("应写明跨日重置：${pick.detail}", pick.detail.contains("跨日重置"))
+        assertTrue("应说明从第一条开始：${pick.detail}", pick.detail.contains("第一条"))
+
+        // 只看游标侧：名字为空、原因说得清
+        val read = ServerRotation.readCursor(cursorFile, today = day2)
+        assertNull("跨日 ⇒ 名字不返回", read.serverName)
+        assertTrue("应说明原因：${read.detail}", read.detail?.contains("跨日") == true)
+    }
+
+    @Test
+    fun twoRunsOnTheSameDayKeepAdvancing() {
+        // U8-5：同一天内游标照常推进 —— 日期判定绝不能把它误重置（那会让"轮流"永远停在第一条）。
+        val dir = tempDir()
+        val listFile = File(dir, "servers/list.txt")
+        val cursorFile = File(dir, "servers/cursor.txt")
+        ServerListStore.save(listFile, list)
+
+        val first = ServerRotation.resolveNext(listFile, cursorFile, today = day1)
+            as ServerRotation.Resolution.Next
+        assertEquals("发条权杖", first.serverName)
+        ServerRotation.saveCursor(cursorFile, first.serverName, on = day1)
+
+        val second = ServerRotation.resolveNext(listFile, cursorFile, today = day1)
+            as ServerRotation.Resolution.Next
+        assertEquals("莲动渔舟", second.serverName)
+        ServerRotation.saveCursor(cursorFile, second.serverName, on = day1)
+
+        val third = ServerRotation.resolveNext(listFile, cursorFile, today = day1)
+            as ServerRotation.Resolution.Next
+        assertEquals("碧海之眼", third.serverName)
+    }
+
+    @Test
+    fun legacyCursorWithoutADateIsTreatedAsNoCursor() {
+        // U8 之前写的游标没有日期行：分不清是不是今天写的 ⇒ 当作没有游标（代价只是多从第一条起一次）
+        val file = File(tempDir(), "servers/cursor.txt")
+        file.parentFile?.mkdirs()
+        file.writeText("format=mm-server-cursor\nversion=1\nserverName=莲动渔舟\n", Charsets.UTF_8)
+
+        assertNull(ServerRotation.loadCursor(file))
+        assertTrue(
+            "应说明是旧版没有日期：${ServerRotation.readCursor(file).detail}",
+            ServerRotation.readCursor(file).detail?.contains("没有日期") == true,
+        )
+    }
+
+    @Test
+    fun aCorruptedDateIsTreatedAsNoCursor() {
+        // 有日期行但读不出来（手改 / 截断）：不拿它去轮换，并如实说原因（不静默）
+        val file = File(tempDir(), "servers/cursor.txt")
+        file.parentFile?.mkdirs()
+        file.writeText(
+            "format=mm-server-cursor\nversion=2\nserverName=莲动渔舟\nsavedOn=2026-13-40\n",
+            Charsets.UTF_8,
+        )
+
+        assertNull(ServerRotation.loadCursor(file))
+        assertTrue(
+            "应说明日期读不出来：${ServerRotation.readCursor(file).detail}",
+            ServerRotation.readCursor(file).detail?.contains("读不出来") == true,
+        )
+    }
+
+    @Test
+    fun cursorAdvancesOnlyWhenTheServerPickReallySucceeded() {
+        // U8-8：判据**不看来路**（轮换算出来的 / 手选的都一样），只看"第 5 步真的走出去了 + 目标名非空"。
+        val pick = ServerRotation.PICK_SERVER_STEP
+        assertTrue("走出第 5 步 ⇒ 推进", ServerRotation.switchedTo(pick, pick + 1, "莲动渔舟"))
+        assertFalse("还在第 5 步（没换成功）⇒ 不推进", ServerRotation.switchedTo(pick, pick, "莲动渔舟"))
+        assertFalse("流程结束（中止）⇒ 不推进", ServerRotation.switchedTo(pick, null, "莲动渔舟"))
+        assertFalse("没有目标名 ⇒ 不推进", ServerRotation.switchedTo(pick, pick + 1, null))
+        assertFalse("空名字 ⇒ 不推进", ServerRotation.switchedTo(pick, pick + 1, "  "))
+        assertFalse(
+            "不是从选服那一步出来的 ⇒ 不推进",
+            ServerRotation.switchedTo(pick - 1, pick + 1, "莲动渔舟"),
+        )
     }
 }

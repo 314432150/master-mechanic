@@ -432,6 +432,115 @@ class PatrolRunnerTest {
     }
 
     @Test
+    fun aStallThatOutlastsTheGraceStopsRebasingSoTheStepCanAbort() {
+        // 2026-10-18（progress 第 449/450 条，真机）：点开「设置页」这种**静态页**之后，
+        // 平台按"静态不出帧"的正常行为**一帧都不推** ⇒ 旧口径下每轮都顺延 ⇒ 这一步**永远不会中止**
+        // ⇒ 流程永远「运行中」、用户既等不到画面回来也看不到"已中止" ⇒ 实质是死等。
+        val acted = PatrolFlow.acted(startSwitch(), 1_000L, UiState.HALL)
+        val stallStart = 2_000L
+        val grace = PatrolFlow.STALL_REBASE_GRACE_MS
+
+        // 停更开始（第一轮顺延 ⇒ 宽限从这一刻起算）
+        val first = PatrolRunner.onRound(
+            acted,
+            input(UiState.HALL, nowMs = stallStart, framesStalled = true),
+        )
+        assertEquals("宽限内仍然在跑", PatrolFlow.Outcome.RUNNING, first.state?.outcome)
+        assertEquals("宽限内顺延照旧", stallStart, first.state?.stepEnteredAtMs)
+        assertEquals(stallStart, first.state?.framesStalledSinceMs)
+
+        // 宽限中段：仍在顺延（老行为一个字不变）
+        val mid = stallStart + grace / 2
+        val within = PatrolRunner.onRound(
+            requireNotNull(first.state),
+            input(UiState.HALL, nowMs = mid, framesStalled = true),
+        )
+        assertEquals("宽限中段仍在跑", PatrolFlow.Outcome.RUNNING, within.state?.outcome)
+        assertEquals("宽限中段顺延照旧", mid, within.state?.stepEnteredAtMs)
+        assertEquals("停更起点不因顺延而重置", stallStart, within.state?.framesStalledSinceMs)
+
+        // 宽限用完 ⇒ 顺延停下 ⇒ 这一步自己的预算自然耗尽 ⇒ 如实中止（不再死等）
+        val spentAt = stallStart + grace
+        val after = PatrolRunner.onRound(
+            requireNotNull(within.state),
+            input(UiState.HALL, nowMs = spentAt, framesStalled = true),
+        )
+        assertEquals(
+            "宽限用完后 stepEnteredAtMs 不再被顺延（否则永远等不到超时）",
+            mid,
+            after.state?.stepEnteredAtMs,
+        )
+        val budgetMs = PatrolFlow.timeoutFor(requireNotNull(after.state).step)
+        val aborted = PatrolRunner.onRound(
+            requireNotNull(after.state),
+            input(
+                UiState.HALL,
+                nowMs = maxOf(spentAt, mid + budgetMs) + 1L,
+                framesStalled = true,
+            ),
+        )
+        assertEquals("预算耗尽 ⇒ 如实中止（不再死等）", PatrolFlow.Outcome.FAILED, aborted.state?.outcome)
+        assertNull("中止时绝不下发点击", aborted.request)
+    }
+
+    @Test
+    fun aStallAbortSaysTheClickMayAlreadyHaveWorked() {
+        // 中止原因要说清"这一击可能已经生效，只是没法确认"——真机那次用户确认画面切到了设置页，
+        // 而我们只拿到 8.6 秒前的大厅帧。若写成"认不出画面"就是拿旧画面冒充现状（第 266 条同一类误导）。
+        val acted = PatrolFlow.acted(startSwitch(), 1_000L, UiState.HALL)
+        val stallStart = 2_000L
+        val grace = PatrolFlow.STALL_REBASE_GRACE_MS
+        val frozen = PatrolRunner.onRound(
+            acted,
+            input(UiState.HALL, nowMs = stallStart, framesStalled = true),
+        )
+        val abortAt = stallStart + grace + PatrolFlow.timeoutFor(requireNotNull(frozen.state).step) + 1L
+
+        val aborted = PatrolRunner.onRound(
+            requireNotNull(frozen.state),
+            input(UiState.HALL, nowMs = abortAt, framesStalled = true),
+        )
+        val reason = requireNotNull(aborted.state?.reason)
+        assertEquals(PatrolFlow.Outcome.FAILED, aborted.state?.outcome)
+        assertTrue("要说清是收不到新画面：$reason", reason.contains("收不到新画面"))
+        assertTrue("要说清已点下去、可能已生效：$reason", reason.contains("可能**已经生效**"))
+        assertTrue("要说清等了多久：$reason", reason.contains("${grace / 1000} 秒"))
+        assertFalse(
+            "不拿旧画面冒充现状（那套话术属timeoutReason）：$reason",
+            reason.contains("认不出") || reason.contains("期望「"),
+        )
+        assertTrue("要给出下一步：$reason", aborted.note.orEmpty().contains("继续"))
+    }
+
+    @Test
+    fun theStallGraceStartsOverWhenTheFrameComesBack() {
+        // 画面回来的那一瞬间（采集层调[PatrolFlow.rebaseStepBudget]）⇒ 停更结束、宽限重新起算，
+        // 且这一步的预算重新给满（老口径"画面一回来就重新给足预算"不许被这次改动削掉）。
+        val acted = PatrolFlow.acted(startSwitch(), 1_000L, UiState.HALL)
+        val stallStart = 2_000L
+        val grace = PatrolFlow.STALL_REBASE_GRACE_MS
+        val stalled = PatrolRunner.onRound(
+            acted,
+            input(UiState.HALL, nowMs = stallStart + grace - 1L, framesStalled = true),
+        )
+        val stillStalled = requireNotNull(stalled.state)
+        assertTrue("停更期间已记下起点", stillStalled.framesStalledSinceMs > 0L)
+
+        val backAt = stallStart + grace + 1_000L
+        val rebased = PatrolFlow.rebaseStepBudget(stillStalled, backAt)
+        assertEquals("宽限重新起算", 0L, rebased.framesStalledSinceMs)
+        assertEquals("预算重新给满", backAt, rebased.stepEnteredAtMs)
+
+        // 重新起算之后，又能顺延满一个宽限
+        val again = PatrolRunner.onRound(
+            rebased,
+            input(UiState.HALL, nowMs = backAt + grace - 1L, framesStalled = true),
+        )
+        assertEquals("新一轮停更又可以顺延", PatrolFlow.Outcome.RUNNING, again.state?.outcome)
+        assertEquals(backAt + grace - 1L, again.state?.stepEnteredAtMs)
+    }
+
+    @Test
     fun aDeniedClickDoesNotMakeTheStepWaitForTheScreenToChange() {
         // 2026-09-30（progress 第 325 条 b）：一击**被门禁拒掉**之后，采集层用
         // [PatrolFlow.withoutPendingAction] 把"已点过"标记撤回 ⇒ 下一轮应当**重新提议**，

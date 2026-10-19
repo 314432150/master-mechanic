@@ -133,9 +133,11 @@ object PatrolFlow {
      *   画面确实换了另一屏、且新画面上这一步有事可做时，不必再等满 [PatrolRunner.SETTLE_WAIT_MS]
      *   （2026-09-21，真机实测每步白等 ≈1.1~1.4s）。null 时退化为"窗口内一律等"的老行为，
      *   于是纯逻辑调用方（单测 / 离线重跑）不受影响。
-     * @param stepEnteredAtMs **进入这一步**的时刻（0 = 未记录 → 不做超时判定，纯逻辑单测不受影响）。
+     * @param stepEnteredAtMs **进入这一步**的时刻（0 = 未记录→ 不做超时判定，纯逻辑单测不受影响）。
      *   编排层用它算"这一步等多久了"（[STEP_TIMEOUT_MS]，见那里的说明）；⚠ **它不是唯一的起算点** ——
      *   2026-10-03 起耐心从 [budgetBase]（进入这一步 / 最后一次真动手，两者取晚）起算。
+     * @param framesStalledSinceMs **这一次"收不到新帧"开始的时刻**（0 = 当前不在停更）。
+     *   只服务于 [rebaseOnStall] 的宽限上限，见那里。
      */
     data class State(
         val range: Range,
@@ -147,6 +149,7 @@ object PatrolFlow {
         val lastActionAtMs: Long = 0L,
         val stateAtLastAction: UiState? = null,
         val stepEnteredAtMs: Long = 0L,
+        val framesStalledSinceMs: Long = 0L,
     ) {
         val isRunning: Boolean get() = outcome == Outcome.RUNNING && !paused
     }
@@ -472,7 +475,65 @@ object PatrolFlow {
      * ⚠ 只管**正在跑**的步骤：暂停 / 已中止 / 已完成的预算归 [resume] 管（别在这里替用户做决定）。
      */
     fun rebaseStepBudget(state: State, nowMs: Long): State =
-        if (state.isRunning && !state.paused) state.copy(stepEnteredAtMs = nowMs) else state
+        if (state.isRunning && !state.paused) {
+            // 画面回来了 ⇒ 这一次停更结束，宽限重新起算（见 [rebaseOnStall]）
+            state.copy(stepEnteredAtMs = nowMs, framesStalledSinceMs = 0L)
+        } else {
+            state
+        }
+
+    /**
+     * **停更期间的"预算顺延"，但有宽限上限**（2026-10-18，progress 第 450 条）。
+     *
+     * ## 为什么要上限（真机实录，见 progress 第 449 条）
+     *
+     * `PatrolRunner` ⓪ 分支每轮都把 [State.stepEnteredAtMs] 顺延到当轮时刻（"画面一回来就重新给足预算"），
+     * 这对**短时**停更是对的（不该让看不见画面的时间扣掉步骤的耐心）。
+     * 但真机那次卡死的形态是：**画面永远不会回来**——
+     * ```
+     * 22:56:45.900  点击下发｜锚点: hall_settings（点之前画面已经静止 7 秒）
+     * 22:56:49.347  3 秒没有新帧 ⇒ 判定「画面采集已停」：停止一切点击
+     * 22:56:50.543  第 3 步判定读到的是「大厅」｜帧：兜底重放（8615ms 前拍到）｜settings_logout 未命中
+     * ```
+     * 用户切到的是**设置页**（一个**静态页**）⇒ 平台按"静态不出帧"的正常行为**一帧都不推**
+     * ⇒ 每轮都顺延 ⇒ [waitedMs] 恒≈ 0 ⇒ [timedOut] 永远 false ⇒ 这一步**永远不会中止**，
+     * 流程永远 `RUNNING`，用户既等不到"画面回来"、也看不到"已中止" ⇒ **实质是死等**。
+     *
+     * ## 口径
+     *
+     * - 停更**不足** [STALL_REBASE_GRACE_MS] ⇒ **照旧顺延**（老行为一字不变）；
+     * - 停更**超过**宽限 ⇒ **不再顺延**（[State.stepEnteredAtMs] 原样保留）⇒ [waitedMs] 自然累加
+     *   ⇒ 步骤预算到点 ⇒ 走既有的超时中止路径，**如实告诉用户"画面久未更新"**，而不是永远"运行中"。
+     *
+     * ## 为什么这样改是安全的
+     *
+     * 这个改动**只减权限、不加权限**：顺延没了 ⇒ 只会**更早**停止，绝不会多点一下；
+     * 也不碰任何闸与判定。[State.framesStalledSinceMs] 在两条"停更结束"路径上被清零
+     * （[rebaseStepBudget]＝画面回来那一刻、[resume]＝用户点「继续」）⇒ 宽限每次都重新起算。
+     */
+    fun rebaseOnStall(state: State, nowMs: Long): State {
+        if (!state.isRunning || state.paused) return state
+        // 第一次进入停更：起算这一次停更的起点
+        val since = if (state.framesStalledSinceMs > 0L) state.framesStalledSinceMs else nowMs
+        return if (nowMs - since >= STALL_REBASE_GRACE_MS) {
+            state.copy(framesStalledSinceMs = since)
+        } else {
+            state.copy(stepEnteredAtMs = nowMs, framesStalledSinceMs = since)
+        }
+    }
+
+    /**
+     * **停更顺延的宽限上限**（毫秒）：一次停更最多"不吃步骤预算"这么久。
+     *
+     * 取 60 秒的三条理由：
+     * ① 够长——真机上"切后台一会儿 / 弹系统框 / 游戏加载"这类真会自愈的停更都在这个量级内，
+     * 宽限内它们**仍然不吃预算**（老行为保住）；
+     * ② 与 [FrameFreshness] 那条"停更 ≥60 秒界面改说处置"的档位同量级 ⇒ 到点时用户早就在界面上
+     * 看到「画面久未更新·请重授权」了，流程这时才中止，两边话术对得上；
+     * ③ 顺延一旦停住，剩余时间就是**这一步自己的预算**（[STEP_TIMEOUT_MS] 15 秒，第 6 步 30 秒），
+     * 所以从"宽限用完"到"如实中止"最多再多等一个预算那么久——不会让用户觉得又卡了一分钟。
+     */
+    const val STALL_REBASE_GRACE_MS = 60_000L
 
     /**
      * 用户点「继续」（FR-05）：**从失败的那一步重试**，不重跑前面的步骤；顺带解除暂停。
@@ -490,6 +551,8 @@ object PatrolFlow {
             // **作废"本步已下过击"**（2026-10-01）：见下面暂停分支的长注释（同一个坑）。
             lastActionAtMs = 0L,
             stateAtLastAction = null,
+            // 停更宽限重新起算（2026-10-18）：刚才那次停更不该继续占着宽限，见 [rebaseOnStall]。
+            framesStalledSinceMs = 0L,
         )
 
         // ⚠ **暂停后继续：必须把"本步已下过击"一起作废，并重新起算预算**（2026-10-01 真机修）。
@@ -513,6 +576,8 @@ object PatrolFlow {
             stepEnteredAtMs = if (nowMs > 0) nowMs else state.stepEnteredAtMs,
             lastActionAtMs = 0L,
             stateAtLastAction = null,
+            // 同上：停更宽限重新起算（2026-10-18，见 [rebaseOnStall]）
+            framesStalledSinceMs = 0L,
         )
 
         else -> state
