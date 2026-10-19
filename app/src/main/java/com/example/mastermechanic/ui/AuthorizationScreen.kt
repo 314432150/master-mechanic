@@ -88,7 +88,8 @@ private const val AUTH_LOG_TAG = "MM-Auth"
  * ⇒ 授权一通过就 `moveTaskToBack`，等屏幕切走（动画 ~300ms）再交给 [CaptureService] 建镜像。
  * 1 秒是"够切走、又不至于让一次性授权凭证等太久"的折中（Android 14+ 要求拿到凭证后尽快创建）。
  *
- * ⚠ 残余限制：运行期间**用户一回 App 界面采集就会再次断流**（悬浮窗菜单不受影响，它不是 Activity）。
+ * ⚠ 只有**建会话那一刻**本 App 在屏前才会掉进不可恢复的零帧。**运行期回 App 不致命**（2026-10-20 真机反向验证：
+ * 回 App 期间断流 38 秒、切回游戏自动恢复，未触发自救、无需重新授权）—— 别被"断流"这三个字误导去做多余的重建。
  */
 private const val CAPTURE_START_HOLD_MS = 1000L
 
