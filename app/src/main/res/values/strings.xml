@@ -107,7 +107,14 @@
     <string name="run_auth_only_capture">只差屏幕采集：一授权画面就切到游戏</string>
     <string name="run_frame_live">画面正常（新帧 %1$d 毫秒前）</string>
     <string name="run_frame_stale">画面已停更 %1$d 秒：识别与点击已暂停</string>
-    <string name="run_frame_starved">这次授权没收到任何画面 ⇒ 请重新授权采集</string>
+    <!-- **这次授权没被投喂**（原写"⇒ 请重新授权采集"，2026-10-20 改正）：
+         2026-10-01 真机实证"同一次会话里重新授权照样零帧，只有换进程能救"（见
+         [floating_frame_starved_notice]）⇒ 本页与悬浮窗**同一件事只能有一种说法**
+         （`RunScreen` 文件头那条：两处说法不一致正是 FR-05 最怕的失败方式）。
+         下面那颗「重新授权采集」按钮照旧给（与悬浮窗同一个口径：入口留着，用户可以再试一次）——
+         本句只负责把"通常没用"这一步说清，别让人白试一轮。
+         ⚠ 2026-10-20：一度改成"点菜单「重启 App」"，但那功能当天被用户要求删掉（自动拉起在本机做不到）⇒ 回到"退出重开"。 -->
+    <string name="run_frame_starved">这次授权一帧都没收到 ⇒ 请退出重开 App 再授权（只重新授权通常没用）</string>
     <string name="run_frame_no_session">采集会话不在：程序现在看不见游戏 ⇒ 请重新授权采集</string>
     <string name="run_flow_idle">当前没有进行中的流程</string>
     <!-- 「继续」在本页**只指路、不做按钮**（用户 2026-10-01 真机："在 App 里出现继续按钮没有意义，
@@ -240,21 +247,25 @@
     <string name="floating_menu_glyph_visit">☺</string>
     <string name="floating_menu_glyph_stop">■</string>
     <string name="floating_menu_glyph_back">←</string>
-    <!-- 回 App（2026-09-24 用户要求；2026-10-19 文案精简「返回 App」⇒「回 App」）：把本 App 拉到前台。
+    <!-- 返回 App（2026-09-24 用户要求；2026-10-19 曾精简成「回 App」；**2026-10-20 用户口径改回「返回 App」**，
+         并且从根菜单**移进「更多」层**——根菜单只留跑号相关的动作，回 App 更像"离开游戏去看设置"）。
          用独立 glyph（不是子菜单的 ←），避免"两个方向键含义不同" -->
     <string name="floating_menu_glyph_open_app">⌂</string>
-    <string name="floating_menu_open_app">回 App</string>
+    <string name="floating_menu_open_app">返回 App</string>
     <!-- 2026-09-30（真机第 301 条）：镜像帧流失效时，“旧画面”不能再当成“当前画面”下结论 ⇒
          原因条与入口都要指路到“重建采集”，而不是“回到大厅”。
          2026-10-01 接线（用户口径：M5 期间插「一键重新授权采集」入口）：两处用到同一行 ——
          ① 根菜单**条件行**（采集会话没了 / 画面停更 / 这次授权没被投喂时才出现，判据
-         `FloatingMenu.shouldOfferReauthorize`）；② 「更多」层**常驻行**（改过标定产物后重建采集的通路）。 -->
-    <string name="floating_menu_glyph_reauthorize">⟳</string>
+         `FloatingMenu.shouldOfferReauthorize`）；② 「更多」层**常驻行**（改过标定产物后重建采集的通路）。
+         ⚠ 2026-10-20：「零回调」时曾改成给「重启 App」，但那套自动拉起在这台 vivo 上做不到
+         （进程死后不重绑无障碍服务 / 闹钟拉起被后台启动限制吞掉，`docs/progress.md` 470/471）
+         ⇒ 用户当天要求删掉重启功能，这一行恢复原样；「重启 App」相关串与图标一并删除。 -->
     <string name="floating_menu_reauthorize">重新授权采集</string>
     <!-- 2026-09-30 改写：原文写着"**画面一直在动**却收不到新帧 ⇒ 镜像已失效" —— 那条前提当天被真机推翻
          （目标在前台 = 农场、画面静止、零新帧 60 秒：平台对静止画面本来就不产帧）。
          "没有新帧"分不出「屏幕真的没变」与「镜像坏了」⇒ 这里只陈述**事实**（看到的是旧画面）+ 给处置，
-         不再下"镜像已失效"的判断。 -->
+         不再下"镜像已失效"的判断。
+         2026-10-20：曾把处置改成「重启 App」，该功能当天被删除 ⇒ 本句恢复指向「重新授权采集」。 -->
     <string name="floating_reason_frame_stalled">采集画面已停更 %1$d 秒（现在看到的是旧画面）⇒ 点菜单里的「重新授权采集」重建（别回大厅）；若游戏画面本来就静止，等新画面即可</string>
     <!-- 2026-09-30：采集会话没了（用户从系统侧停掉 / 系统回收）⇒ 标签必须说出来，否则界面静默 -->
     <string name="floating_label_capture_stopped">采集已停止（点手柄重新授权）</string>
@@ -268,7 +279,9 @@
          标签只放 12 字（`FloatingLabelText.MAX_CHARS`），处置放菜单（[floating_frame_starved_notice]）。 -->
     <string name="floating_label_starved">授权没被投喂·请退出重开</string>
     <!-- 菜单里那一行：说清"这不是你的错、也不用干等"，并给出**唯一验证过的处置**（换进程）。
-         ⚠ 2026-10-01 真机实证：同一次会话里"重新授权"照样零帧（新会话 8 秒零帧），只有「退出」重开能救。 -->
+         ⚠ 2026-10-01 真机实证：同一次会话里"重新授权"照样零帧（新会话 8 秒零帧），只有换进程能救。
+         2026-10-20：曾做成**一键「重启 App」**，但自动拉起在本机做不到（进程死后系统不重绑无障碍服务）
+         ⇒ 用户要求删掉该功能，这里回到"菜单「退出」+ 桌面点图标"这条手动换进程的路。 -->
     <string name="floating_frame_starved_notice">这次授权后 %1$d 秒一帧都没收到 ⇒ 平台没有投喂画面（同一个进程里重建采集会话的常见毛病）。识别与点击都无法工作，请用菜单「退出」重开 App 再授权 —— 只重新授权通常没用</string>
     <!-- 停更**持续**（≥120 秒）时给的**处置**：到那时自动"换镜像表面"已经试过两轮
          （`CaptureService.checkSurfaceRetry`）⇒ 该用户动手了（用户口径 2026-09-30："停更持续时，
@@ -276,7 +289,9 @@
          叫人重新授权就是猜。 -->
     <string name="floating_label_frame_stalled_action">画面久未更新·请重授权</string>
     <!-- 菜单里那一行：**能做的事**要写全。⚠ 2026-09-30 真机教训：只"重新授权"不一定够
-         （21:02 那次的重新授权会话照样零帧），所以补上"仍然不更新就退出重开"这条兜底。 -->
+         （21:02 那次的重新授权会话照样零帧），所以补上"仍然不更新就退出重开"这条兜底。
+         2026-10-20：曾改成「重启 App」在前（真机证据 `mm-log-20261020` 00:11~00:31：零回调 20 分钟、
+         重授权 4 次里 2 次秒死），但该功能当天被用户要求删除 ⇒ 恢复下面这套四步阶梯。 -->
     <string name="floating_frame_stalled_notice">画面已停更 %1$d 秒：识别与点击都已暂停，程序也试过自动重接画面（收到新画面会自动恢复）。一直不更新就按顺序一次走完：① 切出游戏 ② 退出重开 App ③ 重新授权采集（弹窗里选中游戏）④ 切回游戏</string>
     <!-- 受阻分两种（处置相反）：没标 ⇒ 去标定页；标了没认出 ⇒ 重框 -->
     <string name="floating_label_popup_blocked_uncalibrated">关弹窗受阻·去标定</string>
@@ -311,7 +326,6 @@
     <string name="floating_menu_import_servers">导入服务器</string>
     <!-- 2026-10-01 用户口径：「更多」里加"重置提示位置" —— 顶部那条提示标签是唯一可拖动的部件，
          拖远之后手指对不准正中；一键回到默认位置（顶部居中，换文案也不再偏）。 -->
-    <string name="floating_menu_glyph_reset_label">↺</string>
     <string name="floating_menu_reset_label">重置提示位置</string>
     <string name="floating_menu_reset_label_done">提示位置已重置</string>
     <!-- 2026-09-30：第 6 步（登录游戏）里出现遮挡屏 ⇒ 其实**已经进游戏了**（新手引导出现得最早），
@@ -590,7 +604,7 @@
     <string name="server_list_title">服务器（%1$d 条）</string>
     <string name="server_empty">还没有服务器。点右上角「新增服务器」加第一条。
 
-列表里可以这样操作：双击一张卡 = 编辑，按住一张卡拖动 = 调整顺序，往左滑一张卡 = 尾部压出红色的「删除」按钮，点它就直接删掉（删了不能撤销）。</string>
+列表里可以这样操作：点按一张卡 = 编辑，按住一张卡拖动 = 调整顺序，往左滑一张卡 = 尾部压出红色的「删除」按钮，点它就直接删掉（底部 Snackbar 里还能撤销）。</string>
     <!-- 区号在列表里的显示后缀：用户填「256」→ 列表显示「256区」（用户自己写了「区」则不重复补）。 -->
     <string name="server_no_suffix">区</string>
     <!-- 等级在列表里的显示前缀：用户填「30」→ 列表显示「Lv.30」（已带 Lv / LV 前缀则不重复补）。 -->
@@ -603,11 +617,11 @@
     <!-- 「说明」弹层的正文（M5-U4 重排）：**一段一句 + 行首标签 + 每句 ≤60 字**，
          取代原先两段共 ≈350 字的长文（`server_subtitle` / `server_hint` 已删）。
          顺序：判重 → 定位 → 字段 → 顺序 → 手势（从最容易踩坑的到最常见的）。 -->
-    <string name="server_about_unique">判重：一个区服只有一个小号 ⇒ 同区服名只能有一条</string>
-    <string name="server_about_locate">定位：换号时只按「区服名称」找；找不到或不止一个就停下</string>
-    <string name="server_about_fields">字段：平台 / 区号 / 角色名 / 等级可留空，只是帮你认人</string>
+    <string name="server_about_unique">判重：同区服名只能有一条；同区号也只能有一条（换号按区号定位，重复就没法确定点哪一行）</string>
+    <string name="server_about_locate">定位：换号时先按「区号」找（数字比汉字读得准），区号没读到才退回「区服名称」全等；对不上或同时命中多行就停下</string>
+    <string name="server_about_fields">字段：区号必填（换号按它定位）；平台 / 角色名 / 等级可留空，只用于辨识</string>
     <string name="server_about_order">顺序：列表顺序 = 「下一个」的顺序</string>
-    <string name="server_about_gestures">手势：双击 = 编辑 ｜ 按住拖动 = 排序 ｜ 左滑出「删除」</string>
+    <string name="server_about_gestures">手势：点按 = 编辑（双击也行）｜ 按住拖动 = 排序 ｜ 左滑出「删除」</string>
     <string name="server_edit">编辑</string>
     <string name="server_move_up">前移</string>
     <string name="server_move_down">后移</string>
@@ -625,12 +639,13 @@
     <string name="server_field_platform">平台</string>
     <string name="server_platform_wechat">微信</string>
     <string name="server_platform_qq">QQ</string>
-    <string name="server_field_server_no_hint">区号，如 392</string>
+    <string name="server_field_server_no_hint">区号（必填），如 392</string>
     <string name="server_field_server">区服名称</string>
     <string name="server_field_role">角色名</string>
     <string name="server_field_level">等级</string>
-    <string name="server_field_required">区服名称不得为空（也不能只剩空格）；平台、区号、角色名与等级都可以留空。</string>
-    <string name="server_field_duplicate">这个区服已经在清单里了：一个区服只能建一个小号。想改它的角色名 / 等级，请回到列表双击这一条。</string>
+    <string name="server_field_required">区服名称与区号都必须填（区号就是换号时定位用的数字）；平台、角色名与等级可以留空。</string>
+    <string name="server_field_duplicate">这个区服已经在清单里了：一个区服只能建一个小号。想改它的角色名 / 等级，请回到列表点按这一条。</string>
+    <string name="server_field_duplicate_no">这个区号已经在清单里了：同一个区号只能有一条（换号时按区号定位，重复就没法确定点哪一行）。想改它的角色名 / 等级，请回到列表点按那一条。</string>
     <string name="server_field_separator">字段里不能出现「|」或换行。</string>
     <string name="server_confirm">保存</string>
     <string name="server_save_failed">保存失败：%1$s</string>
@@ -666,7 +681,7 @@
     <string name="friend_about_unique">判重：同一条名字只能有一条</string>
     <string name="friend_about_locate">定位：只认括号里的备注名，且要求完全一致</string>
     <string name="friend_about_name">名字：不能含「|」或换行（它会直接用于界面定位）</string>
-    <string name="friend_about_gestures">手势：双击 = 编辑 ｜ 按住拖动 = 排序 ｜ 左滑出「删除」</string>
+    <string name="friend_about_gestures">手势：点按 = 编辑（双击也行）｜ 按住拖动 = 排序 ｜ 左滑出「删除」</string>
     <string name="friend_empty">还没有好友。点「添加好友」录入想拜访的人。</string>
     <string name="friend_clear">整体清空</string>
     <string name="friend_clear_title">清空好友清单？</string>

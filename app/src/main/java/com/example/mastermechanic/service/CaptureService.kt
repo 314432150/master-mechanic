@@ -30,6 +30,7 @@ import androidx.core.content.IntentCompat
 import com.example.mastermechanic.MainActivity
 import com.example.mastermechanic.R
 import com.example.mastermechanic.action.ClickDispatch
+import com.example.mastermechanic.action.Haptics
 import com.example.mastermechanic.action.SystemKeys
 import com.example.mastermechanic.action.TextInjector
 import com.example.mastermechanic.patrol.FriendSearch
@@ -70,6 +71,8 @@ import com.example.mastermechanic.capture.CaptureSessionSignal
 import com.example.mastermechanic.capture.FrameExpectationSignal
 import com.example.mastermechanic.capture.CaptureSessionStatus
 import com.example.mastermechanic.servers.ServerRotation
+import com.example.mastermechanic.capture.FrameFeedHealth
+import com.example.mastermechanic.capture.FrameReadiness
 import com.example.mastermechanic.capture.FrameThrottle
 import com.example.mastermechanic.capture.FrameTimingStats
 import com.example.mastermechanic.capture.FrameSignature
@@ -114,6 +117,23 @@ class CaptureService : Service() {
     private var imageReader: ImageReader? = null
     private var frameThread: HandlerThread? = null
     private var frameThrottle = FrameThrottle(ACTIVE_INTERVAL_MS)
+
+    /**
+     * **帧供给体检**（2026-10-19，B）：判"平台是不是送得慢"。
+     *
+     * 只由帧线程访问（`handleFrameAvailable` / `processPixels` / 每秒心跳都在同一条线程上）。
+     * 判据与取舍见 [FrameFeedHealth] 的类注释：**不能看回调次数/秒**，要看"一轮结束后平台多久给下一帧"。
+     */
+    private val feedHealth = FrameFeedHealth()
+
+    /** 上一次因为"帧供给不足"换镜像表面的时刻（冷却用，与停更那条自救共用 [SURFACE_RETRY_MAX] 配额）。 */
+    private var lastSlowFeedHealAtMs = 0L
+
+    /** "帧供给不足"这句话是不是已经说过（同一段慢只留一行，避免每秒刷屏）。 */
+    private var slowFeedNoted = false
+
+    /** 上一次因为"兜底重放的旧画面"拒绝点击时留痕的时刻（同一条只记一次，见 stepPatrol 的那道闸）。 */
+    private var lastStaleReplayNoteAtMs = 0L
 
     /**
      * 上一次**新帧**到达的时刻（只在 [processFrame] 里更新；静止兜底的重放**不算**）。
@@ -690,8 +710,13 @@ class CaptureService : Service() {
         mediaProjection = projection
         projection.registerCallback(projectionCallback, null)
 
-        // 帧线程提升为前台优先级（T1-10b）：降低后台调度把重处理挤到小核的概率
-        val thread = HandlerThread("MM-CaptureFrames", Process.THREAD_PRIORITY_FOREGROUND)
+        // 帧线程优先级（T1-10b → 2026-10-19 再上调一档到 DISPLAY）
+        //
+        // 真机证据（2026-10-19，同一次进程运行）：每次**重建采集会话**后的 1~2 分钟里，连"灰度换算"
+        // 这种简单循环的 P95 都从 3.7ms 涨到 35.5ms（9 倍）、识别从 78ms 涨到 697ms ⇒ 不是算法变慢，
+        // 是这个进程被系统合成/编码挤了 CPU。FOREGROUND(-2) 挡不住这一档抢占，DISPLAY(-4) 与
+        // SurfaceFlinger 同级：我们同样是"要按帧节奏干活的线程"，被挤掉一帧就直接拖慢整步判定。
+        val thread = HandlerThread("MM-CaptureFrames", Process.THREAD_PRIORITY_DISPLAY)
         thread.start()
         frameThread = thread
         // 显式两行：`.also { frameHandler = it }` 里的 `frameHandler` 会解析成**正在初始化的局部变量**，
@@ -858,6 +883,10 @@ class CaptureService : Service() {
         // "刚跑完的结果"同样不跨会话：否则新会话刚开始，标签/菜单就挂着上一段的「已完成」
         PatrolResultSignal.clear()
         frameExpectationNoted = false
+        // 帧供给体检（2026-10-19）：观测不跨会话（新会话的空闲间隔没有可比性）
+        feedHealth.reset()
+        // "算得动吗"的读数同样不跨会话（新会话的耗时与上一场没有可比性）
+        FrameReadiness.reset()
         // "自上一枪以来画面变化"的基准不跨会话
         lastClickSignature = null
         lastClickAnchorSignature = null
@@ -1660,8 +1689,10 @@ class CaptureService : Service() {
                 surfaceRetryGaveUp = true
                 MmLog.w(
                     TAG,
+                    // 2026-10-20：真机上"同进程重新授权"在这种零回调状态下只能撑 1~14 秒
+                    //（`mm-log-20261020` 00:11~00:31）⇒ 只重新授权没用，得换进程（退出重开 App）
                     "换镜像表面已试 $surfaceRetries 次仍没有新帧 ⇒ 这条投喂通路救不回来：" +
-                        "请重新授权采集（或重启 App 重建 MediaProjection）",
+                        "请重新授权采集（若仍零帧就退出重开 App 重建 MediaProjection）",
                 )
             }
             return
@@ -1669,11 +1700,67 @@ class CaptureService : Service() {
         if (nextSurfaceRetryAtMs != 0L && now < nextSurfaceRetryAtMs) return
         surfaceRetries++
         nextSurfaceRetryAtMs = now + SURFACE_RETRY_COOLDOWN_MS
-        retryMirrorSurface(now - last)
+        retryMirrorSurface("采集画面已停更 ${(now - last) / 1000} 秒")
+    }
+
+    /**
+     * **"帧在来、但送得慢"的自救**（2026-10-19，B；用户口径："别要求用户主动重新授权后等几秒再跑流程"）。
+     *
+     * ## 为什么它必须独立于 [checkSurfaceRetry]
+     *
+     * 那条只在**完全收不到帧 ≥60 秒**（或切回前台 12 秒）时才动；真机 2026-10-19 第一轮是
+     * "帧一直在来，但一轮结束还要等 1~2.8 秒才有下一帧" ⇒ 它**一次都不会触发**，
+     * 于是整整 21 秒都耗在第 3 步的三次判定上（第二轮同一流程 5.7 秒）。
+     *
+     * ## 判据来自 [FrameFeedHealth]，不是"回调次数"
+     *
+     * 回调与识别同线程：我们算 2.8 秒时回调根本进不来 ⇒ "回调少"分不出"平台慢"还是"我们慢"。
+     * 本函数只在**轮次刚结束（我们空闲）之后的下一帧也来得慢**时才动 —— 那一定是平台侧。
+     *
+     * ## 纪律（与停更自救同一套）
+     *
+     * - 共用 [SURFACE_RETRY_MAX] 配额（每次换表面要新建 18MB×2 缓冲，不能无限抽）；
+     * - 有冷却 [SLOW_FEED_HEAL_COOLDOWN_MS]；不在前台不抽（静止属正常，动了反而添乱）；
+     * - 每次都留痕，救没救回来由紧跟着的「帧供给体检」/「帧回调探针」两行说话。
+     */
+    private fun checkSlowFeed(now: Long) {
+        if (!feedHealth.isSlow(now)) {
+            slowFeedNoted = false
+            return
+        }
+        if (!ForegroundSignal.isForeground) return
+        if (lastNewFrameAtMs == 0L) return // 还没有基线（刚授权）⇒ 交给「首次投喂自检」
+        if (!slowFeedNoted) {
+            slowFeedNoted = true
+            MmLog.w(
+                TAG,
+                "帧供给不足：连续 ${feedHealth.slowHits()} 次「轮次结束后 ≥" +
+                    "${FrameFeedHealth.SLOW_GAP_MS}ms 才来下一帧」（最近一次快帧间隔 " +
+                    "${feedHealth.lastFastGapMs()}ms）⇒ 先换镜像表面自救，**不需要用户重新授权**",
+            )
+        }
+        if (surfaceRetries >= SURFACE_RETRY_MAX) {
+            if (!surfaceRetryGaveUp) {
+                surfaceRetryGaveUp = true
+                MmLog.w(
+                    TAG,
+                    "换镜像表面已试 $surfaceRetries 次仍「送得慢」⇒ 这条投喂通路的响应速度救不回来：" +
+                        "可重新授权采集，或把最贵的两条模板框小一些（模板面积 ∝ 每轮成本）",
+                )
+            }
+            return
+        }
+        if (lastSlowFeedHealAtMs != 0L && now - lastSlowFeedHealAtMs < SLOW_FEED_HEAL_COOLDOWN_MS) return
+        // 与停更自救共用同一份冷却，避免两条自救路径在 30 秒内各抽一次
+        if (nextSurfaceRetryAtMs != 0L && now < nextSurfaceRetryAtMs) return
+        lastSlowFeedHealAtMs = now
+        nextSurfaceRetryAtMs = now + SURFACE_RETRY_COOLDOWN_MS
+        surfaceRetries++
+        retryMirrorSurface("帧供给不足（轮次结束后 ${FrameFeedHealth.SLOW_GAP_MS}ms 内拿不到下一帧）")
     }
 
     /** 换一次镜像表面（同尺寸）：见 [checkSurfaceRetry] 的三条纪律。仅帧线程调用。 */
-    private fun retryMirrorSurface(ageMs: Long) {
+    private fun retryMirrorSurface(cause: String) {
         val display = virtualDisplay ?: return
         val old = imageReader ?: return
         val handler = frameHandler ?: return
@@ -1707,7 +1794,7 @@ class CaptureService : Service() {
         flatReplayWarned = false
         MmLog.w(
             TAG,
-            "采集画面已停更 ${ageMs / 1000} 秒 ⇒ **换一次镜像表面自救**（第 $surfaceRetries/$SURFACE_RETRY_MAX 次；" +
+            "$cause ⇒ **换一次镜像表面自救**（第 $surfaceRetries/$SURFACE_RETRY_MAX 次；" +
                 "同尺寸 ${width}x$height，绝不动几何）—— 有没有救回来，看紧跟着的「帧回调探针」",
         )
     }
@@ -1881,6 +1968,18 @@ class CaptureService : Service() {
         // ⚠ 记的是**回调到达**，不是"帧被采纳"（那是 [lastNewFrameAtMs]，还要过节流）⇒
         //   两者差距本身就是信息：回调一直在来而采纳不动 ⇒ 问题在我们这一侧。
         lastFrameCallbackAtMs = SystemClock.elapsedRealtime()
+        // 帧供给体检（2026-10-19，B）：**必须在取帧之前**记这一笔 —— 取不到 buffer 的那次回调
+        // 同样证明"平台把帧送到了"，把它漏掉会把"我们自己队列卡住"误判成"平台没送"。
+        feedHealth.noteCallback(lastFrameCallbackAtMs)?.let { obs ->
+            if (obs.slow && obs.hits == FrameFeedHealth.SLOW_HITS_TO_JUDGE) {
+                MmLog.w(
+                    TAG,
+                    "帧供给体检：一轮结束后 **${obs.gapMs}ms** 才来下一帧（连续 ${obs.hits} 次 ≥ " +
+                        "${FrameFeedHealth.SLOW_GAP_MS}ms）⇒ 判「**平台送得慢**」" +
+                        "（不是我们算不完：算得慢时一轮结束后队列里本来就有帧在等，间隔会是几毫秒）",
+                )
+            }
+        }
         val reader = imageReader ?: return
         val image = try {
             reader.acquireLatestImage()
@@ -1989,6 +2088,9 @@ class CaptureService : Service() {
             val now = SystemClock.elapsedRealtime()
             // 停更时的**自救**：换一次镜像表面（有上限 / 有冷却 / 每次都留痕，见 checkSurfaceRetry）
             checkSurfaceRetry(now)
+            // **帧供给不足**时的自救（2026-10-19，B）：画面在来、但每轮都要等 1~3 秒才等到下一帧 ——
+            // 这种状态既不触发"零帧"也不触发"停更"，过去没有任何人管（见 [FrameFeedHealth]）
+            checkSlowFeed(now)
             // 帧一直不来时，每 10 秒把"回调 / 取空"的探针写出来（正常工作时那一行由 maybeLogStats 负责）
             logFrameProbeIfQuiet(now)
             // 几何守卫（每秒一次）：帧几何与屏幕几何必须一致（见 geometryMismatchSinceMs）
@@ -2233,6 +2335,13 @@ class CaptureService : Service() {
 
         val result = recognitionLoop.process(gray, ForegroundSignal.isForeground)
         recordProcessingCost(SystemClock.elapsedRealtimeNanos() - startNs, grayNs)
+        // **"这个进程现在算得动吗"**（2026-10-19）：开跑前的预热闸读这里（见 `FrameReadiness`）。
+        // 放这里是因为**新帧与静止兜底两条路径都会经过** `processPixels` —— 重新授权后画面静止、
+        // 只有兜底轮在跑，正是最需要读数的那段时间（只看 NFR-01 那个 100 帧窗口根本等不到）。
+        FrameReadiness.noteRoundCost(
+            SystemClock.elapsedRealtime(),
+            (SystemClock.elapsedRealtimeNanos() - startNs) / 1_000_000.0,
+        )
         recordSignalCosts()
         cyclesRun++
         if (!result.frozen) {
@@ -2401,6 +2510,9 @@ class CaptureService : Service() {
 
         // 节流基准回填到「本轮结束」（T1-13）：使间隔成为两轮之间的休息时间，不与单轮耗时叠加、也不退化。
         frameThrottle.markProcessedEnd(SystemClock.elapsedRealtime())
+        // 帧供给体检（2026-10-19，B）：**观测起点必须在这里** —— 此刻我们一定是空闲的，
+        // 下一帧什么时候到就只反映平台侧的速度（见 FrameFeedHealth 的类注释）。
+        feedHealth.noteRoundEnd(SystemClock.elapsedRealtime())
     }
 
 
@@ -3511,7 +3623,35 @@ class CaptureService : Service() {
         }
         PatrolSession.note(outcome.note)
 
+        // **A（2026-10-19）：点击前不接受"又旧、而且帧供给已被判慢"的画面。**
+        //
+        // ⚠ 为什么必须带上 [feedHealth] 那道条件，而不是单看帧龄：**静态页一帧都不推是正常的**
+        // （`PatrolFlow` 里记着真机实录：用户在设置页，判定读到的是「兜底重放（8615ms 前）」而
+        // `settings_logout` 没命中 —— 那一屏根本不会再出新帧）。只看帧龄的话，第 3 步在设置页上
+        // **一次都点不出去**，会把"退出登录"整条链废掉。
+        // ⇒ 只有"画面确实在动、平台却送得慢"（[FrameFeedHealth.isSlow]）时，旧兜底帧才不许用作点击依据；
+        //    静止页面的旧帧照旧放行（与既有的"屏幕没变过"口径一致）。
+        val replayAgeMs = now - currentFrameAtMs
+        val staleReplay = currentFrameReplayed &&
+            replayAgeMs >= PATROL_REPLAY_MAX_AGE_MS &&
+            feedHealth.isSlow(now)
+        if (staleReplay && now - lastStaleReplayNoteAtMs >= STALE_REPLAY_NOTE_INTERVAL_MS) {
+            lastStaleReplayNoteAtMs = now
+            MmLog.w(
+                TAG,
+                "第 ${current.step.number} 步不动作：这一轮用的是**兜底重放的旧画面**（${replayAgeMs}ms 前拍到）" +
+                    "且帧供给已被判「平台送得慢」⇒ 等一张新帧再动（不点、也不下结论）",
+            )
+        }
+
         outcome.request?.let { request ->
+            // 前面那条闸（A）：这一枪**不发**，并把"已点过"标记撤回 —— 与点击被门禁拒绝走同一条退路
+            //（下一轮重新定位、重新提议；不消耗重试次数、不算失败，见 `PatrolFlow.withoutPendingAction`）。
+            // ⚠ 只有"步骤没变"时才撤回：万一这一轮同时还推进了步骤，撤回会让流程跳步。
+            if (staleReplay && outcome.state?.step == current.step) {
+                outcome.state?.let { PatrolSession.commit(PatrolFlow.withoutPendingAction(it), generation) }
+                return@let
+            }
             patrolSeq++
             lastPatrolNote = null
             lastAbortAnnounced = null
@@ -3642,6 +3782,9 @@ class CaptureService : Service() {
             lastPatrolNote = null
             lastAbortAnnounced = null
             MmLog.i(TAG, "$flowTag: 已完成（区间终点）")
+            // **震动反馈**（2026-10-20 用户口径"流程开始和结束时各一个"）：这里每轮只会进来一次
+            //（stop() 之后 `PatrolSession.current` 立刻为 null ⇒ 下一轮走 idle 提前返回）。
+            Haptics.flowEnded(this)
         } else if (outcome.failed) {
             // **同一句只记一次**（2026-09-20 修）：中止后流程停在 FAILED，但每轮还会走进来；
             // 不去重的后果是日志被同一行刷爆（真机一次测试 3445 行里大半是它），排障时把关键行冲掉。
@@ -3649,6 +3792,9 @@ class CaptureService : Service() {
             if (reason != null && reason != lastAbortAnnounced) {
                 lastAbortAnnounced = reason
                 MmLog.w(TAG, "$flowTag: 已中止 —— $reason")
+                // 中止也走"结束"节奏（2026-10-20）：震动只报"这一轮结束了"，失败原因由顶部标签常驻显示。
+                // 去重判据与日志同一条（`lastAbortAnnounced`）⇒ 不会每轮都震。
+                Haptics.flowEnded(this)
             }
         } else if (outcome.state?.paused == true && !current.paused) {
             // **刚**进入暂停（切到后台 / 离开游戏）：回游戏时用户要立刻知道"得手动点继续"（FR-05），
@@ -4685,6 +4831,30 @@ class CaptureService : Service() {
 
         /** 两次「换镜像表面」之间的冷却（ms）：换完要给合成器一点时间，别连着抽。 */
         private const val SURFACE_RETRY_COOLDOWN_MS = 30_000L
+
+        /**
+         * "帧供给不足"自救自己的冷却（ms，2026-10-19）。
+         *
+         * 比停更那条（30 秒）短：慢供给是**正在拖慢每一步**的状态，等 30 秒意味着一整轮流程都白跑；
+         * 10 秒够合成器接上新表面，又不会在两三个轮次里连着抽两次。
+         */
+        private const val SLOW_FEED_HEAL_COOLDOWN_MS = 10_000L
+
+        /**
+         * **兜底重放的帧最多旧多少还能作为点击依据**（ms，2026-10-19，A）。
+         *
+         * 取 1.5 秒的理由：
+         * - 兜底缓存每 [PIXEL_CACHE_INTERVAL_MS]（300ms）最多更新一次，静止页上"1 秒内的旧帧"是常态；
+         * - 真机第一轮出问题的那次判定读的是 **2781ms** 前的兜底帧 —— 1.5 秒能挡住它，又不至于把
+         *   正常的静止页误伤。
+         *
+         * ⚠ **单独这一条不构成拦截条件**：必须同时满足 [FrameFeedHealth.isSlow]（"画面在动、平台送得慢"）。
+         * 只看帧龄会把"设置页"这类**平台根本不产帧**的静态页整条卡死（见 `stepPatrol` 里的说明）。
+         */
+        private const val PATROL_REPLAY_MAX_AGE_MS = 1_500L
+
+        /** "旧兜底帧 ⇒ 这一枪不发"这句话的最小间隔（ms）：同一段慢里只留一行。 */
+        private const val STALE_REPLAY_NOTE_INTERVAL_MS = 3_000L
 
         /**
          * 连续"点击被拒"几次才把原因挂到菜单上（见 [CLICK_DENY_NOTE_STREAK] 的用法）。

@@ -96,6 +96,8 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
         ForegroundSignal.addListener(onForegroundChanged)
         onForegroundChanged(ForegroundSignal.status) // 初始同步（监听只覆盖后续变化）
         handler.postDelayed(recheck, RECHECK_INTERVAL_MS)
+        // 2026-10-20：「重启 App」的自动拉起已按用户要求删除（两次真机都做不到，见 `docs/progress.md` 470/471）：
+        // 这里原来读交接单并 `startActivity`，前提是"进程死后系统会重绑本服务"，而本机实测不重绑。
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

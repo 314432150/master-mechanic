@@ -24,8 +24,11 @@ import android.view.ViewConfiguration
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.annotation.DrawableRes
+import androidx.annotation.StringRes
 import com.example.mastermechanic.MainActivity
 import com.example.mastermechanic.R
 import com.example.mastermechanic.action.PopupCloseSignal
@@ -646,6 +649,9 @@ class FloatingWindow(private val context: Context) {
         // 正常跑着时**不占这一行**（面板长高会让正在点的行整体位移 ⇒ 误点相邻项）。
         // 位置紧挨在它要解决的那条原因行下面：**看完原因，顺手就点**（原来得"收起面板 → 回 App →
         // 找授权页 → 点建立采集"四步）。常驻通路在「更多」层（见 [renderMore]）。
+        // ⚠ 2026-10-20：「零回调」时有段时间改成给「重启 App」，但那套自动拉起在这台 vivo 上做不到
+        // （进程死后系统不重绑无障碍服务；闹钟拉起被后台启动限制吞掉 —— 见 `docs/progress.md` 470/471）
+        // ⇒ 用户当天要求**去掉重启功能**，这里恢复原样。
         if (FloatingMenu.shouldOfferReauthorize(
                 captureActive = CaptureSessionSignal.isActive,
                 frameStale = FrameFreshness.isStale(),
@@ -654,7 +660,8 @@ class FloatingWindow(private val context: Context) {
         ) {
             container.addView(
                 menuRow(
-                    context.getString(R.string.floating_menu_glyph_reauthorize),
+                    // 「权限」图标（2026-10-20 用户口径：原来那枚 ⟳ 容易被当成"刷新"）
+                    R.drawable.ic_menu_permission,
                     R.string.floating_menu_reauthorize,
                 ) { onRequestReauthorize() },
             )
@@ -744,26 +751,12 @@ class FloatingWindow(private val context: Context) {
                 onTrailing = { openSwitchVisitConfig() },
             ) { onVisitPreset() },
         )
-        // **回 App**（T4-7，2026-09-24 用户要求；2026-10-19 文案精简）：把本 App 拉到前台。
-        // 位置：在「更多」**之前**、流程控制行之前。
-        // 它是**动作**、误触代价为零（最坏就是回到 App），所以不必挤到最上面。
-        // `context` 是无障碍 Service ⇒ **必须带 FLAG_ACTIVITY_NEW_TASK**；CLEAR_TOP 让已在栈里时回到原地。
-        container.addView(
-            menuRow(
-                context.getString(R.string.floating_menu_glyph_open_app),
-                R.string.floating_menu_open_app,
-            ) {
-                context.startActivity(
-                    Intent(context, MainActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
-                )
-            },
-        )
         // **「更多」放菜单项的最后一行**（2026-10-19 用户口径：高频三项点完就往下走，
-        // 低频维护层别夹在中间挡道）。⚠ 它上面是「返回 App」、下面是**流程控制行**
-        // （「停止 / 继续」永远在绝对最底、竖直零位移，见 [controlRow]）—— 所以"最下面"= 静态菜单项的末行。
+        // 低频维护层别夹在中间挡道）。⚠ 它下面是**流程控制行**（「停止 / 继续」永远在绝对最底、
+        // 竖直零位移，见 [controlRow]）—— 所以"最下面"= 静态菜单项的末行。
         // 内容（2026-09-30 用户口径）：「导入服务器」「暂停自动关弹窗」「退出」这类
         // **不启动流程 / 只维护数据**的动作都在这一层。
+        // 2026-10-20：「返回 App」也从根菜单挪进来了（用户口径）—— 根菜单只留跑号动作。
         container.addView(
             menuRow(
                 context.getString(R.string.floating_menu_glyph_more),
@@ -851,12 +844,7 @@ class FloatingWindow(private val context: Context) {
      * ⇒ 已搬到根菜单（与「试读这一屏」并排）。这里保留的判据是"这一层做的事 = 选一个区服切过去"。
      */
     private fun renderPickServer(container: LinearLayout) {
-        container.addView(
-            menuRow(
-                context.getString(R.string.floating_menu_glyph_back),
-                R.string.floating_menu_switch,
-            ) { backToRoot() },
-        )
+        container.addView(breadcrumbRow(R.string.floating_menu_switch) { backToRoot() })
         container.addView(
             pickRow(context.getString(R.string.floating_menu_server_next)) { onSwitchNext() },
         )
@@ -877,7 +865,7 @@ class FloatingWindow(private val context: Context) {
     private fun renderConfig(container: LinearLayout) {
         val draft = menuState.draft ?: return
         container.addView(
-            menuRow(context.getString(R.string.floating_menu_glyph_back), R.string.floating_menu_setting) {
+            breadcrumbRow(R.string.floating_menu_setting) {
                 menuState = FloatingMenu.back(menuState)
                 rerender()
             },
@@ -926,10 +914,7 @@ class FloatingWindow(private val context: Context) {
         container.addView(
             // 面包屑的"标题"就用这一层在做的事（2026-10-19 用户口径：原来错用「换号」，
             // 从「拜访规则」进来却看见"换号"，像走错了层）
-            menuRow(
-                context.getString(R.string.floating_menu_glyph_back),
-                R.string.floating_menu_server_title,
-            ) {
+            breadcrumbRow(R.string.floating_menu_server_title) {
                 menuState = FloatingMenu.openConfigPick(menuState, FloatingMenu.Level.CONFIG)
                 rerender()
             },
@@ -973,7 +958,7 @@ class FloatingWindow(private val context: Context) {
     /** 设置页 → 从好友清单里挑一个（挑完回设置页）。 */
     private fun renderConfigFriendPick(container: LinearLayout) {
         container.addView(
-            menuRow(context.getString(R.string.floating_menu_glyph_back), R.string.floating_menu_visit_title) {
+            breadcrumbRow(R.string.floating_menu_visit_title) {
                 menuState = FloatingMenu.openConfigPick(menuState, FloatingMenu.Level.CONFIG)
                 rerender()
             },
@@ -1094,7 +1079,7 @@ class FloatingWindow(private val context: Context) {
      */
     private fun renderOcrResult(container: LinearLayout) {
         container.addView(
-            menuRow(context.getString(R.string.floating_menu_glyph_back), ocrTitleRes()) {
+            breadcrumbRow(ocrTitleRes()) {
                 // 返回**根菜单**：入口在一级（「更多 → 导入服务器」），所以"回上一级"就是回根。
                 // 沿革：2026-09-25 之前「一键添加服务器」挂在「换号 → 选服务器」下，那时返回要回那一层
                 // （否则想再读下一屏得重走"换号 → 一键添加"）；入口搬到一级之后那条口径自然消失，
@@ -1597,7 +1582,11 @@ class FloatingWindow(private val context: Context) {
         // 仍保持**单行 + 省略号**：行数一变面板高度就变，正在点菜单的人会点错行（见本函数的对象注释）。
         maxWidth = dp(STATUS_MAX_WIDTH_DP)
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(8 + MENU_GLYPH_SLOT_DP + 6), dp(2), dp(8), dp(2))
+        // ⚠ 2026-10-20 修正：原来写的是 `8 + 图标槽 18 + 6` = 32dp，**多算了 6dp** ——
+        // 那 6dp 是 `menuGlyphView` 的**右内边距**，它算在 18dp 的槽宽**里面** ⇒
+        // 功能行的文字其实从 `8 + 18` = **26dp** 开始。这 6dp 就是用户报的"列表文字看起来比面包屑靠右、
+        // 像有缩进"（见 [pickRow] 同一条修正）。
+        setPadding(dp(8 + MENU_GLYPH_SLOT_DP), dp(2), dp(8), dp(2))
     }
 
     /**
@@ -1617,8 +1606,16 @@ class FloatingWindow(private val context: Context) {
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
         gravity = Gravity.CENTER_VERTICAL
-        // 左内边距 = 功能行的（8 + 图标槽 18 + 图标后间距 6）→ 文字起点对齐
-        setPadding(dp(8 + MENU_GLYPH_SLOT_DP + 6), dp(2), dp(8), dp(2))
+        // 左内边距 = 功能行文字的起点（**8 + 图标槽 18 = 26dp**）→ 与面包屑 / 功能行逐像素对齐。
+        //
+        // ⚠ **2026-10-20 修正 6dp 偏差**（用户报："拜访面包屑文字和好友列表的文字看起来不是左对齐的，
+        // 好友列表要靠右一点，就好像存在缩进"）：这里原来写 `8 + 18 + 6` = 32dp，把"图标后的 6dp 间距"
+        // **算了两遍** —— 那 6dp 是 [menuGlyphView] 的**右内边距**，本来就算在 18dp 的槽宽**里面**
+        // （见 `menuIconView` 注释里 2026-10-20 那次"图标版槽宽写成 24dp 导致整行右移 6dp"的同一条坑）。
+        // 功能行文字真实起点是 `8 + 18` = 26dp ⇒ 列表行一直比它右 6dp。
+        // 以前不明显是因为列表旁边的面包屑本身也在 26dp、而好友行用的是功能行（26dp）；
+        // 2026-10-20 好友行改成 [pickRow]（32dp）之后，这 6dp 才被一眼看出来。
+        setPadding(dp(8 + MENU_GLYPH_SLOT_DP), dp(2), dp(8), dp(2))
         // 行高比功能行高一档（2026-09-16 用户口径「列表太紧凑」）：文字在行内垂直居中
         minHeight = dp(FloatingMenu.PICK_ROW_HEIGHT_DP)
         // 点按反馈与功能行同一套
@@ -1626,6 +1623,38 @@ class FloatingWindow(private val context: Context) {
         isClickable = true
         setOnClickListener { onClick() }
     }
+
+    /**
+     * **面包屑行**（2026-10-20 用户口径："面包屑行底部加一条 1dp 分隔线"）：
+     * 「← 这一层在做什么」+ 底下压一道 1dp 细线。
+     *
+     * 为什么现在加这条线：上面 473 条已经确认过**不加缩进**（面包屑与列表行的文字本来就在同一条 32dp 竖线上），
+     * 于是"这一层从哪儿开始"只剩颜色/粗细这类**不占宽度**的手段可用 —— 一道 25% 白的 1dp 线，
+     * 在深色面板（[MENU_FILL_COLOR]）上刚好是一条能被看见、又不会跟图标抢视线的界。
+     *
+     * ⚠ 分隔线**不参与读屏**（纯装饰）：`importantForAccessibility = NO`，否则读屏会多念一句空节点。
+     * ⚠ 它随面包屑行**一起** add 进容器（一个纵向小容器），不在 7 个调用点各写一遍 ——
+     * 少一处漏写就是"某一层没有分隔线"，而这种不一致只有真机肉眼才看得出来。
+     */
+    private fun breadcrumbRow(text: CharSequence, onClick: () -> Unit): LinearLayout =
+        LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(menuRow(context.getString(R.string.floating_menu_glyph_back), text) { onClick() })
+            addView(
+                View(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        dp(1),
+                    )
+                    setBackgroundColor(BREADCRUMB_DIVIDER_COLOR)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                },
+            )
+        }
+
+    /** 文案来自资源 id 的重载（绝大多数面包屑）。 */
+    private fun breadcrumbRow(@StringRes textRes: Int, onClick: () -> Unit): LinearLayout =
+        breadcrumbRow(context.getString(textRes), onClick)
 
     /**
      * 展开时读一次两份清单：菜单里能选的目标**只能来自清单**（引用口径 —— 手打名字是
@@ -1696,6 +1725,27 @@ class FloatingWindow(private val context: Context) {
     ): LinearLayout = menuRowShell(glyph, text, subText = null, description, onClick)
 
     /**
+     * **图标版**功能行（2026-10-20 用户口径：「重新授权采集」换「权限」图标、「重置提示位置」换「提示」图标）。
+     *
+     * 为什么改成矢量图而不是继续挑一个 Unicode 字形：字形只能碰运气（「权限」没有可靠的等宽单色字符，
+     * 用 emoji 又会被渲染成彩色双宽，与其它行不是一个调子 —— 见 [MENU_GLYPH_SLOT_DP] 那条踩坑记录）。
+     * 矢量图还能被 [MENU_GLYPH_COLOR] 染色，与字形行颜色完全一致。
+     *
+     * ⚠ 图标槽宽度与字形行**完全一致**（[MENU_GLYPH_SLOT_DP] + 6dp 间距）⇒ 各行文字起点仍然对齐。
+     */
+    private fun menuRow(
+        @DrawableRes iconRes: Int,
+        textRes: Int,
+        onClick: () -> Unit,
+    ): LinearLayout = menuRowIconShell(
+        iconRes = iconRes,
+        text = context.getString(textRes),
+        subText = null,
+        description = null,
+        onClick = onClick,
+    )
+
+    /**
      * 功能行的**骨架**：图标槽 + 文案列（可带一行副文）+（可选）读屏整句。整行可点。
      *
      * 三处口径（前两处都踩过真机）：
@@ -1711,6 +1761,24 @@ class FloatingWindow(private val context: Context) {
         subText: CharSequence?,
         description: String?,
         onClick: () -> Unit,
+    ): LinearLayout = menuRowShellCore(glyph, null, text, subText, description, onClick)
+
+    /** 图标版骨架（见图标版 [menuRow] 的说明）：图标槽与字形槽同宽同色。 */
+    private fun menuRowIconShell(
+        @DrawableRes iconRes: Int,
+        text: CharSequence,
+        subText: CharSequence?,
+        description: String?,
+        onClick: () -> Unit,
+    ): LinearLayout = menuRowShellCore(null, iconRes, text, subText, description, onClick)
+
+    private fun menuRowShellCore(
+        glyph: String?,
+        iconRes: Int?,
+        text: CharSequence,
+        subText: CharSequence?,
+        description: String?,
+        onClick: () -> Unit,
     ): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -1718,7 +1786,7 @@ class FloatingWindow(private val context: Context) {
         // 功能行挨得太紧时，一眼扫过去分不清是"五项"还是"三块"。列表行保持自己的 28dp 行高。
         setPadding(dp(8), dp(5), dp(8), dp(5))
         background = tapFeedbackBackground()
-        addView(menuGlyphView(glyph))
+        addView(if (iconRes != null) menuIconView(iconRes) else menuGlyphView(glyph.orEmpty()))
         val labelView = menuLabelView(text, subText)
         addView(labelView)
         if (description != null) {
@@ -1739,6 +1807,30 @@ class FloatingWindow(private val context: Context) {
             LinearLayout.LayoutParams.WRAP_CONTENT,
         )
         setPadding(0, 0, dp(6), 0)
+    }
+
+    /**
+     * 功能行左侧的**图标槽（矢量版）**（2026-10-20）：与 [menuGlyphView] **同宽同色**，只把字形换成矢量图标。
+     *
+     * 尺寸口径：字形槽是"18dp 宽 + 6dp 右间距"，这里用"24dp 宽 + 6dp 右间距"（内容区同为 18dp）——
+     * 各行文案起点因此与字形行**逐像素对齐**，不会出现"换了图标这一行文字就右移"。
+     * 图标是装饰件 ⇒ 读屏同样不念（语义由整行的 `contentDescription` / 文案承担）。
+     */
+    private fun menuIconView(@DrawableRes iconRes: Int): ImageView = ImageView(context).apply {
+        setImageResource(iconRes)
+        setColorFilter(MENU_GLYPH_COLOR)
+        scaleType = ImageView.ScaleType.FIT_CENTER
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        // **槽宽必须与字形格完全相同 = 18dp**（2026-10-20 真机截图核对）：
+        // 字形格的 `setPadding(right = 6dp)` 是**算在 18dp 里面**的 ⇒ 文案从 18dp 处开始；
+        // 第一版图标格写成 24dp（18+6）⇒ 文案从 24dp 开始，整行右移 6dp，看起来"排列不整齐"。
+        // 这里同样用 18dp 宽 + 6dp 右内边距 ⇒ 内容区 12dp，文案起点与其它行逐像素对齐。
+        // 高度 12dp（用户口径"图标似乎过大"）：12sp 字形的墨迹只有 10dp 上下，按 18dp 画会大一圈。
+        layoutParams = LinearLayout.LayoutParams(
+            dp(MENU_GLYPH_SLOT_DP),
+            dp(MENU_ICON_SIZE_DP),
+        )
+        setPadding(0, 0, dp(MENU_ICON_END_GAP_DP), 0)
     }
 
     /**
@@ -2731,10 +2823,7 @@ class FloatingWindow(private val context: Context) {
      */
     private fun renderPickFriend(container: LinearLayout) {
         container.addView(
-            menuRow(
-                context.getString(R.string.floating_menu_glyph_back),
-                context.getString(R.string.floating_menu_visit_pick),
-            ) {
+            breadcrumbRow(context.getString(R.string.floating_menu_visit_pick)) {
                 menuState = FloatingMenu.State()
                 rerender()
             },
@@ -2754,10 +2843,15 @@ class FloatingWindow(private val context: Context) {
             )
             return
         }
+        // **好友名列表不带图标**（2026-10-20 用户口径："好友列表去除笑脸图标"）：原来每行都用
+        // `menuRow(☺, name)` —— 那个字形在图标槽里会被渲染成**彩色双宽 emoji**（见 [menuGlyphView]
+        // 的踩坑记录），一整列排下来像"一排笑脸"，既抢眼，又与「换号 → 选区服」那层（纯文字 [pickRow]）
+        // 不是一套东西。改成 [pickRow] ⇒ 与区服列表同一套行样式、同一套点按反馈。
+        // ⚠ 文字左内边距不变（`8 + 图标槽 18 + 6`）⇒ 与上面面包屑行的文字**仍在同一条竖线上**。
         names.forEach { name ->
             container.addView(
-                menuRow(context.getString(R.string.floating_menu_glyph_visit), name) {
-                    if (!ensureReady()) return@menuRow
+                pickRow(name) {
+                    if (!ensureReady()) return@pickRow
                     sendStartRequest(kind = PatrolRequestSignal.Kind.VISIT_ONLY, friendName = name)
                 },
             )
@@ -2823,17 +2917,38 @@ class FloatingWindow(private val context: Context) {
     /**
      * 「更多」层（2026-09-30 用户口径）：**低频维护类**动作 —— 导入服务器（试读这一屏已整体移除）。
      *
-     * 前两版它们直接摆在主菜单上；现在主菜单只留高频（换号 / 拜访 / 换号拜访 / 拜访规则 / 更多 / 退出 / 停止），
+     * 前两版它们直接摆在主菜单上；现在主菜单只留高频（换号 / 拜访 / 换号拜访 / 拜访规则 / 更多 / 停止），
      * 好处是"误触代价最大的那几行"（停止、换号拜访）周围更干净。
+     *
+     * ## 行序（2026-10-20 用户口径"调整一下「更多」下级菜单的顺序"）
+     *
+     * 自上而下 = **从"离开这一层 / 无害"到"会改状态 / 破坏性"**：
+     * 1. 返回 App —— 最常见意图（回 App 看设置 / 授权），误触代价为零；
+     * 2. 导入服务器 —— 读当前画面、写服务器清单（只增数据）；
+     * 3. 重新授权采集 —— 修"眼睛"（会话没了 / 定标改过要重建）；
+     * 4. 暂停 / 恢复自动关弹窗 —— 一个开关，随时要能按；
+     * 5. 重置提示位置 —— 只挪顶部那条标签；
+     * 6. 退出 —— 结束进程，**永远最后**（与"停止流程"一样，把会终止东西的那一类压在最底下）。
      */
     private fun renderMore(container: LinearLayout) {
         container.addView(
-            menuRow(
-                context.getString(R.string.floating_menu_glyph_back),
-                context.getString(R.string.floating_menu_more),
-            ) {
+            breadcrumbRow(context.getString(R.string.floating_menu_more)) {
                 menuState = FloatingMenu.State()
                 rerender()
+            },
+        )
+        // **返回 App**（2026-10-20 用户口径：文案「回 App」⇒「返回 App」，并从根菜单**移进本层**）：
+        // 把本 App 拉到前台。放在第一条的理由见上面的"行序"。
+        // `context` 是无障碍 Service ⇒ **必须带 FLAG_ACTIVITY_NEW_TASK**；CLEAR_TOP 让已在栈里时回到原地。
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_open_app),
+                R.string.floating_menu_open_app,
+            ) {
+                context.startActivity(
+                    Intent(context, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                )
             },
         )
         // 导入服务器（2026-09-30 改文案："添加这一屏的服务器" → "导入服务器"）
@@ -2843,13 +2958,14 @@ class FloatingWindow(private val context: Context) {
                 R.string.floating_menu_import_servers,
             ) { onCaptureServers() },
         )
-        // **一键重新授权采集**（2026-10-01 用户口径，M5 期间插入）：与根菜单那条**条件行**是同一个动作
-        //（见 [renderRoot] 里 [FloatingMenu.shouldOfferReauthorize] 的调用点），这里是**常驻**通路 ——
+        // **一键重新授权采集**（2026-10-01 用户口径，M5 期间插入）：与根菜单那条**条件行**同一个动作
+        //（见 [renderRoot] 里 [FloatingMenu.recoveryAction] 的 REAUTHORIZE 分支），这里是**常驻**通路 ——
         // 标定产物改过之后"下次建立采集会话时生效"（`calibration_take_effect`）需要一条随时可用的
         // 重建入口，不能等出了故障才给。放在「导入服务器」旁边：两者都与采集 / 数据有关。
         container.addView(
             menuRow(
-                context.getString(R.string.floating_menu_glyph_reauthorize),
+                // 「权限」图标（2026-10-20 用户口径：原来那枚 ⟳ 容易被当成"刷新"）
+                R.drawable.ic_menu_permission,
                 R.string.floating_menu_reauthorize,
             ) { onRequestReauthorize() },
         )
@@ -2886,7 +3002,8 @@ class FloatingWindow(private val context: Context) {
         // 归位后**换文案也不会偏**（走默认口径按当前宽度重新居中，见 [resetLabelPosition]）。
         container.addView(
             menuRow(
-                context.getString(R.string.floating_menu_glyph_reset_label),
+                // 「提示」图标（2026-10-20 用户口径：这一行是"把提示标签归位"，不是"撤销"）
+                R.drawable.ic_menu_tip,
                 R.string.floating_menu_reset_label,
             ) { resetLabelPosition() },
         )
@@ -2914,6 +3031,10 @@ class FloatingWindow(private val context: Context) {
         hide()
         mainHandler.postDelayed({ Process.killProcess(Process.myPid()) }, 400L)
     }
+
+    // 2026-10-20：「重启 App」整条功能已按用户要求删除（原因与两次真机失败记录见
+    // `docs/progress.md` 470/471）。要重启就只能走菜单「退出」+ 桌面点图标 ——
+    // 那确实能换进程（换进程 = MediaProjection 唯一可靠的复位手段），只是自动拉起在这台 vivo 上做不到。
 
     /**
      * **导入服务器**（2026-09-24 加；2026-09-30 从根菜单挪进「更多」并改名）：
@@ -3374,6 +3495,7 @@ class FloatingWindow(private val context: Context) {
     private companion object {
         const val TAG = "MM-Floating"
 
+
         /** 状态标签：半透明黑底 + 白字（2026-09-14 用户口径），描一道极淡白线便于在黑底上看轮廓。 */
         const val LABEL_FILL_COLOR = 0xB3000000.toInt()
         const val LABEL_STROKE_COLOR = 0x40FFFFFF.toInt()
@@ -3406,6 +3528,12 @@ class FloatingWindow(private val context: Context) {
         const val MENU_STROKE_COLOR = 0x80FFC107.toInt()
         const val MENU_TEXT_COLOR = 0xFFFFFFFF.toInt()
         const val MENU_GLYPH_COLOR = 0xFFFFC107.toInt()
+
+        /**
+         * 面包屑行底下那道 1dp 细线（2026-10-20 用户口径）：25% 白 ——
+         * 在深色面板（[MENU_FILL_COLOR]）上刚好"看得见、又不跟琥珀色图标抢视线"。
+         */
+        const val BREADCRUMB_DIVIDER_COLOR = 0x40FFFFFF.toInt()
 
         /**
          * 失败原因（深底浅底通用：亮红）= **L1 失败 / 被拒**（`docs/decisions/ADR-008-信息级别与配色.md`）。
@@ -3530,6 +3658,17 @@ class FloatingWindow(private val context: Context) {
         const val MENU_CORNER_DP = 14
         /** 菜单图标槽位宽度（dp）：固定住才能让每行文字左对齐（见 [menuRow]）。 */
         const val MENU_GLYPH_SLOT_DP = 18
+
+        /**
+         * 矢量图标的高度（dp，2026-10-20 用户口径"图标似乎过大了，排列和其他图标不一致"）。
+         *
+         * 字形行是 **12sp 文字**，符号的实际墨迹只有 10dp 上下；矢量图若按槽宽 18dp 画，
+         * 视觉上比 `⚑ ⚙ ⇄` 大一整圈。取 12dp ⇒ FIT_CENTER 缩到 12×12，与字形观感一致。
+         */
+        const val MENU_ICON_SIZE_DP = 12
+
+        /** 图标与文案之间的固定间距（dp）：与字形槽的 6dp 一致，保证各行文案起点对齐。 */
+        const val MENU_ICON_END_GAP_DP = 6
 
         /**
          * 功能行**行尾小按钮**的字号与左右内边距（dp）（2026-09-30 加的范式，见 [menuRowWithTrailing]）。

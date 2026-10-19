@@ -376,6 +376,10 @@ internal object FloatingMenu {
      * 正常跑着时三个都为假 ⇒ 面板与从前**一模一样**（零位移、零额外行）。
      * （另有「更多」层里的一条**常驻**同类入口：改过标定产物之后"下次建立采集会话时生效"
      * 需要一条稳定的重建通路，见 `FloatingWindow.renderMore`。）
+     *
+     * ⚠ 2026-10-20：这一档一度改成给「重启 App」（判据 `RecoveryAction`），但那套自动拉起在这台 vivo
+     * 上做不到（进程死后系统不重绑无障碍服务；闹钟拉起被后台启动限制吞掉）⇒ 用户当天要求**去掉重启
+     * 功能**，恢复成"只给重新授权采集"。证据见 `docs/progress.md` 470/471。
      */
     fun shouldOfferReauthorize(
         captureActive: Boolean,

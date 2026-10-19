@@ -35,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,6 +61,7 @@ import com.example.mastermechanic.service.ResidentService
 import com.example.mastermechanic.ui.theme.MasterMechanicTheme
 import com.example.mastermechanic.ui.theme.Warning40
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * 日志标签（2026-10-02 起本页也留痕：采集为什么被挡住要在日志里读得出来）。
@@ -69,6 +71,41 @@ import kotlinx.coroutines.delay
  * 顶层声明放宽可见性 / 重名都会在同包内撞车）。
  */
 private const val AUTH_LOG_TAG = "MM-Auth"
+
+/**
+ * **授权通过后，先把本 App 移出屏幕，再等这么久才建立采集会话**（2026-10-20，真机根因处置 A）。
+ *
+ * ## 为什么（`mm-log-20261020` 三次会话实录）
+ *
+ * vivo V2463A / Android 16 上，**采集画面里一旦出现本 App 自己的窗口，平台就会在几秒内停止投喂**：
+ * `onImageAvailable` 回调彻底归零，而 `onCapturedContentResize` 照来（会话没死，是合成器不喂了）。
+ *
+ * | 会话建立那一刻的前台 | 存活 |
+ * | --- | --- |
+ * | 本 App 授权页 | 0.6s / 1.2s 后零帧（01:07 / 01:18 两次） |
+ * | 系统安装器（本 App 被完全遮住） | 7 分钟，直到 01:17:59 本 App 重新回到屏幕上 |
+ *
+ * ⇒ 授权一通过就 `moveTaskToBack`，等屏幕切走（动画 ~300ms）再交给 [CaptureService] 建镜像。
+ * 1 秒是"够切走、又不至于让一次性授权凭证等太久"的折中（Android 14+ 要求拿到凭证后尽快创建）。
+ *
+ * ⚠ 残余限制：运行期间**用户一回 App 界面采集就会再次断流**（悬浮窗菜单不受影响，它不是 Activity）。
+ */
+private const val CAPTURE_START_HOLD_MS = 1000L
+
+/**
+ * 从任一 `Context` 里挖出宿主 Activity（`LocalContext` 可能是 `ContextThemeWrapper` 包一层的）。
+ *
+ * 只用于 [CAPTURE_START_HOLD_MS] 那条"把自己移出屏幕"：拿不到就当没做成并如实记日志，
+ * 不允许因此静默跳过采集建立（采集仍然要建，只是少了这层保护）。
+ */
+private fun Context.hostActivity(): Activity? {
+    var cursor: Context = this
+    while (cursor is android.content.ContextWrapper) {
+        if (cursor is Activity) return cursor
+        cursor = cursor.baseContext
+    }
+    return null
+}
 
 /**
  * 授权流入口（M0-T0-2）：展示各关键授权状态，并提供一键前往授予。
@@ -98,6 +135,23 @@ fun AuthorizationRoute(
     var reconcileTick by remember { mutableStateOf(0) }
 
     /**
+     * **页面可见期间的轻量轮询**（2026-10-19 补）。
+     *
+     * 原处置是"resume 后补查 3 次"（见下方注释），但那假设了"状态变化一定伴随一次 resume"。
+     * 真机复现：**就停在这一页**，从系统侧把本应用的无障碍摘掉 / 装回，界面纹丝不动 ——
+     * 而用户报的正是这条路（重装后系统已授权、App 内却写「去开启」；进一次系统设置再返回才对，
+     * 因为返回触发了 resume）。系统那份"已启用服务"列表是**异步**就绪的，只握一个挂点必然漏。
+     * ⇒ 页面开着时每秒重算一次；`collect` 是几次普通 binder 调用，视觉不变时 Compose 不会重绘。
+     */
+    var pollTick by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1_000)
+            pollTick++
+        }
+    }
+
+    /**
      * **自动拉起采集被挡住**时的说明（2026-10-02 用户报障后加）。
      *
      * 报障原文："点击『去授权与权限』的逻辑有问题，目前是直接拉起采集授权操作，**一同意就跳转到游戏了**，
@@ -107,8 +161,9 @@ fun AuthorizationRoute(
      */
     var blockedNote by remember { mutableStateOf<String?>(null) }
 
-    // residentRunning 也在 key 里：守护起停会改变"是否全部就绪"（2026-09-20 起它是必备项）
-    val statuses = remember(resumeTick, captureActive, refreshTick, residentRunning) {
+    // residentRunning 也在 key 里：守护起停会改变"是否全部就绪"（2026-09-20 起它是必备项）；
+    // pollTick = 每秒一次的自愈，见上方注释
+    val statuses = remember(resumeTick, captureActive, refreshTick, residentRunning, pollTick) {
         AuthorizationChecks.collect(
             context,
             if (captureActive) CaptureSessionState.GRANTED else CaptureSessionState.NOT_GRANTED,
@@ -138,6 +193,8 @@ fun AuthorizationRoute(
     // 一直在），而是**重装后系统那份"已启用无障碍服务"列表短暂未就绪**，而界面只在 resume 那一刻查了一次。
     // 处置：resume 后**补几次查询**（400ms / +800ms / +800ms），拿到 GRANTED 立刻停；三次都不行就如实保持 MISSING
     // （与 `reconcileTick` 那条 400ms 校正同一套路，不引入新的生命周期观察方式）。
+    // ⚠ 2026-10-19 补：这段只是"回到前台后的加速"，**不能当唯一挂点** —— 页面不离开时（就停在这一页等
+    // 系统把服务装回来）它一次都不会再跑。兜底是上面的 [pollTick] 每秒轮询。
     LaunchedEffect(resumeTick) {
         repeat(3) { attempt ->
             delay(if (attempt == 0) 400L else 800L)
@@ -154,13 +211,27 @@ fun AuthorizationRoute(
         }
     }
 
+    val captureScope = rememberCoroutineScope()
     val captureLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val data = result.data
         if (result.resultCode == Activity.RESULT_OK && data != null) {
             // 授权凭证不落盘、不复用（ADR-001）；授权通过即建立真实采集会话（T1-2）
-            CaptureService.start(context, result.resultCode, data)
+            //
+            // **先把自己移出屏幕再建会话**（2026-10-20，见 [CAPTURE_START_HOLD_MS]）：
+            // 建会话那一刻屏幕上是本 App 的话，vivo 会在 1 秒内停掉投喂（当天三次会话实录）。
+            val code = result.resultCode
+            val moved = context.hostActivity()?.moveTaskToBack(true) ?: false
+            MmLog.i(
+                AUTH_LOG_TAG,
+                "采集授权已通过：先把本 App 移出屏幕（${if (moved) "成功" else "未生效：context 不是 Activity"}）" +
+                    "，${CAPTURE_START_HOLD_MS}ms 后再建立会话",
+            )
+            captureScope.launch {
+                delay(CAPTURE_START_HOLD_MS)
+                CaptureService.start(context, code, data)
+            }
         }
         refreshTick++
         reconcileTick++

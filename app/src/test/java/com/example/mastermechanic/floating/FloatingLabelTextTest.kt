@@ -179,6 +179,7 @@ class FloatingLabelTextTest {
         val prolonged = FloatingLabelText.FrameStale.PERSISTENT
 
         assertEquals(
+            // 2026-10-20：曾改成「请重启」，重启功能当天被用户删除 ⇒ 恢复「请重授权」
             "停更很久 ⇒ 说处置",
             "画面久未更新·请重授权",
             label(patrol = running, frameStale = prolonged),

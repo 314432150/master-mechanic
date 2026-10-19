@@ -1,7 +1,6 @@
 package com.example.mastermechanic.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Box
@@ -14,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -214,7 +214,11 @@ private fun WheelRow(option: String, atCenter: Boolean, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .height(WHEEL_ROW_HEIGHT)
-            .clickable(onClick = onClick)
+            // 用 `selectable`（不是 `clickable`）：中线那一行要**把"已选中"交给无障碍**。
+            // 2026-10-19 走查发现：视觉上加粗 + 高亮带，读屏却只念名字 —— 用户没法知道当前是哪一项
+            // （外层「当前生效」能兜底，但一进弹层就丢了）。`selectable` 同时会把行内文字并进这颗
+            // 可点击节点，读屏一次念完「白色死神，已选中」。
+            .selectable(selected = atCenter, onClick = onClick)
             .padding(horizontal = WHEEL_ROW_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {

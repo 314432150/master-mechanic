@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.view.accessibility.AccessibilityManager
 import androidx.core.content.ContextCompat
+import com.example.mastermechanic.log.MmLog
 import com.example.mastermechanic.service.MasterMechanicAccessibilityService
 import com.example.mastermechanic.service.ResidentService
 
@@ -41,16 +42,41 @@ object AuthorizationChecks {
     /** 无障碍服务是否已在系统设置中开启；按组件名精确匹配，避免把其他无障碍服务算进来。 */
     fun accessibilityState(context: Context): AuthState {
         val manager = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
-            ?: return AuthState.MISSING
+            ?: return AuthState.MISSING.also { logAccessibilityChange(it, "取不到 AccessibilityManager") }
         val expected = ComponentName(context, MasterMechanicAccessibilityService::class.java)
-        val enabled = manager
+        val services = manager
             .getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-            .any { info ->
-                val serviceInfo = info.resolveInfo?.serviceInfo ?: return@any false
-                serviceInfo.packageName == expected.packageName &&
-                    serviceInfo.name == expected.className
-            }
-        return if (enabled) AuthState.GRANTED else AuthState.MISSING
+        val enabled = services.any { info ->
+            val serviceInfo = info.resolveInfo?.serviceInfo ?: return@any false
+            serviceInfo.packageName == expected.packageName &&
+                serviceInfo.name == expected.className
+        }
+        val state = if (enabled) AuthState.GRANTED else AuthState.MISSING
+        // 只在**变化时**记一行：这行是"两处读数不一致"时唯一能分清的现场。
+        // 2026-10-19 就是靠它定案的：某个时刻 `系统返回 0 项`（连别的无障碍服务都不在），1.5s 后
+        // 又「命中本应用组件」—— 与 `uiautomator dump` 同一秒出现 ⇒ **取证动作自己把无障碍服务
+        // 临时摘掉了**，不是应用误报。核对授权读数请用截图，别用 dump（见 `docs/verification/README.md` 记录规则 4）。
+        logAccessibilityChange(
+            state = state,
+            detail = if (enabled) {
+                "命中本应用组件"
+            } else {
+                "系统返回 ${services.size} 项：" +
+                    services.joinToString { it.resolveInfo?.serviceInfo?.name ?: "?" }
+            },
+        )
+        return state
+    }
+
+    /** 上一次记录的结论 / 说明（只在结论或说明变化时落一行，避免 500ms 轮询刷屏）。 */
+    @Volatile
+    private var lastAccessibilityNote: String? = null
+
+    private fun logAccessibilityChange(state: AuthState, detail: String) {
+        val note = "$state|$detail"
+        if (note == lastAccessibilityNote) return
+        lastAccessibilityNote = note
+        MmLog.i("MM-Auth", "无障碍查询 → ${if (state == AuthState.GRANTED) "已开启" else "未开启"}（$detail）")
     }
 
     fun captureState(session: CaptureSessionState): AuthState =

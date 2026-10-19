@@ -190,4 +190,29 @@ class ServerListCodecTest {
         assertTrue(e.message!!.contains("第 4 行"))
         assertTrue(e.message!!.contains("只能有一条"))
     }
+
+    @Test
+    fun rejectsDuplicatedServerNo() {
+        // 区号是换号的主判据（2026-10-19 用户拍板「拦」）：同一个区号出现两次 ⇒ 拒收并指出行号
+        val e = assertThrows(IllegalArgumentException::class.java) {
+            ServerListCodec.decode(
+                "format=mm-servers\nversion=2\n" +
+                    "item=wechat|392|微信392区|阿明|\n" +
+                    "item=wechat|392|微信393区|阿强|\n",
+            )
+        }
+        assertTrue(e.message!!.contains("第 4 行"))
+        assertTrue(e.message!!.contains("区号"))
+    }
+
+    @Test
+    fun allowsSeveralEntriesWithoutServerNo() {
+        // 空区号**不参与**判重：v1 旧文件与早期手写数据的区号本来就是空的，判重会把老清单读废
+        val list = ServerListCodec.decode(
+            "format=mm-servers\nversion=2\n" +
+                "item=||微信392区|阿明|\n" +
+                "item=||微信393区|阿强|\n",
+        )
+        assertEquals(2, list.entries.size)
+    }
 }

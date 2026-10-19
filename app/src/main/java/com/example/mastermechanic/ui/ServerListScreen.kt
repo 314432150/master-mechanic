@@ -454,14 +454,18 @@ fun ServerListRoute(resumeTick: Int, addTick: Int = 0) {
         val initial = editingIndex?.let { loadedList?.entries?.getOrNull(it) }
         // 一个区服只有一个小号：编辑页据此在保存前就能给出「这个区服已在清单里」的提示
         // （正在编辑的这条自己不算重名，否则连角色名都改不了）
-        val takenServerNames = loadedList?.entries.orEmpty()
+        val others = loadedList?.entries.orEmpty()
             .filterIndexed { index, _ -> index != editingIndex }
-            .map { it.serverName }
+        val takenServerNames = others.map { it.serverName }
+        // 2026-10-19 用户拍板「A. 拦」：**区号也不能重复** —— 它是换号的主判据，两条同号 ⇒ 运行时
+        // 必然停在「区号命中 2 行」，与其白跑一趟不如录入时就说清。空区号不参与（旧数据可能为空）。
+        val takenServerNos = others.map { it.serverNo }.filter { it.isNotEmpty() }
         ServerEntryEditor(
             isNew = editingIndex == null,
             index = editingIndex,
             initial = initial,
             takenServerNames = takenServerNames,
+            takenServerNos = takenServerNos,
             onDismiss = { editorOpen = false },
             onConfirm = { entry ->
                 val index = editingIndex
@@ -803,7 +807,7 @@ private val RevealButtonShape = RoundedCornerShape(topEnd = 12.dp, bottomEnd = 1
 private const val SwipeSettleMillis = 180
 
 /**
- * 清单列表：**行内没有任何常驻按钮**，三个手势各管一件事——双击编辑 / 长按上下拖排序 /
+ * 清单列表：**行内没有任何常驻按钮**，三个手势各管一件事——点按编辑 / 长按上下拖排序 /
  * 左滑把红色「删除」按钮压出来（**点按钮就直接删**）。
  *
  * 拖动排序的口径（为什么这么做，见 `docs/plans/m3-inspection-config.md` 的手势表）：
@@ -1008,8 +1012,8 @@ private fun ServerEntryList(
  *   （[ServerListGestures.revealFraction]），按钮自己按这个比例从行尾压进来；
  *   松手按 [ServerListGestures.swipeRevealsDeleteButton] 吸附成"全盖住"或"回弹收起"；
  * - `mode = 2` 拖动：只取纵向位移，横向丢掉（纵向已被拖动占用，滚动不再响应）；
- * - **双击**：两次点击各自位移都在 `touchSlop` 内、间隔在 `doubleTapTimeoutMillis` 内 → 进编辑。
- *   单击不做事（用户口径是"双击进编辑"），提示行会写清楚；**但已露出删除按钮时单击 = 收起**；
+ * - **点按即编辑**（2026-09-15 用户拍板，与好友清单统一）：**单击就进编辑**，双击的第一下已经进去，
+ *   第二下不会再造成别的影响 —— 老习惯天然兼容（[SwipeActionRow] 同口径）。**已露出删除按钮时单击 = 收起**；
  * - 手指落在**已露出的删除按钮**上 → 本状态机整块退出（[ServerListGestures.isOnRevealedDeleteButton]），
  *   事件让给按钮自己处理——否则会变成"点删除没反应，只把按钮收起来了"。
  */
@@ -1069,7 +1073,10 @@ private fun ServerEntryRow(
             stringResource(
                 R.string.server_row_desc,
                 index + 1,
-                if (platformNoText.isEmpty()) entry.serverName else "$platformNoText $entry.serverName",
+                // ⚠ 必须写成 `${entry.serverName}`：`"$entry.serverName"` 在 Kotlin 里是
+                // `$entry` 后跟字面量 ".serverName" ⇒ 读屏会把 `ServerEntry(...)` 整个 toString 念一遍
+                // （2026-10-19 真机 uiautomator 抓到的原文，见 docs/verification/m5/README.md U4 节 8b）
+                if (platformNoText.isEmpty()) entry.serverName else "$platformNoText ${entry.serverName}",
             ),
         )
         if (entry.hasCharacterName) {
@@ -1383,6 +1390,8 @@ private fun ServerEntryEditor(
     index: Int?,
     initial: ServerEntry?,
     takenServerNames: List<String>,
+    /** 清单里**其它**条目已占用的区号（空区号不进来）；保存前据此拦重复。 */
+    takenServerNos: List<String>,
     onDismiss: () -> Unit,
     onConfirm: (ServerEntry) -> Unit,
 ) {
@@ -1404,15 +1413,19 @@ private fun ServerEntryEditor(
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val requiredText = stringResource(R.string.server_field_required)
     val duplicateText = stringResource(R.string.server_field_duplicate)
+    val duplicateNoText = stringResource(R.string.server_field_duplicate_no)
     val separatorText = stringResource(R.string.server_field_separator)
     val optionalHint = stringResource(R.string.server_field_optional_hint)
 
     fun save() {
         val server = serverName.trim()
         when {
-            server.isEmpty() -> error = requiredText
+            // 2026-10-19 用户口径：**区号不能为空**（换号时按区号定位，空着等于没主键）
+            server.isEmpty() || serverNo.isBlank() -> error = requiredText
             // 一个区服只有一个小号：与清单里其它条目重名 → 明确提示，不写入、不覆盖
             takenServerNames.any { it == server } -> error = duplicateText
+            // 区号也不能重复（主判据重复 ⇒ 运行时只能停下）
+            takenServerNos.any { it == serverNo.trim() } -> error = duplicateNoText
             !ServerList.isValidServerName(server) ||
                 !ServerList.isValidOptionalField(serverNo) ||
                 !ServerList.isValidOptionalField(characterName) ||
@@ -1613,7 +1626,7 @@ private val PlatformChoiceShape = RoundedCornerShape(8.dp)
  * **共占一行**（理由见 [ServerEntryEditor] 的说明：列表行里这两个本来就是连写的「微信392」）。
  *
  * - **点已选中的那一个 = 取消选择**（回到"没填"）——比再加一个「不填」选项省地方，
- *   也和"平台与区号都可以留空"的口径一致；两侧都不选就是留空；
+ *   **平台**可以留空（2026-10-19 起**区号不行**：它是换号定位的主键，保存时必填）；
  * - 平台用**选项**而不是输入框：只有两个值，让人自己打字就会冒出「wx」「WeChat」「微信 」三种写法，
  *   而它是要一眼扫过去的辨识信息，写法必须先统一（模型层就是枚举，见 [ServerPlatform]）。
  */

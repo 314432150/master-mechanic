@@ -73,7 +73,15 @@ fun RunRoute(
 ) {
     val context = LocalContext.current
     var tick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(resumeTick) {
+    // key 用 `Unit`（2026-10-19 收口）：轮询只该由"页面离开组合"结束。原先以 `resumeTick` 为 key，
+    // 于是**每次回前台都把计时器重启一遍** —— 重启会丢掉那个还没走完的 `delay`，等于"回到前台后
+    // 第一次刷新最多再晚 500ms"，而页面上真正需要即时刷新的那一刻恰恰就是回前台。改成 `Unit` 后
+    // 计时器一直在跑，`resumeTick` 只负责把页面重新组合（读数随即按最新 `tick` 重算）。
+    // ⚠ 排查记录：2026-10-19 一度以为本页"授权读数冻结"（页面写「还缺无障碍」、授权页写「已开启」），
+    // 实际是 `uiautomator dump` 会**临时把无障碍服务全部摘掉**（应用日志里 `系统返回 0 项` 与该命令
+    // 同一秒出现，约 1.5s 后自行恢复）⇒ 抓到的是"取证动作自己造成的瞬间状态"。以后核对授权读数**用截图**，
+    // 不要用 dump（见 `docs/verification/README.md` 记录规则 4）。
+    LaunchedEffect(Unit) {
         while (true) {
             delay(POLL_MS)
             tick++

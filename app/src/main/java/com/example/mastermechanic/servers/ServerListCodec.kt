@@ -113,6 +113,11 @@ object ServerListCodec {
             if (entries.any { it.serverName == entry.serverName }) {
                 fail(line, "同一个区服只能有一条（一个区服只有一个小号）：${entry.serverName}")
             }
+            // 区号是换号的主判据（2026-10-19 用户拍板「拦」）：同一个区号出现两次，运行时只能停下
+            // ⇒ 盘上也不许有。空区号不参与（v1 旧文件与早期手写数据的区号本来就是空的）。
+            if (entry.serverNo.isNotEmpty() && entries.any { it.serverNo == entry.serverNo }) {
+                fail(line, "同一个区号只能有一条（换号按区号定位）：${entry.serverNo}")
+            }
             entries += entry
         }
         return ServerList(entries)
@@ -148,8 +153,11 @@ object ServerListCodec {
                 "平台只支持 ${ServerPlatform.entries.joinToString(" / ") { it.code }}（或留空）：$platformText",
             )
         }
+        // ⚠ 这里**允许区号为空**（2026-10-19）：界面录入时已必填，但盘上的旧文件（v1 没有区号这一列、
+        // 早期 v2 手写过空值）要还能读 —— 读不进来就等于把用户已有的清单弄丢。空区号的条目在运行时会
+        // 自动落到"按区名全等"那条兜底路（`RealmPickDecision` ②），不会乱点。
         if (!ServerList.isValidOptionalField(serverNo)) {
-            fail(line, "区号非法（可留空，但不得含「$SERVER_FIELD_SEPARATOR」或换行）：$serverNo")
+            fail(line, "区号非法（不得含「$SERVER_FIELD_SEPARATOR」或换行）：$serverNo")
         }
         if (!ServerList.isValidServerName(serverName)) {
             fail(line, "区服名称非法（不得为空，且不得含「$SERVER_FIELD_SEPARATOR」或换行）：$serverName")
