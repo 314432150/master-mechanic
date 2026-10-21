@@ -46,16 +46,11 @@ object BadgeAnchors {
     const val BADGE_SHARE_ENTRY = "badge_share_entry"
 
     /**
-     * 活动中心 · 「今日总分」数字（**只圈区域**）：领取判据 —— **>0 ⇒ 今日已获取过立牌**，
-     * 0/读不出 ⇒ 按"未获取"走领取分支（兜底容错，见任务卡）。
-     * 三态对照（2026-10-21 用户三张截图）：未获取 0、已获取未提交 1028（=750+278）、已提交 1130。
-     * ⚠ 只框**数字本身**，别把「低分 / 暴击+10%」框进去（会多出数字串，判据失效）。
-     */
-    const val BADGE_TODAY_SCORE_AREA = "badge_today_score_area"
-
-    /**
-     * 活动中心 · 空立牌槽（**只判存在，不点**）：蛋糕上方圆形「+」槽空着 ⇒ 今日还没领到立牌；
-     * 领到后槽里换成立牌 + 分数（对照帧已证）。作为「今日总分」的第二证据（防 OCR 读岔）。
+     * 活动中心 · 空立牌槽（**只判存在，不点**）：**领取分支的唯一判据**（2026-10-21 用户拍板：
+     * 空槽与今日总分二选一，留空槽 —— 二值判定、不碰 OCR）。
+     *
+     * 槽空着 ⇒ 今日还没领到立牌（点「获取立牌」）；槽里换成立牌 + 分数 ⇒ 已获取（直接「分享立牌」）。
+     * 三态对照帧已证；领到后「+」消失。
      */
     const val BADGE_EMPTY_SLOT = "badge_empty_slot"
 
@@ -104,7 +99,6 @@ object BadgeAnchors {
         BADGE_SHARE_SCORE_AREA,
         BADGE_SHARE_NAME_AREA,
         BADGE_SHARE_TEXT_AREA,
-        BADGE_TODAY_SCORE_AREA,
     )
 
     /** 立牌流程各屏的用途（与 [usageByState] 一一对齐；空列表 = 该屏没有立牌用途）。 */
@@ -114,7 +108,6 @@ object BadgeAnchors {
         UiState.ACTIVITY_CENTER -> listOf(
             PatrolAnchors.Purpose("获取立牌入口", BADGE_CLAIM_ENTRY),
             PatrolAnchors.Purpose("分享立牌", BADGE_SHARE_ENTRY),
-            PatrolAnchors.Purpose("今日总分识别区域", BADGE_TODAY_SCORE_AREA),
             PatrolAnchors.Purpose("空立牌槽（只判存在）", BADGE_EMPTY_SLOT),
             PatrolAnchors.Purpose("返回", BADGE_ACTIVITY_EXIT),
         )
@@ -152,7 +145,6 @@ object BadgeAnchors {
         UiState.ACTIVITY_CENTER to setOf(
             BADGE_CLAIM_ENTRY,
             BADGE_SHARE_ENTRY,
-            BADGE_TODAY_SCORE_AREA,
             BADGE_EMPTY_SLOT,
             BADGE_ACTIVITY_EXIT,
         ),
