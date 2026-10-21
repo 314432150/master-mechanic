@@ -11388,3 +11388,25 @@
 验证：`:app:test -PfastTests` **1154+ 例全绿**（新增：进错活动点返回→回大厅不推进步骤→下一轮重进并计数；
 到上限停下报原因；`BadgeAnchorsTest`/`PatrolScenesTest`/`BadgeScenesTest` 的不变量随新状态更新）；
 `assembleDebug` 通过、`install -r` Success、`am start` 已拉起（授权重置，需重新授权）。
+
+#### 同一批：两个状态按用户口径改名，并说明从属关系（2026-10-22）
+
+| 枚举 | 原标签 | 现标签 |
+| --- | --- | --- |
+| `UiState.ACTIVITY_CENTER` | 活动中心 | **立牌活动** |
+| `UiState.ACTIVITY_OTHER` | 其他活动页 | **其他活动** |
+
+用户口径（更准确）：**左上角返回按钮 = "已经在活动中心里"的判据**（立牌活动与其他活动**共用这一个按钮**）；
+在此之上，**再看有没有「获取立牌」**：有 ⇒ 立牌活动，没有 ⇒ 其他活动。
+
+平面状态机用**声明顺序**表达这层从属：两者同时命中时必须判成立牌活动 ⇒ `ACTIVITY_CENTER` 必须声明在
+`ACTIVITY_OTHER` 之前（注释已写进 `UiState`）。同时：
+
+- 第 1 步期望画面补上 `ACTIVITY_OTHER`（点「活动」的三种落点：立牌活动 / 其他活动 / 大厅，都要立刻认得出，
+  否则每处都白等 2~3 轮"认不出来的自愈"）；
+- 日志与等待文案随标签走（`UiState.ACTIVITY_CENTER.label`），步骤名「进入活动中心」→「**进入立牌活动**」，
+  启动后第一条进度「进入立牌活动」；
+- **产物不用重标**：存的是元素 ID `ACTIVITY_CENTER`，与标签无关。
+
+验证：`-PfastTests` 全绿（`watchStatesFor(第 1 步)` 的期望集合随三落点更新）；`assembleDebug` + `install -r`
+通过、`am start` 已拉起（授权重置）。

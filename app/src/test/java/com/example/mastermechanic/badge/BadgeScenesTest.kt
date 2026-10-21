@@ -80,8 +80,9 @@ class BadgeScenesTest {
 
     @Test
     fun watchStatesNarrowWhenStateIsKnownAndWidenWhenUnknown() {
+        // 第 1 步的三种落点都要搜：立牌活动 / 其他活动（点返回重进）/ 大厅
         val known = BadgeScenes.watchStatesFor(BadgeFlow.Step.ENTER_ACTIVITY, UiState.HALL)
-        assertEquals(setOf(UiState.HALL, UiState.ACTIVITY_CENTER), known)
+        assertEquals(setOf(UiState.HALL, UiState.ACTIVITY_CENTER, UiState.ACTIVITY_OTHER), known)
 
         val unknown = BadgeScenes.watchStatesFor(BadgeFlow.Step.ENTER_ACTIVITY, UiState.UNKNOWN)
         assertEquals(BadgeScenes.allStates, unknown)
@@ -212,7 +213,7 @@ class BadgeScenesTest {
         )
 
         assertTrue("缺口里必须点名「分享立牌」：$gaps", gaps.any { "分享立牌" in it })
-        assertTrue("可以说清是哪一屏：$gaps", gaps.any { "活动中心" in it })
+        assertTrue("可以说清是哪一屏：$gaps", gaps.any { UiState.ACTIVITY_CENTER.label in it })
         assertEquals("只报一条（其余都齐）：$gaps", 1, gaps.size)
     }
 

@@ -152,7 +152,7 @@ object BadgeSession {
             collect = BadgeFlow.start(nowMs),
         )
         state = next
-        lastNote = "「${task.current}」：进入活动中心"
+        lastNote = "「${task.current}」：进入立牌活动"
         MmLog.i(TAG, "「${task.current}」：换号段完成（已在大厅）⇒ 开始收立牌")
         return next
     }

@@ -147,8 +147,10 @@ object BadgeScenes {
      * [DECIDE_BRANCH] 返回自身：它就站在活动中心，验证的是"还在这一屏、且动效结束"。
      */
     fun expectedStates(step: BadgeFlow.Step): Set<UiState> = when (step) {
-        // 大厅也要搜：从「其他活动页」点返回之后要立刻认出回到大厅（否则白等 2~3 轮认不出来的自愈）
-        BadgeFlow.Step.ENTER_ACTIVITY -> setOf(UiState.ACTIVITY_CENTER, UiState.HALL)
+        // 第 1 步的三种落点都要立刻认得（否则每处都要白等 2~3 轮"认不出来的自愈"）：
+        // 立牌活动（成功）/ 其他活动（点返回重进）/ 大厅（返回之后）。
+        BadgeFlow.Step.ENTER_ACTIVITY ->
+            setOf(UiState.ACTIVITY_CENTER, UiState.ACTIVITY_OTHER, UiState.HALL)
         BadgeFlow.Step.DECIDE_BRANCH -> setOf(UiState.ACTIVITY_CENTER)
         BadgeFlow.Step.CLAIM_ENTRY -> setOf(UiState.BADGE_CLAIM)
         // 同屏验证：画面仍是获取立牌弹框，靠 expectAnchor 判通过（见 [Action.expectAnchor]）
@@ -311,7 +313,7 @@ object BadgeScenes {
     }
 
     /**
-     * 活动中心**就绪**的判据（每日首次进入的自动提交动效结束）：两个入口**都**定位到。
+     * **立牌活动就绪**的判据（每日首次进入的自动提交动效结束）：两个入口**都**定位到。
      *
      * 为什么用"两个入口都在"而不是干等 N 秒：动效时长随网络/机型变（真机 3~8 秒），
      * 定长等待不是太短就是白等；而两个入口同时可定位 ⇒ 页面已经可交互。
@@ -329,6 +331,6 @@ object BadgeScenes {
      */
     const val MIN_SETTLE_MS = 1_200L
 
-    /** 活动中心是否已就绪（见 [readyAnchors]）。 */
+    /** 立牌活动是否已就绪（见 [readyAnchors]）。 */
     fun activityReady(anchorNames: Set<String>): Boolean = readyAnchors.all { it in anchorNames }
 }

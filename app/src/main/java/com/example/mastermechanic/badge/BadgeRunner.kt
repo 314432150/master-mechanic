@@ -195,7 +195,11 @@ object BadgeRunner {
         anchorNames: Set<String>,
     ): RoundResult {
         if (input.state != UiState.ACTIVITY_CENTER) {
-            return waitOrAbort(state, input, "第 ${state.step.number} 步：等「活动中心」，现在${describe(input.state)}")
+            return waitOrAbort(
+                state,
+                input,
+                "第 ${state.step.number} 步：等「${UiState.ACTIVITY_CENTER.label}」，现在${describe(input.state)}",
+            )
         }
         if (!BadgeScenes.activityReady(anchorNames)) {
             val missing = BadgeScenes.readyAnchors.filterNot { it in anchorNames }
@@ -203,14 +207,15 @@ object BadgeRunner {
             return waitOrAbort(
                 state,
                 input,
-                "第 ${state.step.number} 步：活动中心还没就绪（自动提交动效可能还在播；缺「$missing」）",
+                "第 ${state.step.number} 步：${UiState.ACTIVITY_CENTER.label}还没就绪" +
+                    "（自动提交动效可能还在播；缺「$missing」）",
             )
         }
         val waited = BadgeFlow.waitedMs(state, input.nowMs)
         if (waited < BadgeScenes.MIN_SETTLE_MS) {
             return RoundResult(
                 state,
-                note = "第 ${state.step.number} 步：活动中心已可交互，再稳 " +
+                note = "第 ${state.step.number} 步：${UiState.ACTIVITY_CENTER.label}已可交互，再稳 " +
                     "${(BadgeScenes.MIN_SETTLE_MS - waited) / 1000 + 1} 秒再判今日立牌",
             )
         }

@@ -29,8 +29,8 @@ object BadgeFlow {
      * 同一屏会出现多次（复制分享弹框被进两次：已选立牌一次、每张卡一次）。
      */
     enum class Step(val number: Int, val label: String) {
-        /** 1 大厅点「活动入口」→ 活动中心。 */
-        ENTER_ACTIVITY(1, "进入活动中心"),
+        /** 1 大厅点「活动入口」→ 立牌活动（可能先落到「其他活动」⇒ 返回重进）。 */
+        ENTER_ACTIVITY(1, "进入立牌活动"),
 
         /**
          * 2 **不点击的判定步**：等自动提交动效结束（可交互），再看空立牌槽在不在。
@@ -138,7 +138,7 @@ object BadgeFlow {
         val failed: Boolean get() = outcome == Outcome.FAILED
     }
 
-    /** 开始一次支线：第 1 步永远从「进入活动中心」开始（此时人已在大厅）。 */
+    /** 开始一次支线：第 1 步永远从「进入立牌活动」开始（此时人已在大厅）。 */
     fun start(nowMs: Long = 0L): State = State(step = Step.ENTER_ACTIVITY, stepEnteredAtMs = nowMs)
 
     /** 这一步的时间预算（ms）。 */
@@ -154,7 +154,7 @@ object BadgeFlow {
     }
 
     /**
-     * 「进入活动中心」的预算（ms）：含活动弹窗被 FR-01 关掉后重新点击 + 加载。
+     * 「进入立牌活动」的预算（ms）：含活动弹窗被 FR-01 关掉后重新点击 + 加载。
      *
      * 2026-10-22 从 30s 提到 45s：这一屏现在还多了一种"进的是别的活动页 ⇒ 点返回、再点活动"的
      * 兜底（单次往返约 4 秒），最多 [ENTRY_MAX_ATTEMPTS] 次。次数上限自己会停，不靠超时兜底。
