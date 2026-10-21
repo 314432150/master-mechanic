@@ -18,6 +18,13 @@ anchor=BADGE_SHARE|badge_share_text_area,badge_share_close,badge_share_score_are
 anchor=HALL|hall_settings,hall_farm,hall_activity   （活动入口是本次唯一的"旧屏新锚点"）
 ```
 
+> 2026-10-22 当天改过两次口径（上面是**最初**的真机片段，照原样保留当证据）：
+> 先是拆成「立牌活动 / 其他活动」两屏（`ACTIVITY_CENTER → BADGE_ACTIVITY`、
+> `ACTIVITY_OTHER → BADGE_ACTIVITY_OTHER`），当晚又**合并回一个「活动中心」**
+> （`UiState.ACTIVITY_CENTER`，标志 = 左上返回，`badge_claim_entry` 只留锚点）。
+> `CalibrationCodec.LEGACY_STATE_NAMES` 认得三个旧名（只读兼容，写出恒为 `ACTIVITY_CENTER`），
+> 所以设备上已标好的部分不用重标；只需删掉 `badge_claim_entry` 的**标志**那一行。
+
 ## 信号窗口（归一化比例，0..1）与用途
 
 | 信号 | 角色 | 窗口 (l,t,r,b) | 用途 | 模板数 |
