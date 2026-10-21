@@ -1,5 +1,6 @@
 package com.example.mastermechanic.patrol
 
+import com.example.mastermechanic.badge.BadgeAnchors
 import com.example.mastermechanic.decision.UiState
 
 /**
@@ -261,10 +262,16 @@ object PatrolAnchors {
      * （如活动弹窗：它只有一个关闭控件，FR-01 按状态取即可，不需要用途）。
      *
      * 返回的 [Purpose.name] 与 [nameFor] / [actions] 用的是同一批常量，
-     * 标定页选出来的用途必然就是跑号要找的那一个。
+     * 标定页选出来的用途必然就是跑号要找的那一个。合并**立牌临时需求**
+     * （temp/badge-share-1021）的用途表（[BadgeAnchors.purposesFor]，活动结束随分支移除）
+     * —— 标定页按本表给用途选项，两套流程共用一个入口。
      */
+    fun purposesFor(state: UiState): List<Purpose> =
+        ownPurposesFor(state) + BadgeAnchors.purposesFor(state)
+
     /**
-     * ……
+     * 巡查主流程自己的用途表（不含立牌临时用途，那些在 [BadgeAnchors]）。
+     * `internal`：不变量测试要按"巡查自用途"（HALL = 2）与合并后（HALL = 3）分别断言。
      *
      * **空列表不是"忘了标"，是刻意的**（2026-09-20 用户拍板，2026-09-29 扩到三屏）：**遮挡屏**
      * （活动弹窗 / 新手引导 / 新手大厅）都是空表 —— 它们各自只有一个关闭控件，自动关闭直接取
@@ -272,7 +279,7 @@ object PatrolAnchors {
      * **新增一条**，一旦给了用途就会变成"同用途覆盖"，两种样式会互相顶掉。
      * **不要**因为"锚点看起来都该有用途"就给它们补用途。
      */
-    fun purposesFor(state: UiState): List<Purpose> = when (state) {
+    internal fun ownPurposesFor(state: UiState): List<Purpose> = when (state) {
         UiState.HALL -> listOf(
             Purpose("设置入口", HALL_SETTINGS),
             Purpose("农场入口", HALL_FARM),
@@ -481,7 +488,9 @@ object PatrolAnchors {
      *    （"用户框多大就用多大"，理由见 [FRIEND_LIST_AREA] 与 `tightenedWindows`）。
      */
     val nonLocatableAnchors: Set<String> =
-        (nameAreaAnchors.values + nameColumnAnchors.values + serverListColumnAnchors.values.flatten()).toSet()
+        (nameAreaAnchors.values + nameColumnAnchors.values + serverListColumnAnchors.values.flatten()).toSet() +
+            // 立牌临时需求（temp/badge-share-1021）的识别区域锚点（分享码文本区）
+            BadgeAnchors.regionAnchors
 
     // ------------------------------------------------------------------ 点击链
 

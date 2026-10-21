@@ -48,6 +48,12 @@ object PatrolScenes {
         UiState.SCENE_RETURN_CONFIRM,
         -> Reading.Ready(PatrolFlow.Scene.NOT_A_START)
 
+        // 立牌流程四屏（临时需求 temp/badge-share-1021）：画面清楚，同样不在 FR-04 起点表里。
+        // ⚠ 它们**不是遮挡屏**（不进 `guardedOverlays`）——立牌弹框是流程本来就要待的界面，
+        // 被自动关弹窗点掉就坏事了；FR-01 的白 X 误命中风险见 `BadgeAnchors` 文件头。
+        UiState.ACTIVITY_CENTER, UiState.BADGE_CLAIM, UiState.BADGE_MY, UiState.BADGE_SHARE,
+        -> Reading.Ready(PatrolFlow.Scene.NOT_A_START)
+
         // 遮挡屏盖住画面时，底下是什么界面**看不见** —— 既不能当场景用，也不能算"认不出来"。
         // 三屏口径一致：交给自动关闭（活动弹窗 = FR-01；新手两页 = FR-02）点掉，再读一次。
         UiState.ACTIVITY_POPUP -> Reading.Blocked("活动弹窗挡住了画面（先由 FR-01 自动关闭点掉）")
@@ -249,6 +255,12 @@ object PatrolScenes {
         // 「好友的农场」**不再列入**（2026-09-21）：两个农场合一后它就是农场，
         // 再给一个独立选项只会让人以为"还有第二个农场要标"。旧产物里写着它的记录照旧能读
         // （产物清单把它们并进「农场」那组，见 CalibrationArtifactGroups）。
+        // —— 立牌流程四屏（临时需求 temp/badge-share-1021，活动结束随分支移除）：
+        // 按流程顺序接在最后（进活动中心 → 获取立牌 → 我的立牌 → 复制分享）。
+        UiState.ACTIVITY_CENTER,
+        UiState.BADGE_CLAIM,
+        UiState.BADGE_MY,
+        UiState.BADGE_SHARE,
     )
 
     /**

@@ -1,5 +1,6 @@
 package com.example.mastermechanic.patrol
 
+import com.example.mastermechanic.badge.BadgeAnchors
 import com.example.mastermechanic.calibration.CalibrationData
 import com.example.mastermechanic.decision.UiState
 import com.example.mastermechanic.patrol.PatrolFlow.Step
@@ -111,7 +112,9 @@ class PatrolAnchorsTest {
             PatrolAnchors.nameAreaAnchors.values.toSet() +
                 PatrolAnchors.nameColumnAnchors.values +
                 // T4-9（2026-09-24）：服务器列表的两条列竖带同属"只圈区域"的一族
-                PatrolAnchors.serverListColumnAnchors.values.flatten(),
+                PatrolAnchors.serverListColumnAnchors.values.flatten() +
+                // 立牌临时需求（temp/badge-share-1021）：分享码文本区也是"只圈区域"
+                BadgeAnchors.regionAnchors,
             PatrolAnchors.nonLocatableAnchors,
         )
         assertTrue("区域锚点表当前非空，否则这个不变量是空的", PatrolAnchors.nonLocatableAnchors.isNotEmpty())
@@ -165,6 +168,10 @@ class PatrolAnchorsTest {
             for (anchor in anchors) {
                 usedByState.getOrPut(state) { mutableSetOf() } += anchor
             }
+        }
+        // 立牌临时需求（temp/badge-share-1021）：用途表与"该状态实际要用的锚点"同一份事实
+        for ((state, anchors) in BadgeAnchors.usageByState) {
+            for (anchor in anchors) usedByState.getOrPut(state) { mutableSetOf() } += anchor
         }
         for ((state, used) in usedByState) {
             assertEquals(
@@ -231,8 +238,11 @@ class PatrolAnchorsTest {
     fun screensWithTwoButtonsHaveTwoPurposes() {
         // 一个界面两个控件、序号分不出谁是谁 —— 这正是要引入"用途"的原因
         for (state in listOf(UiState.HALL, UiState.LAUNCH_PAGE)) {
-            assertEquals("$state 应该有两个用途", 2, PatrolAnchors.purposesFor(state).size)
+            assertEquals("$state 应该有两个用途", 2, PatrolAnchors.ownPurposesFor(state).size)
         }
+        // 2026-10-21：HALL 合并临时需求（temp/badge-share-1021）的「活动入口」后共 3 个 ——
+        // 多的那一个是立牌流程的（活动结束随分支移除），见 `BadgeAnchors`
+        assertEquals(3, PatrolAnchors.purposesFor(UiState.HALL).size)
         // 2026-09-21 起农场画面曾一度是"2 个动作 + 3 条身份判据"（主账号头像 / 好友头像 / 农场名称）。
         // 2026-09-23 用户拍板把农场归属判定整块删掉 ⇒ 农场回到**只有两个要点的控件**。
         assertEquals(
