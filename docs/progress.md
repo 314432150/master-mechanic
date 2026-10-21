@@ -11289,3 +11289,19 @@
 
 验证：`BadgeAnchorsTest` / `PatrolAnchorsTest` / `BadgeScenesTest` / `FloatingLabelTextTest` 全绿；
 `assembleDebug` 通过；`install -r` Success、`am start` 已拉起（**授权已重置，需重新授权**）。
+
+#### 同一批：流程日志 / 点击审计里的旧叫法也统一（2026-10-22，用户追加）
+
+- `BadgeFlow.Step.SHARE_ENTRY` 标签：「打开复制分享」→ **打开分享立牌**
+- `BadgeFlow.Step.CLOSE_CARD` 标签：「关闭复制分享」→ **关闭分享立牌**
+- `BadgeAnchors.clickLabel(BADGE_SHARE_CLOSE)`：「关闭复制分享弹框」→ **关闭分享立牌弹框**
+  （点击审计行 `MM-Click` 与中止原因读的就是它）
+- `BadgeRunner` 等待文案：「等「复制分享弹框」」→「等「**分享立牌弹框**」」（跟随状态标签，避免同一条日志里两个名字）
+
+**刻意不改**（它们指的是**游戏里真实的文字**，不是我们的叫法）：
+`BadgeAnchors` 里「标志一律框标题文字（「获取立牌」/「我的立牌」/**「复制分享」**）」这句 —— 标定时要框的
+就是游戏弹框标题本身；以及 `「复制分享码」` 按钮（本流程不点它）。代码注释里的旧叫法这次一并保留
+（纯注释，改不改都不影响行为）。
+
+验证：`BadgeFlowTest` / `BadgeRunnerTest` / `BadgeAnchorsTest` / `PatrolAnchorsTest` / `BadgeScenesTest` 全绿；
+`assembleDebug` 通过；`install -r` Success、`am start` 已拉起（授权重置，需重新授权）。

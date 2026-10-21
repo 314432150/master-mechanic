@@ -274,7 +274,7 @@ object BadgeRunner {
                     waitOrAbort(
                         state,
                         input,
-                        "第 ${state.step.number} 步：等「复制分享弹框」，现在${describe(input.state)}",
+                        "第 ${state.step.number} 步：等「分享立牌弹框」，现在${describe(input.state)}",
                     )
                 } else {
                     waitOrAbort(state, input, "第 ${state.step.number} 步：正在读立牌信息（分 / 名称 / 分享码）")

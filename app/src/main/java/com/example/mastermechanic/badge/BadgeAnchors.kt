@@ -129,7 +129,7 @@ object BadgeAnchors {
         BADGE_SHARE_ENTRY -> "分享立牌入口"
         BADGE_SWITCH -> "切换"
         BADGE_SHARE -> "分享"
-        BADGE_SHARE_CLOSE -> "关闭复制分享弹框"
+        BADGE_SHARE_CLOSE -> "关闭分享立牌弹框"
         BADGE_MY_CLOSE -> "关闭我的立牌弹框"
         BADGE_ACTIVITY_EXIT -> "返回大厅"
         BADGE_EMPTY_SLOT -> "空立牌槽"
