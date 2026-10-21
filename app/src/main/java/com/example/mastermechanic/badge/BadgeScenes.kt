@@ -183,6 +183,71 @@ object BadgeScenes {
     }
 
     /**
+     * 立牌支线对**每条屏**的锚点要求（所有步骤的并集，启动前校验用，2026-10-22）。
+     *
+     * 为什么需要它：用户 2026-10-22 在标定页**误删了「分享立牌」锚点**，任务照跑，一直卡在
+     * 第 2 步「活动中心还没就绪（缺「分享立牌入口」）」，20 秒后才按"等不到画面"中止 ——
+     * 软件**分不清**"锚点不在产物里"和"锚点在但这一下没命中"（两者每轮的观感完全一样）。
+     * 有了这张表，启动前就能把"产物缺件"当面说清（见 [calibrationGaps]），不必跑一趟才暴露。
+     */
+    // `by lazy`：它要用 [readyAnchors]，而那一条声明在文件更后面 —— 直接初始化会读到 null。
+    val requiredAnchorsByState: Map<UiState, Set<String>> by lazy {
+        BadgeFlow.Step.entries
+            .flatMap { step -> chainStates(step).map { state -> state to neededAnchors(step, state) } }
+            .groupBy({ it.first }, { it.second })
+            .mapValues { (_, sets) -> sets.flatten().toSet() }
+            .filterValues { it.isNotEmpty() }
+    }
+
+    /**
+     * 读取步要用的**区域**锚点（OCR 圈范围用；不参与模板定位，所以不在 [requiredAnchorsByState] 里）。
+     *
+     * 缺一条 ⇒ 读取步会读不到对应字段（分数 / 名称 / 分享码），同样属于"产物缺件"，启动前就要报。
+     */
+    val requiredRegionAnchors: Map<UiState, Set<String>> = mapOf(
+        UiState.BADGE_SHARE to setOf(
+            BadgeAnchors.BADGE_SHARE_SCORE_AREA,
+            BadgeAnchors.BADGE_SHARE_NAME_AREA,
+            BadgeAnchors.BADGE_SHARE_TEXT_AREA,
+        ),
+    )
+
+    /**
+     * 标定产物**够不够跑完立牌支线**（启动前校验）：返回给人看的缺口清单，空 = 可以跑。
+     *
+     * 两类缺口都要报，缺一类就等于整条支线跑不通：
+     * 1. **界面标志**：没有标志 ⇒ 这一屏永远认不出来（状态机只会一直「未知」）；
+     * 2. **锚点**：缺一条 ⇒ 走到那一步必然"等不到"，20 秒后中止（就是 2026-10-22 那次误删的情形）。
+     *
+     * 判定只读产物本身，不看不命中率 —— 所以是**确定性**的，不会因为画面动效误报。
+     *
+     * @param anchorsOf 某屏在产物里实际拥有的锚点名
+     * @param hasMarker 某屏是否有界面标志
+     * @param anchorLabel 锚点名 → 给人看的短名（默认原样；传 `BadgeAnchors::clickLabel`）
+     */
+    fun calibrationGaps(
+        anchorsOf: (UiState) -> Set<String>,
+        hasMarker: (UiState) -> Boolean,
+        anchorLabel: (String) -> String = { it },
+    ): List<String> {
+        val gaps = mutableListOf<String>()
+        for (state in allStates) {
+            if (!hasMarker(state)) gaps += "「${state.label}」缺少界面标志（这一屏会一直认不出来）"
+        }
+        val needed = requiredAnchorsByState.toMutableMap()
+        for ((state, names) in requiredRegionAnchors) {
+            needed[state] = needed[state].orEmpty() + names
+        }
+        for ((state, names) in needed) {
+            val missing = names - anchorsOf(state)
+            if (missing.isNotEmpty()) {
+                gaps += "「${state.label}」缺锚点：" + missing.joinToString("、") { "「${anchorLabel(it)}」" }
+            }
+        }
+        return gaps
+    }
+
+    /**
      * **每轮该搜哪些画面**（与 `PatrolScenes.watchStatesFor` 同一口径，含自愈阀）：
      * 有结论 ⇒ 当前屏 + 这一步的验证目标；认不出来 ⇒ 退回**整条立牌链**（[allStates]）。
      *

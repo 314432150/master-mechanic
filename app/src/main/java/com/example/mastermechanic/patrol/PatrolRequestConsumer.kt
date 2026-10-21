@@ -5,8 +5,11 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import com.example.mastermechanic.action.Haptics
+import com.example.mastermechanic.badge.BadgeAnchors
+import com.example.mastermechanic.badge.BadgeScenes
 import com.example.mastermechanic.badge.BadgeSession
 import com.example.mastermechanic.badge.BadgeTask
+import com.example.mastermechanic.calibration.CalibrationStore
 import com.example.mastermechanic.capture.FrameFreshness
 import com.example.mastermechanic.capture.FrameReadiness
 import com.example.mastermechanic.capture.RoundCostWatch
@@ -263,6 +266,15 @@ object PatrolRequestConsumer {
             MmLog.w(TAG, "换号取立牌：起点画面「${effective.label}」读不出场景 ⇒ 不启动")
             return
         }
+        // **产物缺件就别开跑**（2026-10-22）：用户误删了「分享立牌」锚点，任务照跑、卡在第 2 步
+        // 20 秒才中止，日志只说"缺「分享立牌入口」"——听起来像"这一下没搜到"，看不出是"产物里没有"。
+        // 这里在**换号之前**把缺口一次说清（换号会登出当前账号，代价比一次日志大得多）。
+        val gaps = badgeCalibrationGaps(context)
+        if (gaps != null) {
+            MmLog.w(TAG, "换号取立牌：标定产物不够跑完这条支线，未启动 —— ${gaps.joinToString("；")}")
+            MmLog.w(TAG, "换号取立牌：请到标定页把上面缺的框补上（锚点删掉/没框 ⇒ 那一屏永远对不上）")
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         val switch = PatrolFlow.start(scene, PatrolFlow.Range.SWITCH_ONLY, now)
         if (switch == null) {
@@ -280,6 +292,24 @@ object PatrolRequestConsumer {
         }
         MmLog.i(TAG, "换号取立牌：起点 ${effective.label}，从换号第 ${switch.step.number} 步开始")
         Haptics.flowStarted(context)
+    }
+
+    /**
+     * 立牌支线的**启动前产物校验**：返回给人看的缺口清单（空 = 可以跑）。
+     *
+     * 为什么在这一层做：换号段会**登出当前账号**，跑一半才发现标定缺件，代价是一次
+     * 无谓的换号 + 一次必定失败的中止（2026-10-22 用户误删「分享立牌」锚点，就是这么暴露的）。
+     * 判定只读产物文件本身，不看命中率 ⇒ 不受画面动效影响，也不会因为"这一下没搜到"误报。
+     */
+    private fun badgeCalibrationGaps(context: Context): List<String> {
+        val calibration = CalibrationStore.loadForRuntime(context, PatrolAnchors.nonLocatableAnchors)
+            ?: return listOf("没有标定产物（先到标定页标一遍再跑）")
+        val rules = calibration.stateRules.groupBy { it.state }
+        return BadgeScenes.calibrationGaps(
+            anchorsOf = { state -> rules[state].orEmpty().flatMap { it.anchorNames }.toSet() },
+            hasMarker = { state -> rules[state].orEmpty().any { it.signalNames.isNotEmpty() } },
+            anchorLabel = BadgeAnchors::purposeLabel,
+        )
     }
 
     /**

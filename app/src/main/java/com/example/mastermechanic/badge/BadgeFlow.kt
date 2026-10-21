@@ -105,6 +105,16 @@ object BadgeFlow {
     data class State(
         val step: Step,
         val needsClaim: Boolean? = null,
+        /**
+         * 「空立牌槽」**连续没定位到**的轮数（判「今日已获取」前的确认，2026-10-22）。
+         *
+         * 为什么需要它：`badge_empty_slot` 的**缺席**原来是"一轮定生死"——没命中就当已领取。
+         * 但"不在"和"这一轮没搜到"在观感上完全一样（模板被红点/动效盖住、框偏了都会缺席），
+         * 一旦误判就会跳过领取直接去分享（用户 2026-10-22 提问点出的缺口）。
+         * 现在要求连续 [EMPTY_SLOT_ABSENT_CONFIRM_ROUNDS] 轮缺席才认「已获取」；
+         * 只要有一轮命中就立刻清零并认「还没领取」（**存在是硬证据，缺席才需要确认**）。
+         */
+        val emptySlotAbsentRounds: Int = 0,
         val cardsRead: Int = 0,
         val outcome: Outcome = Outcome.RUNNING,
         val reason: String? = null,
@@ -143,6 +153,14 @@ object BadgeFlow {
 
     /** 等活动中心自动提交结束的预算（ms）：真机动效约 3~8s；20s 覆盖慢加载，超时如实停下。 */
     const val ACTIVITY_SETTLE_TIMEOUT_MS = 20_000L
+
+    /**
+     * 「空槽不在 ⇒ 今日已获取」需要**连续**几轮缺席才算数（一轮 ≈0.4~0.9s）。
+     *
+     * 取 2 而不是 3：空槽是带立牌底座的**大区域**，真缺席时几乎不可能连着两轮都搜到边缘；
+     * 而每多一轮就多赔 1 秒 × 每区服（14 个区服 ≈14 秒）。2 轮是"够挡偶发漏检、又不贵"的折中。
+     */
+    const val EMPTY_SLOT_ABSENT_CONFIRM_ROUNDS = 2
 
     /** 读取立牌信息的预算（ms）：三块 OCR 各约 0.2~0.5s，留出重读一次的余量。 */
     const val OCR_STEP_TIMEOUT_MS = 10_000L
@@ -209,6 +227,7 @@ object BadgeFlow {
         step = step,
         reason = null,
         stepEnteredAtMs = nowMs,
+        emptySlotAbsentRounds = 0,
         lastActionAtMs = 0L,
         stateAtLastAction = null,
         framesStalledSinceMs = 0L,

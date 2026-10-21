@@ -193,6 +193,62 @@ class BadgeScenesTest {
     }
 
     @Test
+    fun calibrationGapsNameTheMissingAnchorBeforeTheRunStars() {
+        // 2026-10-22 用户误删「分享立牌」锚点：任务照跑、卡 20 秒才中止。现在启动前就要说清。
+        // 这里给一份"只有获取立牌、没有分享立牌"的产物，缺口清单必须点名到用途。
+        val complete = (BadgeScenes.requiredAnchorsByState.keys + BadgeScenes.requiredRegionAnchors.keys)
+            .associateWith { state ->
+                BadgeScenes.requiredAnchorsByState[state].orEmpty() +
+                    BadgeScenes.requiredRegionAnchors[state].orEmpty()
+            }
+        val withoutShareEntry = complete.mapValues { (state, names) ->
+            if (state == UiState.ACTIVITY_CENTER) names - BadgeAnchors.BADGE_SHARE_ENTRY else names
+        }
+
+        val gaps = BadgeScenes.calibrationGaps(
+            anchorsOf = { state -> withoutShareEntry[state].orEmpty() },
+            hasMarker = { true },
+            anchorLabel = BadgeAnchors::purposeLabel,
+        )
+
+        assertTrue("缺口里必须点名「分享立牌」：$gaps", gaps.any { "分享立牌" in it })
+        assertTrue("可以说清是哪一屏：$gaps", gaps.any { "活动中心" in it })
+        assertEquals("只报一条（其余都齐）：$gaps", 1, gaps.size)
+    }
+
+    @Test
+    fun calibrationGapsAlsoReportMissingMarkersAndOcrRegions() {
+        val noMarkers = BadgeScenes.calibrationGaps(
+            anchorsOf = { state -> (BadgeScenes.requiredAnchorsByState[state].orEmpty() +
+                BadgeScenes.requiredRegionAnchors[state].orEmpty()) },
+            hasMarker = { false },
+        )
+        assertTrue("每一条屏都要报缺标志：$noMarkers", noMarkers.size >= 4)
+        assertTrue(noMarkers.any { "界面标志" in it })
+
+        // 区域锚点（OCR）缺一条也要报：缺了读不出分 / 名称 / 分享码
+        val noTextArea = BadgeScenes.calibrationGaps(
+            anchorsOf = { state ->
+                (BadgeScenes.requiredAnchorsByState[state].orEmpty() +
+                    BadgeScenes.requiredRegionAnchors[state].orEmpty()) - BadgeAnchors.BADGE_SHARE_TEXT_AREA
+            },
+            hasMarker = { true },
+            anchorLabel = BadgeAnchors::purposeLabel,
+        )
+        assertTrue("缺「立牌分享码」区域要报：$noTextArea", noTextArea.any { "立牌分享码" in it })
+
+        // 产物齐 ⇒ 没有缺口（这条同时守住"别误报"）
+        val none = BadgeScenes.calibrationGaps(
+            anchorsOf = { state ->
+                BadgeScenes.requiredAnchorsByState[state].orEmpty() +
+                    BadgeScenes.requiredRegionAnchors[state].orEmpty()
+            },
+            hasMarker = { true },
+        )
+        assertEquals("产物齐全时不许报缺口：$none", emptyList<String>(), none)
+    }
+
+    @Test
     fun activityIsReadyOnlyWhenBothEntriesAreLocated() {
         assertFalse(BadgeScenes.activityReady(setOf(BadgeAnchors.BADGE_CLAIM_ENTRY)))
         assertFalse(BadgeScenes.activityReady(setOf(BadgeAnchors.BADGE_SHARE_ENTRY)))

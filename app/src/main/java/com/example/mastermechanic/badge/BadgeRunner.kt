@@ -214,14 +214,28 @@ object BadgeRunner {
                     "${(BadgeScenes.MIN_SETTLE_MS - waited) / 1000 + 1} 秒再判今日立牌",
             )
         }
-        val needsClaim = BadgeAnchors.BADGE_EMPTY_SLOT in anchorNames
-        val next = BadgeFlow.decide(state, needsClaim, input.nowMs)
+        // **「不在」需要连续确认，「在」是硬证据立刻采信**（2026-10-22）：
+        // 空槽缺席既可能是"真的已领取"，也可能只是这一轮没搜到（被红点/动效盖住、框偏了），
+        // 一轮定生死会直接跳过领取。连续 [BadgeFlow.EMPTY_SLOT_ABSENT_CONFIRM_ROUNDS] 轮都缺席才认。
+        val slotSeen = BadgeAnchors.BADGE_EMPTY_SLOT in anchorNames
+        val absentRounds = if (slotSeen) 0 else state.emptySlotAbsentRounds + 1
+        if (!slotSeen && absentRounds < BadgeFlow.EMPTY_SLOT_ABSENT_CONFIRM_ROUNDS) {
+            return RoundResult(
+                state.copy(emptySlotAbsentRounds = absentRounds),
+                note = "第 ${state.step.number} 步：这一轮没定位到「空立牌槽」" +
+                    "（第 $absentRounds/${BadgeFlow.EMPTY_SLOT_ABSENT_CONFIRM_ROUNDS} 轮确认；" +
+                    "可能真的已领取，也可能只是没搜到）",
+            )
+        }
+        val needsClaim = slotSeen
+        val next = BadgeFlow.decide(state.copy(emptySlotAbsentRounds = absentRounds), needsClaim, input.nowMs)
         return RoundResult(
             next,
             note = if (needsClaim) {
                 "第 ${state.step.number} 步：空立牌槽在 ⇒ 今日还没领取，走「获取立牌」"
             } else {
-                "第 ${state.step.number} 步：空立牌槽不在 ⇒ 今日已获取，直接「分享立牌」"
+                "第 ${state.step.number} 步：连续 $absentRounds 轮都没定位到空立牌槽" +
+                    " ⇒ 今日已获取，直接「分享立牌」"
             } + " → 第 ${next.step.number} 步",
         )
     }

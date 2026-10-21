@@ -136,6 +136,17 @@ object BadgeAnchors {
         else -> anchor
     }
 
+    /**
+     * 锚点名 → **用途中文名**（启动前校验的缺口清单 / 日志里给人看）。
+     *
+     * 与 [clickLabel] 的分工：前者是"这个控件的用途叫什么"（标定页选的也是这个词），
+     * 后者是"点它等于做什么"（动作语义）。校验时用户要照着去标定页找，所以用用途名。
+     */
+    fun purposeLabel(anchor: String): String = PURPOSE_LABELS[anchor] ?: anchor
+
+    private val PURPOSE_LABELS: Map<String, String> =
+        UiState.entries.flatMap { purposesFor(it) }.associate { it.name to it.label }
+
     /** 立牌流程各屏的用途（与 [usageByState] 一一对齐；空列表 = 该屏没有立牌用途）。 */
     fun purposesFor(state: UiState): List<PatrolAnchors.Purpose> = when (state) {
         UiState.HALL -> listOf(PatrolAnchors.Purpose("活动入口", HALL_ACTIVITY))

@@ -208,17 +208,50 @@ class BadgeRunnerTest {
     }
 
     @Test
-    fun missingEmptySlotMeansAlreadyCollectedToday() {
+    fun missingEmptySlotNeedsConsecutiveRoundsBeforeDecidingAlreadyCollected() {
+        // 「空槽不在」= 已领取 是**缺席证据**，一轮不算数（可能只是这一轮没搜到）：先等一轮确认。
         val anchors = listOf(
             hit(BadgeAnchors.BADGE_CLAIM_ENTRY),
             hit(BadgeAnchors.BADGE_SHARE_ENTRY),
         )
-        val result = BadgeRunner.onRound(
+        val first = BadgeRunner.onRound(
             state(BadgeFlow.Step.DECIDE_BRANCH, now - 4_000),
             input(UiState.ACTIVITY_CENTER, step = BadgeFlow.Step.DECIDE_BRANCH, anchors = anchors),
         )
-        assertEquals("空槽不在 ⇒ 直接分享，不点「获取立牌」", BadgeFlow.Step.SHARE_ENTRY, result.state?.step)
-        assertEquals(false, result.state?.needsClaim)
+        assertEquals("一轮缺席不作数", BadgeFlow.Step.DECIDE_BRANCH, first.state?.step)
+        assertEquals(1, first.state?.emptySlotAbsentRounds)
+
+        val second = BadgeRunner.onRound(
+            first.state!!,
+            input(UiState.ACTIVITY_CENTER, step = BadgeFlow.Step.DECIDE_BRANCH, anchors = anchors),
+        )
+        assertEquals("连续两轮都不在 ⇒ 直接分享，不点「获取立牌」", BadgeFlow.Step.SHARE_ENTRY, second.state?.step)
+        assertEquals(false, second.state?.needsClaim)
+        assertEquals("进入下一步后计数清零（下个区服重新确认）", 0, second.state?.emptySlotAbsentRounds)
+    }
+
+    @Test
+    fun emptySlotReappearingClearsTheAbsenceStreak() {
+        // 存在是硬证据：只要有一轮命中，立刻认"还没领取"，并清零缺席计数。
+        val ready = listOf(
+            hit(BadgeAnchors.BADGE_CLAIM_ENTRY),
+            hit(BadgeAnchors.BADGE_SHARE_ENTRY),
+        )
+        val absentOnce = BadgeRunner.onRound(
+            state(BadgeFlow.Step.DECIDE_BRANCH, now - 4_000),
+            input(UiState.ACTIVITY_CENTER, step = BadgeFlow.Step.DECIDE_BRANCH, anchors = ready),
+        )
+        val appeared = BadgeRunner.onRound(
+            absentOnce.state!!,
+            input(
+                UiState.ACTIVITY_CENTER,
+                step = BadgeFlow.Step.DECIDE_BRANCH,
+                anchors = ready + hit(BadgeAnchors.BADGE_EMPTY_SLOT),
+            ),
+        )
+        assertEquals(BadgeFlow.Step.CLAIM_ENTRY, appeared.state?.step)
+        assertEquals(true, appeared.state?.needsClaim)
+        assertEquals("空槽回来 ⇒ 缺席计数清零", 0, appeared.state?.emptySlotAbsentRounds)
     }
 
     @Test
