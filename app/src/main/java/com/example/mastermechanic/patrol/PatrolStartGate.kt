@@ -45,6 +45,9 @@ object PatrolStartGate {
         PatrolRequestSignal.Kind.SWITCH_SERVER,
             -> PatrolFlow.Range.SWITCH_ONLY
 
+        // 立牌任务的换号段与「只换号」同一条区间（第 3~6 步 → 大厅），起点表因此可以直接复用
+        PatrolRequestSignal.Kind.BADGE_COLLECT -> PatrolFlow.Range.SWITCH_ONLY
+
         PatrolRequestSignal.Kind.VISIT_ONLY -> PatrolFlow.Range.VISIT_ONLY
         // 「继续」从失败那一步接着来、「停止」什么都不启动 —— 两者都不需要起点
         PatrolRequestSignal.Kind.RESUME, PatrolRequestSignal.Kind.STOP -> null

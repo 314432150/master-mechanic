@@ -63,6 +63,27 @@ class BadgePoolViewTest {
     }
 
     @Test
+    fun rowShowsCardNameAndScoreButNotTheServerName() {
+        // 2026-10-22 用户口径：立牌池列表不显示服务器名，改为显示立牌名称 + 分数
+        val rows = BadgePoolView.rows(BadgeData(records = unsorted), expanded = true)
+        val top = rows.first()
+        assertEquals("立牌甲 · 877分", top.displayText)
+        assertEquals("服务器名不该出现在显示文字里", false, top.displayText.contains(top.serverName))
+    }
+
+    @Test
+    fun copiedTextMatchesTheUsersFormatExactly() {
+        // 用户给定格式（逐字）：【曹操顶级立牌WD6HD5】价值948分
+        val row = BadgePoolView.Row(
+            serverName = "发条权杖",
+            cardName = "曹操顶级立牌",
+            code = "WD6HD5",
+            score = 948,
+        )
+        assertEquals("【曹操顶级立牌WD6HD5】价值948分", row.copyText)
+    }
+
+    @Test
     fun expandToggleVisibleOnlyWhenOverTopCount() {
         assertFalse(BadgePoolView.showExpandToggle(3))
         assertTrue(BadgePoolView.showExpandToggle(4))

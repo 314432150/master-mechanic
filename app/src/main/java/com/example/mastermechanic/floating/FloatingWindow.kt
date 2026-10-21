@@ -34,6 +34,7 @@ import androidx.annotation.StringRes
 import com.example.mastermechanic.MainActivity
 import com.example.mastermechanic.R
 import com.example.mastermechanic.badge.BadgePoolView
+import com.example.mastermechanic.badge.BadgeSession
 import com.example.mastermechanic.badge.BadgeStore
 import com.example.mastermechanic.action.PopupCloseSignal
 import com.example.mastermechanic.capture.CaptureSessionSignal
@@ -362,7 +363,12 @@ class FloatingWindow(private val context: Context) {
      * —— 那两处问的是"真在跑的那个流程"，快照答不了（也没有「继续」可点，"已完成"是终态）。
      */
     private fun patrolForDisplay(): PatrolFlow.State? =
-        PatrolResultSignal.displayState(PatrolSession.current, SystemClock.elapsedRealtime())
+        PatrolResultSignal.displayState(
+            // 立牌任务的**换号段**用的就是 `PatrolFlow.State`（临时需求 temp/badge-share-1021）：
+            // 把它接到同一处显示，进度行 / 标签 / 读屏播报一分钱不花就都有了。
+            PatrolSession.current ?: BadgeSession.current?.switch,
+            SystemClock.elapsedRealtime(),
+        )
 
     /**
      * 状态签名：进度 + 状态行 + 能不能继续。
@@ -756,6 +762,17 @@ class FloatingWindow(private val context: Context) {
                 onTrailing = { openSwitchVisitConfig() },
             ) { onVisitPreset() },
         )
+        // **「换号取立牌」**（临时需求 temp/badge-share-1021，2026-10-21；活动结束随分支移除）：
+        // 启动一条流程（换号段 + 立牌支线），所以放在启动类动作这一组；收集到的数据在「更多 → 立牌池」看。
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_badge_collect),
+                R.string.floating_menu_badge_collect,
+            ) {
+                if (!ensureReady()) return@menuRow
+                sendStartRequest(PatrolRequestSignal.Kind.BADGE_COLLECT)
+            },
+        )
         // **「更多」放菜单项的最后一行**（2026-10-19 用户口径：高频三项点完就往下走，
         // 低频维护层别夹在中间挡道）。⚠ 它下面是**流程控制行**（「停止 / 继续」永远在绝对最底、
         // 竖直零位移，见 [controlRow]）—— 所以"最下面"= 静态菜单项的末行。
@@ -783,8 +800,14 @@ class FloatingWindow(private val context: Context) {
         // 跑完那一刻 `current` 已经清空，而显示态还会供 ≈30 秒的「已完成」快照 ⇒ 用显示态判就会画出
         // 一个点了只说"当前没有进行中的流程"的「停止」（2026-10-01 用户报的 bug，见 `PatrolStatus.showsControlRow`）。
         val running = PatrolSession.current
-        if (PatrolStatus.showsControlRow(running)) {
-            container.addView(controlRow(resumable = PatrolStatus.canResume(running)))
+        // 立牌任务（temp/badge-share-1021）也算"有流程在跑"：否则它在跑时这个控制行不显示，
+        // 用户找不到「停止」（只能去关采集授权）。换号段的进度本身用 PatrolFlow.State，可直接复用控制行。
+        if (PatrolStatus.showsControlRow(running) || BadgeSession.isActive) {
+            container.addView(
+                controlRow(
+                    resumable = PatrolStatus.canResume(running) || BadgeSession.isPaused,
+                ),
+            )
         }
     }
 
@@ -1136,7 +1159,10 @@ class FloatingWindow(private val context: Context) {
         }
     }
 
-    /** 立牌池的一行：区服名 + 分数（小号口径），行尾「复制」；整行点击 = 复制分享码。 */
+    /**
+     * 立牌池的一行：**立牌名称 + 分数**（2026-10-22 用户口径，不再显示服务器名），
+     * 行尾「复制」；整行点击 = 复制 [BadgePoolView.Row.copyText]（含名称 / 分数 / 分享码）。
+     */
     private fun badgeRow(row: BadgePoolView.Row): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -1145,14 +1171,15 @@ class FloatingWindow(private val context: Context) {
         background = tapFeedbackBackground()
         contentDescription = context.getString(
             R.string.badge_pool_row_desc,
-            row.serverName,
+            row.cardName,
             row.score,
         )
         isClickable = true
         setOnClickListener { copyBadgeCode(row) }
         addView(
             textView(12f, MENU_TEXT_COLOR).apply {
-                text = context.getString(R.string.badge_pool_row, row.serverName, row.score)
+                // 显示「立牌名称 · 分数」（服务器名不显示，2026-10-22 用户口径）
+                text = row.displayText
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 gravity = Gravity.CENTER_VERTICAL
@@ -1162,12 +1189,15 @@ class FloatingWindow(private val context: Context) {
             },
         )
         addView(
-            textView(TRAILING_GLYPH_TEXT_SIZE_SP, MENU_GLYPH_COLOR).apply {
+            // 字号独立取 11sp（2026-10-22 用户："「复制」比立牌名称大不少"）：
+            // 行文字是 12sp，功能行行尾符号那一档是 15sp（`⚙` 太小看不清），这里的「复制」是**标签**，
+            // 比行文字小一档才不抢视线；触摸宽度仍由左右内边距撑开（不缩点击区）。
+            textView(BADGE_COPY_TEXT_SIZE_SP, MENU_GLYPH_COLOR).apply {
                 text = context.getString(R.string.badge_pool_copy)
                 gravity = Gravity.CENTER
                 contentDescription = context.getString(R.string.badge_pool_copy)
                 background = tapFeedbackBackground()
-                setPadding(dp(4), dp(4), dp(8), dp(4))
+                setPadding(dp(6), dp(4), dp(8), dp(4))
                 isClickable = true
                 isFocusable = true
                 setOnClickListener { copyBadgeCode(row) }
@@ -1189,13 +1219,14 @@ class FloatingWindow(private val context: Context) {
             rerender()
             return
         }
-        clipboard.setPrimaryClip(ClipData.newPlainText("badge-share-code", row.code))
+        // 复制内容 = 用户给定的一整行文本（含立牌名称 / 分数 / 分享码），不是裸分享码（2026-10-22）
+        clipboard.setPrimaryClip(ClipData.newPlainText("badge-share-code", row.copyText))
         menuState = FloatingMenu.notice(
             menuState,
-            context.getString(R.string.badge_pool_copied, row.serverName),
+            context.getString(R.string.badge_pool_copied, row.copyText),
         )
         rerender()
-        MmLog.i(TAG, "立牌池：已复制「${row.serverName}」的分享码（${row.score} 分）")
+        MmLog.i(TAG, "立牌池：已复制「${row.copyText}」（区服「${row.serverName}」，${row.score} 分）")
     }
 
     /**
@@ -2211,7 +2242,10 @@ class FloatingWindow(private val context: Context) {
         // [PatrolSession] 的目标名），下一步搬进纯逻辑并补单测 —— 已在回复里如实说明。
         if (patrol != null) {
             val friend = PatrolSession.targetFriend
-            val server = PatrolSession.targetServer
+            // **目标区服名**（2026-10-22 用户报："选择区服后不显示具体服务器名，以前有"）：
+            // 立牌任务的换号段用的是 `BadgeSession`，它的区服在 `Task.current` 里，`PatrolSession.targetServer`
+            // 是 null ⇒ 标签一直退化成"选择服务器"这种泛称。这里补上 badge 那一侧。
+            val server = PatrolSession.targetServer ?: BadgeSession.current?.current
             // **只在真正"拜访"那一步说「拜访 X 的农场」**（2026-09-30 用户报："提示太早了"）：
             // 第 7 步是「进入农场」（自己的）、第 8 步是「打开好友列表」，都还没到拜访那一下 ——
             // 旧判据写成 `step.number >= 7`，于是从第 7 步起就一直挂着"拜访 X 的农场"，
@@ -3800,6 +3834,14 @@ class FloatingWindow(private val context: Context) {
          */
         const val TRAILING_GLYPH_TEXT_SIZE_SP = 15f
         const val TRAILING_GLYPH_PADDING_H_DP = 12
+
+        /**
+         * 立牌池行尾「复制」的字号（2026-10-22 用户口径："目前看着比立牌名称大不少"）。
+         *
+         * 比行文字（12sp）**小一档**（11sp）：它是标签，不是符号；不要复用
+         * [TRAILING_GLYPH_TEXT_SIZE_SP]（15sp 是给 `⚙` 这类符号的，字词用它就抢视线了）。
+         */
+        const val BADGE_COPY_TEXT_SIZE_SP = 11f
 
         /**
          * 功能行**副文**（第二行小字）的字号与限宽（dp）（2026-09-30，见 [menuLabelView]）。

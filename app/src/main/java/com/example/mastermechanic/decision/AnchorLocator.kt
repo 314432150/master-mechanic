@@ -64,6 +64,14 @@ class AnchorLocator(
      * 否则文字识别读到的是一片全零像素。
      */
     private val nonLocatable: Set<String> = emptySet(),
+    /**
+     * **允许同屏多处命中的锚点**（临时需求 temp/badge-share-1021，2026-10-21）：立牌的「领取」「分享」
+     * 本来就是同一模板出现多次（两条任务行 / 两张卡）⇒ 不能按 `UNRELIABLE` 一票否决，
+     * 只能走 [locateAll] 拿全部位置，再由流程按行 / 卡归属消歧（红线 3）。
+     *
+     * **默认空集 ⇒ 既有行为逐字段不变**（其余锚点仍旧"位置歧义 = 不可信 = 不点"）。
+     */
+    private val multiHitAnchors: Set<String> = emptySet(),
 ) {
 
     /** 该状态声明的**全部**锚点（含 [nonLocatable]）：灰度窗口仍要它们，见 [windowRegions]。 */
@@ -79,6 +87,10 @@ class AnchorLocator(
     init {
         require(UiState.UNKNOWN !in allSpecsByState) {
             "「未知」不能声明锚点：状态未知时零点击（红线 1）"
+        }
+        val conflict = multiHitAnchors intersect nonLocatable
+        require(conflict.isEmpty()) {
+            "同一锚点不能既「只圈区域」又要「多实例定位」：$conflict"
         }
         allSpecsByState.forEach { (state, specs) ->
             val names = specs.map { it.name }
@@ -234,6 +246,32 @@ class AnchorLocator(
     fun windowInFrame(frameWidth: Int, frameHeight: Int, state: UiState, anchorName: String): PixelBounds? {
         val spec = allSpecsByState[state].orEmpty().firstOrNull { it.name == anchorName } ?: return null
         return spec.window.pixelBounds(frameWidth, frameHeight)
+    }
+
+    /**
+     * **多实例定位**（[multiHitAnchors] 里的锚点专用）：返回全部达到命中线的位置，按分数降序。
+     *
+     * 与 [locate] 的区别只有一条：这里**不**把"多处高分"判成不可信 —— 那正是它要的结果。
+     * 调用方拿到多个位置后必须按归属（行文字 / 卡序 + 已读位置）消歧；分不清就停下（红线 3）。
+     *
+     * 不在 [multiHitAnchors] 里的锚点**一律返回空**（防止有人拿它绕过红线 7 的位置歧义判定）。
+     */
+    fun locateAll(gray: GrayImage, state: UiState, anchorName: String): List<AnchorHit> {
+        if (anchorName !in multiHitAnchors) return emptyList()
+        val spec = specsByState[state].orEmpty().firstOrNull { it.name == anchorName } ?: return emptyList()
+        val template = spec.templates.first()
+        return SignalDetector(listOf(spec), params).detectAllHits(gray, spec).map { peak ->
+            val clickX = peak.x + template.width / 2.0
+            val clickY = peak.y + template.height / 2.0
+            AnchorHit(
+                name = spec.name,
+                score = peak.score,
+                frameX = clickX,
+                frameY = clickY,
+                calibrationX = clickX,
+                calibrationY = clickY,
+            )
+        }
     }
 
     private fun hitOf(spec: SignalSpec, record: DetectionRecord): AnchorHit? {

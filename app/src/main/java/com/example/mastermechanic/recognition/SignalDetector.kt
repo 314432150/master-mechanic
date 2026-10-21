@@ -53,6 +53,32 @@ class SignalDetector(private val signals: List<SignalSpec>, private val params: 
         return DetectionRecord(signal.name, judge(peaks), peaks.firstOrNull(), peaks.getOrNull(1))
     }
 
+    /**
+     * **多实例定位**（临时需求 temp/badge-share-1021，2026-10-21）：返回这条信号在窗口内**全部**
+     * 达到命中线的位置（已按抑制半径去重，按分数降序）。
+     *
+     * ## 为什么不能复用 [detectSignal] 的结论
+     *
+     * 它把"多个高分位置"判成 `UNRELIABLE`（红线 7：位置歧义一票否决）——那对**标志**是对的
+     * （认不出是哪一屏），对**多实例锚点**却是致命的：立牌弹框的「领取」「分享」本来就是
+     * 同一模板出现多次（两条任务行 / 两张卡），按"不可信"处理就永远点不了。
+     *
+     * ## 边界（调用方必须自己守住）
+     *
+     * - 只有**明确知道多实例**的锚点才许走这里（`AnchorLocator` 用构造参数圈定）；
+     * - 返回多个位置**不等于**可以随便挑：点哪一个由流程按行 / 卡归属消歧（红线 3），
+     *   分不清就停下报原因，绝不按"最像的"选。
+     */
+    fun detectAllHits(image: GrayImage, signal: SignalSpec): List<MatchPeak> {
+        val radius = signal.templates.maxOf {
+            TemplateMatcher.effectiveSuppressRadius(params, it.width, it.height)
+        }
+        return signal.templates
+            .flatMap { TemplateMatcher.findPeaks(image, it, signal.window, params) }
+            .let { TemplateMatcher.suppressPeaks(it, radius) }
+            .filter { it.score >= params.matchThreshold }
+    }
+
     /** 判定规则本体（输入为已合并 / 抑制的峰值序列）：纯函数，独立可测。 */
     fun judge(peaks: List<MatchPeak>): Verdict {
         val best = peaks.firstOrNull()

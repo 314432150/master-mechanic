@@ -354,11 +354,16 @@ class CalibrationData(
      * @param nonLocatable **只圈区域、不当点击目标**的锚点名（如「列表区域」）。**必填、故意不给默认值**：
      *   漏传会让大块区域锚点跟着一起做模板匹配，帧线程单轮停摆 20 秒以上（2026-09-22 真机实录，
      *   根因与实测见 [AnchorLocator] 的构造参数说明）。调用方给 `PatrolAnchors.nonLocatableAnchors`。
+     * @param multiHit **允许同屏多处命中**的锚点名（立牌临时需求；默认空集 ⇒ 既有行为不变）。
      */
-    fun toAnchorLocator(nonLocatable: Set<String>): AnchorLocator = AnchorLocator(
+    fun toAnchorLocator(
+        nonLocatable: Set<String>,
+        multiHit: Set<String> = emptySet(),
+    ): AnchorLocator = AnchorLocator(
         anchorsByState = stateRules.associate { it.state to anchorSpecs(it.state) },
         params = params,
         nonLocatable = nonLocatable,
+        multiHitAnchors = multiHit,
     )
 
     /** 记录角色；ID 不存在返回 null。 */

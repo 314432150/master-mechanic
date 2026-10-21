@@ -33,6 +33,16 @@ import com.example.mastermechanic.action.ClickDispatch
 import com.example.mastermechanic.action.Haptics
 import com.example.mastermechanic.action.SystemKeys
 import com.example.mastermechanic.action.TextInjector
+import com.example.mastermechanic.action.ClickRequest
+import com.example.mastermechanic.action.SwipeRequest
+import com.example.mastermechanic.badge.BadgeAnchors
+import com.example.mastermechanic.badge.BadgeFlow
+import com.example.mastermechanic.badge.BadgeRecord
+import com.example.mastermechanic.badge.BadgeRunner
+import com.example.mastermechanic.badge.BadgeScenes
+import com.example.mastermechanic.badge.BadgeSession
+import com.example.mastermechanic.badge.BadgeTask
+import com.example.mastermechanic.badge.ShareCodeParser
 import com.example.mastermechanic.patrol.FriendSearch
 import com.example.mastermechanic.patrol.TextInjectorLike
 import com.example.mastermechanic.action.ClickSource
@@ -314,6 +324,23 @@ class CaptureService : Service() {
 
     /** 上一次跑号结论（同一句话只记一次日志：等待类结论会连续多轮相同）。仅帧线程访问。 */
     private var lastPatrolNote: String? = null
+
+    // ------------------------------------------------------------------ 立牌任务（temp/badge-share-1021）
+
+    /** 立牌判定序号（NFR-05 审计链：与 `MM-Click` 的「判定: badge-N」对齐）。仅帧线程访问。 */
+    private var badgeSeq = 0L
+
+    /** 上一次立牌结论（同一句话只记一次日志）。仅帧线程访问。 */
+    private var lastBadgeNote: String? = null
+
+    /** 上一次读取立牌信息用过的"画面 + 步骤"键（OCR 节流 + 复用）。仅帧线程访问。 */
+    private var badgeOcrKey: String? = null
+
+    /** 上一次读取立牌信息的时刻（ms）。仅帧线程访问。 */
+    private var badgeOcrAtMs = 0L
+
+    /** 上一次读取立牌信息的结论（同一屏不重复读三块，省帧线程）。仅帧线程访问。 */
+    private var badgeOcrResult: BadgeRunner.Reading = BadgeRunner.Reading.Waiting
 
     /**
      * 连续"点击被拒"的轮数（2026-09-30 加）：成功下发一枪 / 换了一步就归零。
@@ -762,7 +789,11 @@ class CaptureService : Service() {
         // 锚点定位器与 FR-01 决策随会话重建（T2-4）：重试计数不跨会话（与滞回状态不跨会话同一口径）
         // 排除「只圈区域」的锚点：它们只是 OCR 的输入范围，跟着定位会让帧线程单轮停摆 20 秒以上
         // （2026-09-22 真机：好友列表「列表区域」431x511 → 单轮 23.3 秒，根因见 AnchorLocator 构造参数）
-        anchorLocator = calibration?.toAnchorLocator(PatrolAnchors.nonLocatableAnchors)
+        anchorLocator = calibration?.toAnchorLocator(
+            PatrolAnchors.nonLocatableAnchors,
+            // 立牌临时需求（temp/badge-share-1021）：多实例锚点（领取 / 分享）不按位置歧义否决
+            BadgeAnchors.multiInstanceAnchors,
+        )
         popupClose = PopupCloseController()
         PopupCloseSignal.clear()
         actionRoundSeq = 0
@@ -2408,7 +2439,11 @@ class CaptureService : Service() {
         // （上面那两条数字是 350ms 时代的实录，保留原样作对照；现在下限是 300ms。）
         // 停手（`gaveUp`）后不再需要它：那时我们已经不点了，让它回两档自适应省电。
         if (!result.frozen) {
-            val patrolRunning = PatrolSession.current?.isRunning == true
+            // 立牌支线（temp/badge-share-1021）：**它也算"流程在跑"**，否则会掉进 500ms 稳定档
+            // （真机 2026-10-22 日志里立牌期反复出现 500ms，每一步白等 0.3s）
+            val badgeRunning = BadgeSession.current?.isRunning == true &&
+                BadgeSession.current?.phase == BadgeSession.Phase.COLLECT
+            val patrolRunning = PatrolSession.current?.isRunning == true || badgeRunning
             val closingPopup = !popupClose.gaveUp &&
                 (popupClose.attempt > 0 || popupClose.awaitingVerification)
             // 2026-10-18（3-B）：待命期**只搜遮挡屏** ⇒ 认不出当前场景 ⇒ `state` 恒「未知」
@@ -2423,6 +2458,8 @@ class CaptureService : Service() {
             val stable = result.settled || standbyQuiet
             val target = when {
                 closingPopup -> POPUP_INTERVAL_MS
+                // 立牌支线：用户 2026-10-22 拍板 120ms（每一步都在等切屏，间隔就是延迟）
+                badgeRunning -> BADGE_INTERVAL_MS
                 stable && !patrolRunning -> STABLE_INTERVAL_MS
                 else -> ACTIVE_INTERVAL_MS
             }
@@ -2432,6 +2469,7 @@ class CaptureService : Service() {
                     "节流间隔切换: ${lastAppliedIntervalMs}ms -> ${target}ms" +
                         when {
                             closingPopup -> "（弹窗闭环进行中：逐帧级轮询）"
+                            badgeRunning -> "（立牌流程进行中：120ms）"
                             patrolRunning ->
                                 "（${PatrolSession.current?.range?.logLabel ?: "流程"}进行中：恒用快档）"
                             standbyQuiet -> "（待命守护：一屏都没出现遮挡屏 = 确实稳定）"
@@ -2526,8 +2564,21 @@ class CaptureService : Service() {
      * **本步已经下过击 ⇒ 不再做文字识别**（2026-09-24 真机取证后加的，见下），其余情况返回
      * [PatrolRunner.NamePlan.Waiting]，由编排层的耐心逻辑去等（不误判成失败）。
      */
+    /**
+     * 当前在跑的**巡查式进度**：巡查主流程优先，其次立牌任务的换号段。
+     *
+     * 立牌任务的换号段就是巡查的第 3~6 步 —— 名称定位 / 跨屏扫描那套逻辑要照用，
+     * 而它们原先直接读 [PatrolSession]。这一处收口，避免两套流程各复制一份。
+     */
+    private fun activePatrolState(): PatrolFlow.State? =
+        PatrolSession.current ?: BadgeSession.current?.switch
+
+    /** 目标区服：巡查会话优先，其次立牌任务的当前区服（换号段第 5 步要用）。 */
+    private fun activeTargetServer(): String? =
+        PatrolSession.targetServer ?: BadgeSession.current?.current
+
     private fun namePlanOf(gray: GrayImage, state: UiState): PatrolRunner.NamePlan {
-        val current = PatrolSession.current ?: return PatrolRunner.NamePlan.Waiting
+        val current = activePatrolState() ?: return PatrolRunner.NamePlan.Waiting
         // **口径 A 在采集层的贯彻**：本步一旦下过击，编排层接下来**只等期望画面**（不重新定位、不补点）
         // ⇒ 这一轮就算读出一堆名字也**没有任何用处**，却要占住帧线程：第 5 步两列 ≈0.5s、第 9 步 ≈0.3s。
         //
@@ -2632,7 +2683,7 @@ class CaptureService : Service() {
      */
     private fun serverPlanOf(gray: GrayImage, state: UiState): PatrolRunner.NamePlan {
         if (state != UiState.SERVER_SELECT) return PatrolRunner.NamePlan.Waiting
-        val target = PatrolSession.targetServer
+        val target = activeTargetServer()
             ?: return PatrolRunner.NamePlan.Failed(
                 // 顺序轮换已在**启动前**解析成具体名字（`PatrolRequestConsumer.resolveNextServer`），
                 // 所以走到这里说明那份解析没成（清单空 / 读不了）——如实说清，不猜一个区服
@@ -3449,7 +3500,10 @@ class CaptureService : Service() {
         }
         recognitionLoop = calibration?.toLoop(patrolExpected) ?: RecognitionLoop.uncalibrated()
         calibrationData = calibration
-        anchorLocator = calibration?.toAnchorLocator(PatrolAnchors.nonLocatableAnchors)
+        anchorLocator = calibration?.toAnchorLocator(
+            PatrolAnchors.nonLocatableAnchors,
+            BadgeAnchors.multiInstanceAnchors,
+        )
         calibratedFrameWidth = calibration?.frameWidth ?: 0
         calibratedFrameHeight = calibration?.frameHeight ?: 0
         frameSizeWarned = false
@@ -3470,6 +3524,387 @@ class CaptureService : Service() {
      * 纳入「上一轮状态 ∪ 活动弹窗」：只纳入上一轮状态的话，弹窗**刚被确认的那一轮**锚点读到的是
      * 未转换的像素 → 白等一轮（真机 200ms~1s）。活动弹窗锚点通常只有 1~2 条小窗口，常驻纳入的成本可忽略。
      */
+    // ================================================================== 立牌任务（temp/badge-share-1021）
+
+    /** 本张卡的分享按钮位置键（点下去时记下，读取成功才写进 [BadgeSession.cardsRead]）。仅帧线程访问。 */
+    private var pendingCardKey: String? = null
+
+    /** 立牌信息三块 OCR 的最小间隔（ms）：同屏连续多轮不重复读三块（每次三块 ≈1~3 秒）。 */
+    private val badgeOcrMinIntervalMs = 1_200L
+
+    /**
+     * 立牌任务一步：与 [stepPatrol] 并列，**同一帧线程、同一个点击出口**（[ClickDispatch]）。
+     *
+     * 两个阶段（见 `BadgeSession.Phase`）：
+     * - **换号段**：直接复用 [PatrolRunner] 与 `PatrolFlow(SWITCH_ONLY)`，只是进度存在 [BadgeSession]；
+     *   跑到大厅（第 6 步通过）⇒ 交接给立牌支线，**不结束任务**；
+     * - **立牌支线**：`BadgeRunner` 管步骤，采集层负责多实例消歧 / OCR / 写盘。
+     */
+    private fun stepBadge(result: RoundResult, gray: GrayImage) {
+        val generation = BadgeSession.currentGeneration
+        val task = BadgeSession.current ?: return
+        // **中止 / 完成之后不再推进、不再写日志**（真机教训 2026-10-22：不拦就会一边刷"中止"
+        // 一边把已经判死的步骤继续往下跑 —— 画面恰好到货时甚至能跑完整条链，语义全错）。
+        if (!task.isRunning) return
+        val watch = when (task.phase) {
+            BadgeSession.Phase.SWITCH -> task.switch
+                ?.let { PatrolScenes.watchStatesFor(it.step, result.state) }.orEmpty()
+
+            BadgeSession.Phase.COLLECT -> task.collect
+                ?.let { BadgeScenes.watchStatesFor(it.step, result.state) }.orEmpty()
+        }
+        patrolExpected?.watch(watch)
+        val anchors = if (!result.frozen && result.state != UiState.UNKNOWN) {
+            anchorLocator?.locate(gray, result.state).orEmpty()
+        } else {
+            emptyList()
+        }
+        val now = SystemClock.elapsedRealtime()
+        when (task.phase) {
+            BadgeSession.Phase.SWITCH -> stepBadgeSwitch(task, generation, result, gray, anchors, now)
+            BadgeSession.Phase.COLLECT -> stepBadgeCollect(task, generation, result, gray, anchors, now)
+        }
+    }
+
+    /** 换号段：跑巡查的第 3~6 步，进度写进 [BadgeSession]；跑完交接给立牌支线。 */
+    private fun stepBadgeSwitch(
+        task: BadgeSession.Task,
+        generation: Long,
+        result: RoundResult,
+        gray: GrayImage,
+        anchors: List<com.example.mastermechanic.decision.AnchorHit>,
+        now: Long,
+    ) {
+        val current = task.switch ?: return
+        val server = task.current ?: run {
+            BadgeSession.fail("当前区服未知（队列为空）")
+            return
+        }
+        val outcome = PatrolRunner.onRound(
+            current = current,
+            input = PatrolRunner.RoundInput(
+                foreground = !result.frozen,
+                framesStalled = ClickDispatch.framesStalled,
+                // 立牌自己的用途名（`badge_claim_entry` 同时是活动中心的**标志**，走 `SignalNames`
+                // 会说成"「活动中心」的界面标志"—— 日志里看着像在点状态标志，容易误判，真机 2026-10-22）
+                anchorLabel = { id -> BadgeAnchors.clickLabel(id) },
+                state = result.state,
+                popupHit = UiState.ACTIVITY_POPUP in result.hits,
+                popupConfirmed = result.state == UiState.ACTIVITY_POPUP,
+                anchors = anchors,
+                nowMs = now,
+                lastClickAtMs = BadgeSession.lastClickAtMs,
+                // 第 5 步的名称定位要它（`serverPlanOf` 从会话取，不从这里取）
+                targetServer = server,
+                namePlan = namePlanOf(gray, result.state),
+                decisionId = "badge-${badgeSeq + 1}",
+            ),
+        )
+        // 换号段跑完（已在大厅）⇒ 交接，**不结束任务**
+        if (outcome.finished) {
+            BadgeSession.toCollect(now)
+            logBadgeNote("「$server」已进入大厅 ⇒ 开始收立牌")
+            return
+        }
+        if (outcome.failed) {
+            BadgeSession.fail(outcome.state?.reason ?: "换号段中止")
+            return
+        }
+        BadgeSession.commit(task.copy(switch = outcome.state), generation)
+        logBadgeNote(outcome.note)
+        outcome.request?.let { request ->
+            val allowed = dispatchBadgeClick(request, result, now)
+            // 被拒 ≠ 点过了：撤销那一步的"已动手"，下一轮重新定位、重新提议
+            if (!allowed) outcome.state?.let {
+                val fresh = BadgeSession.current ?: task
+                BadgeSession.commit(fresh.copy(switch = PatrolFlow.withoutPendingAction(it)), generation)
+            }
+        }
+        outcome.swipe?.let { dispatchBadgeSwipe(it, result, now) }
+    }
+
+    /** 立牌支线：`BadgeRunner` 出结论，采集层负责多实例消歧 / OCR / 记录写盘 / 区服收尾。 */
+    private fun stepBadgeCollect(
+        task: BadgeSession.Task,
+        generation: Long,
+        result: RoundResult,
+        gray: GrayImage,
+        anchors: List<com.example.mastermechanic.decision.AnchorHit>,
+        now: Long,
+    ) {
+        val collect = task.collect ?: return
+        val server = task.current
+        val outcome = BadgeRunner.onRound(
+            current = collect,
+            input = BadgeRunner.RoundInput(
+                foreground = !result.frozen,
+                framesStalled = ClickDispatch.framesStalled,
+                anchorLabel = { id -> BadgeAnchors.clickLabel(id) },
+                state = result.state,
+                popupHit = UiState.ACTIVITY_POPUP in result.hits,
+                popupConfirmed = result.state == UiState.ACTIVITY_POPUP,
+                anchors = anchors,
+                nowMs = now,
+                lastClickAtMs = BadgeSession.lastClickAtMs,
+                claimPlan = claimPlanOf(gray, result.state, collect.step),
+                cardPlan = cardPlanOf(gray, result.state, collect.step),
+                reading = badgeReadingOf(gray, result.state, collect.step, server),
+                decisionId = "badge-${badgeSeq + 1}",
+            ),
+        )
+        // 读到一张立牌：**先落盘再推进**（写盘失败只告警，不丢掉已读到的东西）
+        outcome.record?.let { record ->
+            BadgeTask.saveRecord(this, record)
+            pendingCardKey?.let { key ->
+                BadgeSession.markCardRead(key)
+                pendingCardKey = null
+            }
+        }
+        if (outcome.finished) {
+            val marked = server != null && BadgeTask.markServerCollected(this, server)
+            BadgeSession.finishServer(marked, now)
+            logBadgeNote(BadgeSession.lastNote)
+            return
+        }
+        if (outcome.failed) {
+            BadgeSession.fail(outcome.state?.reason ?: "立牌流程中止")
+            return
+        }
+        BadgeSession.commit(task.copy(collect = outcome.state), generation)
+        logBadgeNote(outcome.note)
+        outcome.request?.let { request ->
+            val allowed = dispatchBadgeClick(request, result, now)
+            if (!allowed) outcome.state?.let {
+                val fresh = BadgeSession.current ?: task
+                BadgeSession.commit(fresh.copy(collect = BadgeFlow.withoutPendingAction(it)), generation)
+            }
+        }
+    }
+
+    /**
+     * 立牌点击下发：与巡查共用一个出口（[ClickDispatch]，红线 6），**同样不给旧画面背书**
+     * （静态页的旧帧照旧放行：判据与巡查完全一致，见 [staleReplayAgeMs]）。
+     *
+     * @return true = 真的发出去了（调用方据此决定要不要撤销"已动手"）
+     */
+    private fun dispatchBadgeClick(request: ClickRequest, result: RoundResult, now: Long): Boolean {
+        val stale = staleReplayAgeMs(now)
+        if (stale != null) {
+            MmLog.w(
+                TAG,
+                "立牌不动作：这一轮用的是兜底重放的旧画面（${stale}ms 前拍到）且帧供给被判慢 ⇒ " +
+                    "等一张新帧再动（不点、也不下结论）",
+            )
+            return false
+        }
+        badgeSeq++
+        lastBadgeNote = null
+        refreshScreenSizeForClick()
+        val verdict = ClickDispatch.submit(
+            request = request,
+            gameForeground = !result.frozen,
+            state = result.state,
+        )
+        MmLog.i(
+            TAG,
+            "立牌判定: 点「${request.anchorName}」（${SignalNames.of(calibrationData, request.anchorName)}）" +
+                "(${request.frameX.toInt()}, ${request.frameY.toInt()})（运行帧坐标）→ ${verdict.detail}" +
+                "（判定 ${request.decisionId}）",
+        )
+        if (verdict.allowed) {
+            BadgeSession.markClick(now)
+            useFastGear("立牌刚下发一击")
+            FrameExpectationSignal.arm("刚下发一击（立牌）", gateEligible = true)
+        }
+        return verdict.allowed
+    }
+
+    /** 立牌滑动（换号段第 5 步滚列表；与点击同一条门禁，红线 6）。 */
+    private fun dispatchBadgeSwipe(swipe: SwipeRequest, result: RoundResult, now: Long) {
+        if (staleReplayAgeMs(now) != null) return
+        badgeSeq++
+        refreshScreenSizeForClick()
+        val verdict = ClickDispatch.submitSwipe(
+            request = swipe,
+            gameForeground = !result.frozen,
+            state = result.state,
+        )
+        MmLog.i(TAG, "立牌判定: 滑动（${swipe.anchorName}）→ ${verdict.detail}（判定 ${swipe.decisionId}）")
+        if (verdict.allowed) {
+            BadgeSession.markClick(now)
+            useFastGear("立牌刚下发滑动")
+        }
+    }
+
+    /**
+     * 「领取」点哪里：多实例按**命中数**消歧。
+     *
+     * - 0 处 ⇒ 该行没有可点按钮 = 「已领取」（FR-T2 的合法结果，不报错）；
+     * - 1 处 ⇒ 点它；
+     * - ≥2 处 ⇒ **停下**（分不清哪一处是「登录游戏」那行）并说明怎么补标定（红线 3：不选"最像的"）。
+     */
+    private fun claimPlanOf(
+        gray: GrayImage,
+        state: UiState,
+        step: BadgeFlow.Step,
+    ): BadgeRunner.ClaimPlan {
+        if (step != BadgeFlow.Step.CLAIM_TASK || state != UiState.BADGE_CLAIM) {
+            return BadgeRunner.ClaimPlan.Waiting
+        }
+        val locator = anchorLocator ?: return BadgeRunner.ClaimPlan.Failed("没有标定结果")
+        val hits = locator.locateAll(gray, UiState.BADGE_CLAIM, BadgeAnchors.BADGE_CLAIM)
+        return when (hits.size) {
+            0 -> BadgeRunner.ClaimPlan.AlreadyClaimed(
+                "「登录游戏」那行没找到可点的「领取」（多半已是「已领取」）",
+            )
+
+            1 -> BadgeRunner.ClaimPlan.Click(
+                hits[0].frameX,
+                hits[0].frameY,
+                "唯一命中 (${hits[0].frameX.toInt()}, ${hits[0].frameY.toInt()})",
+            )
+
+            else -> BadgeRunner.ClaimPlan.Failed(
+                "「领取」在标定窗口里命中 ${hits.size} 处，分不清哪一处是「登录游戏」那行 —— " +
+                    "请把「领取」重新框到该行的按钮上（只框一个按钮）",
+            )
+        }
+    }
+
+    /**
+     * 「选卡」点哪里：多实例按 **y 从上到下 + 已读位置** 消歧（红线 3，不挑"最像的"）。
+     *
+     * 标定窗口只圈了一张卡时，第二次进来这里会给出 [BadgeRunner.CardPlan.NoMore]
+     * （该位置已读过）—— 于是**漏掉的第二张会在日志里表现为"只读到 1 张"**，
+     * 而不是被重复读一遍。
+     */
+    private fun cardPlanOf(
+        gray: GrayImage,
+        state: UiState,
+        step: BadgeFlow.Step,
+    ): BadgeRunner.CardPlan {
+        if (step != BadgeFlow.Step.PICK_CARD || state != UiState.BADGE_MY) {
+            return BadgeRunner.CardPlan.Waiting
+        }
+        val locator = anchorLocator ?: return BadgeRunner.CardPlan.Failed("没有标定结果")
+        val hits = locator.locateAll(gray, UiState.BADGE_MY, BadgeAnchors.BADGE_SHARE)
+            .sortedBy { it.frameY }
+        if (hits.isEmpty()) {
+            return BadgeRunner.CardPlan.NoMore("没找到可点的「分享」（卡都读过了，或「分享」没标定）")
+        }
+        val unread = hits.filterNot { BadgeSession.cardsRead.contains(cardKey(it)) }
+        if (unread.isEmpty()) {
+            return BadgeRunner.CardPlan.NoMore("这一屏的「分享」按钮都读过了（共 ${hits.size} 处命中）")
+        }
+        val next = unread.first()
+        val key = cardKey(next)
+        pendingCardKey = key
+        val index = hits.size - unread.size + 1
+        return BadgeRunner.CardPlan.Click(
+            next.frameX,
+            next.frameY,
+            "第 $index/${hits.size} 张（按从上到下）",
+            remaining = unread.size - 1,
+        )
+    }
+
+    /** 卡的位置键（与 [BadgeSession.cardsRead] 同一口径）。 */
+    private fun cardKey(hit: com.example.mastermechanic.decision.AnchorHit): String =
+        "${hit.frameX.toInt()},${hit.frameY.toInt()}"
+
+    /**
+     * 复制分享弹框的**三块 OCR** → 一张立牌记录（FR-T1 / 红线 7）。
+     *
+     * 逐块读（分数 / 立牌名 / 分享码），任一取不出唯一值 ⇒ [BadgeRunner.Reading.Failed]，
+     * 由编排层停下报原因（不保存残缺记录）。同一屏 1.2 秒内复用上一次结果，避免每轮都读三块。
+     */
+    private fun badgeReadingOf(
+        gray: GrayImage,
+        state: UiState,
+        step: BadgeFlow.Step,
+        server: String?,
+    ): BadgeRunner.Reading {
+        if (step != BadgeFlow.Step.READ_FIRST && step != BadgeFlow.Step.READ_CARD) {
+            return BadgeRunner.Reading.Waiting
+        }
+        if (state != UiState.BADGE_SHARE) return BadgeRunner.Reading.Waiting
+        if (server.isNullOrBlank()) return BadgeRunner.Reading.Failed("当前区服未知，不能记录立牌")
+        val key = "${state.name}:${step.number}"
+        val now = SystemClock.elapsedRealtime()
+        if (key == badgeOcrKey && now - badgeOcrAtMs < badgeOcrMinIntervalMs) return badgeOcrResult
+
+        val locator = anchorLocator ?: return BadgeRunner.Reading.Failed("没有标定结果")
+        val data = calibrationData ?: return BadgeRunner.Reading.Failed("没有标定结果")
+
+        fun readArea(anchor: String, label: String): String? {
+            val id = data.anchorIdFor(UiState.BADGE_SHARE, anchor) ?: return null
+            val region = locator.windowInFrame(gray.width, gray.height, UiState.BADGE_SHARE, id) ?: return null
+            val candidates = nameReader.read(gray, region)
+            MmLog.i(
+                TAG,
+                "立牌读取：$label 读到 ${candidates.size} 条「${candidates.joinToString(" / ") { it.text }}」",
+            )
+            return candidates.joinToString(" ") { it.text }.ifBlank { null }
+        }
+
+        val scoreText = readArea(BadgeAnchors.BADGE_SHARE_SCORE_AREA, "分数")
+        val nameText = readArea(BadgeAnchors.BADGE_SHARE_NAME_AREA, "立牌名称")
+        val codeText = readArea(BadgeAnchors.BADGE_SHARE_TEXT_AREA, "分享码")
+
+        val result: BadgeRunner.Reading = run {
+            if (scoreText == null || nameText == null || codeText == null) {
+                return@run BadgeRunner.Reading.Failed(
+                    "三块里有一块没读到文字（分数「${scoreText ?: "—"}」/ 名称「${nameText ?: "—"}」/ " +
+                        "分享码「${codeText ?: "—"}」）—— 检查这三个识别区域框得对不对",
+                )
+            }
+            val score = ShareCodeParser.parseScore(scoreText)
+            val name = ShareCodeParser.parseName(nameText)
+            val code = ShareCodeParser.parseCode(codeText)
+            if (score == null || name == null || code == null) {
+                return@run BadgeRunner.Reading.Failed(
+                    "立牌信息解析不出唯一值（分数「$scoreText」/ 名称「$nameText」/ 分享码「$codeText」）",
+                )
+            }
+            BadgeRunner.Reading.Ok(
+                BadgeRecord(
+                    serverName = server,
+                    cardName = name,
+                    code = code,
+                    score = score,
+                    recordedOn = java.time.LocalDate.now(),
+                ),
+                "三块都读到唯一值",
+            )
+        }
+        badgeOcrKey = key
+        badgeOcrAtMs = now
+        badgeOcrResult = result
+        return result
+    }
+
+    /** 立牌结论的日志去重 + 挂到会话（悬浮窗状态行）。 */
+    private fun logBadgeNote(note: String?) {
+        if (note == null) return
+        if (note != lastBadgeNote) {
+            lastBadgeNote = note
+            MmLog.i(TAG, "立牌: $note")
+        }
+        BadgeSession.note(note)
+    }
+
+    /**
+     * **旧画面不许当点击依据**（与 `stepPatrol` 里那条判据完全相同）：返回帧龄（ms）表示这一轮要拦，
+     * null = 放行。
+     *
+     * 静态页（设置页等）本来就不出新帧 —— 所以**只在"画面确实在动、平台送得慢"时**才拦，
+     * 否则会把整段静态页流程废掉（真机实录见 `stepPatrol` 的同名注释）。
+     */
+    private fun staleReplayAgeMs(now: Long): Long? {
+        val age = now - currentFrameAtMs
+        return if (currentFrameReplayed && age >= PATROL_REPLAY_MAX_AGE_MS && feedHealth.isSlow(now)) age else null
+    }
+
     /**
      * 跑号一步（T4-4b）：每轮把「画面 + 锚点 + 时钟」喂给编排器，拿到**等 / 点 / 进下一步 / 停**。
      *
@@ -3480,6 +3915,12 @@ class CaptureService : Service() {
      * - **点击一律经 [ClickDispatch]**（红线 6）：本方法只出判定与日志，不下发。
      */
     private fun stepPatrol(result: RoundResult, gray: GrayImage) {
+        // **立牌任务在跑 ⇒ 走另一条编排**（temp/badge-share-1021，2026-10-21）：两条流程互斥
+        // （启动时由 `BadgeTask` 校验并 stop 巡查），所以这里只可能是"有 badge 就没有 patrol"。
+        if (BadgeSession.current != null) {
+            stepBadge(result, gray)
+            return
+        }
         // **先读代次、再读快照**（顺序有讲究，见 `PatrolSession.currentGeneration`）：
         // 本轮算完写回时对齐它 —— 期间用户按过停止 / 开始，这一轮结论就得作废，
         // 否则会把已经停掉的流程"复活"（真机 bug：停止 7 秒后又自己推进了一步）。
@@ -3830,10 +4271,19 @@ class CaptureService : Service() {
      * 暂停 / 继续、步骤推进 —— 发生即回快档，省掉一整轮白等。**不动需求参数**（快档本来就是需求里那一档）。
      */
     private fun useFastGear(reason: String) {
-        if (lastAppliedIntervalMs == ACTIVE_INTERVAL_MS) return
-        MmLog.i(TAG, "节流间隔切换: ${lastAppliedIntervalMs}ms -> ${ACTIVE_INTERVAL_MS}ms（$reason）")
-        lastAppliedIntervalMs = ACTIVE_INTERVAL_MS
-        frameThrottle.setInterval(ACTIVE_INTERVAL_MS)
+        // 立牌支线用更快的一档（2026-10-22 用户拍板 120ms）；换号段仍用巡查的 200ms
+        val target = if (
+            BadgeSession.current?.isRunning == true &&
+            BadgeSession.current?.phase == BadgeSession.Phase.COLLECT
+        ) {
+            BADGE_INTERVAL_MS
+        } else {
+            ACTIVE_INTERVAL_MS
+        }
+        if (lastAppliedIntervalMs == target) return
+        MmLog.i(TAG, "节流间隔切换: ${lastAppliedIntervalMs}ms -> ${target}ms（$reason）")
+        lastAppliedIntervalMs = target
+        frameThrottle.setInterval(target)
     }
 
     /**
@@ -3873,6 +4323,14 @@ class CaptureService : Service() {
         //   → `00:02:18.218` 才点下去 —— **每个界面都白等一轮**，用户感觉"对设置页 / 确认框的识别太慢"。
         // 加入"本步动作状态"后，该界面的锚点在同一轮就已转换 → 状态确认的那一轮即可定位并点击。
         PatrolSession.current?.let { states += PatrolScenes.actionStates(it.step) }
+        // 立牌任务（temp/badge-share-1021）同理：换号段用巡查的动作状态；立牌支线用**整条画面链**
+        // （判定步没有"动作状态"，但它要看的空槽锚点/两张卡的分享按钮都在链上）。
+        BadgeSession.current?.let { task ->
+            when (task.phase) {
+                BadgeSession.Phase.SWITCH -> task.switch?.let { states += PatrolScenes.actionStates(it.step) }
+                BadgeSession.Phase.COLLECT -> task.collect?.let { states += BadgeScenes.chainStates(it.step) }
+            }
+        }
         return states.flatMap { locator.windowRegions(width, height, it) }
     }
 
@@ -4661,6 +5119,14 @@ class CaptureService : Service() {
          * **跑号期间恒用这一档**（2026-09-24 用户拍板）：跑号期每轮都有事做，见 `processPixels` 的节流块。
          */
         private const val ACTIVE_INTERVAL_MS = 200L
+
+        /**
+         * **立牌任务进行中的轮询间隔**（ms，2026-10-22 用户拍板：200 → 120）。
+         *
+         * 立牌每一步都是"点一下 → 等切屏 → 再判一次"，轮询间隔本身就是切屏确认延迟的一部分；
+         * 换号段沿用 [ACTIVE_INTERVAL_MS]（那是巡查已验收的档位）。中止 / 完成后自动回两档自适应。
+         */
+        private const val BADGE_INTERVAL_MS = 120L
 
         /**
          * 「没找到」提示里最多列几个读到的名字段（2026-09-24）：够看出"是不是被读缺了字"就行，

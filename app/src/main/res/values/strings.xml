@@ -755,13 +755,17 @@
          「更多」——菜单「更多」层里再放一个「更多」会分不清指的是哪一层。 -->
     <string name="floating_menu_glyph_badge_pool">★</string>
     <string name="floating_menu_badge_pool">立牌池</string>
+    <!-- 立牌收集流程的启动入口（temp/badge-share-1021，2026-10-21；活动结束随分支移除）：
+         根菜单行 = 启动动作（与「换号 + 拜访」同理），它的数据在「更多 → 立牌池」看。 -->
+    <string name="floating_menu_glyph_badge_collect">◆</string>
+    <string name="floating_menu_badge_collect">换号取立牌</string>
     <string name="badge_pool_title">立牌池</string>
     <string name="badge_pool_empty">今天还没有收集到立牌</string>
-    <string name="badge_pool_row">%1$s · %2$d分</string>
     <string name="badge_pool_row_desc">复制 %1$s 的 %2$d 分立牌分享码</string>
     <string name="badge_pool_copy">复制</string>
     <string name="badge_pool_expand">展开全部</string>
     <string name="badge_pool_collapse">收起</string>
-    <string name="badge_pool_copied">已复制 %1$s 的分享码</string>
+    <!-- 立牌池复制提示（2026-10-22）：%1$s = 实际复制进剪贴板的整行文本，例：已复制【曹操顶级立牌WD6HD5】价值948分 -->
+    <string name="badge_pool_copied">已复制 %1$s</string>
     <string name="badge_pool_copy_failed">复制失败：系统剪贴板不可用</string>
 </resources>

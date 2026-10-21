@@ -5,6 +5,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import com.example.mastermechanic.action.Haptics
+import com.example.mastermechanic.badge.BadgeSession
+import com.example.mastermechanic.badge.BadgeTask
 import com.example.mastermechanic.capture.FrameFreshness
 import com.example.mastermechanic.capture.FrameReadiness
 import com.example.mastermechanic.capture.RoundCostWatch
@@ -104,6 +106,13 @@ object PatrolRequestConsumer {
                 start(request.kind, request.friendName, request.serverName)
             }
 
+            // **换号取立牌**（temp/badge-share-1021）：走自己的任务（换号段 + 立牌支线），
+            // 不进 `PatrolSession`（两条流程互斥、各自的状态机不同）
+            PatrolRequestSignal.Kind.BADGE_COLLECT -> {
+                startToken++
+                startBadge()
+            }
+
             PatrolRequestSignal.Kind.RESUME -> {
                 if (PatrolSession.resume(SystemClock.elapsedRealtime())) {
                     MmLog.i(TAG, "继续：从${PatrolSession.current?.step?.number}步接着来")
@@ -121,12 +130,16 @@ object PatrolRequestConsumer {
                 warmNoteLogged = false
                 val running = PatrolSession.current
                 PatrolSession.stop()
+                // 立牌任务（temp/badge-share-1021）同样受这一个「停止」管：它可能**没有**巡查流程
+                // （换号段之外），不在这里停掉就会出现"点了停止还在点"。
+                val badge = BadgeSession.current
+                BadgeSession.stop()
                 MmLog.i(
                     TAG,
-                    if (running == null) {
-                        "停止：没有进行中的流程"
-                    } else {
-                        "停止：停在第 ${running.step.number} 步"
+                    when {
+                        running != null -> "停止：停在第 ${running.step.number} 步"
+                        badge != null -> "停止：立牌任务停在「${badge.current}」${badge.stepText}"
+                        else -> "停止：没有进行中的流程"
                     },
                 )
             }
@@ -215,6 +228,58 @@ object PatrolRequestConsumer {
         // 起点不成立那条提前 return 了，不该震（那说明什么都没开始）。结束那一下在
         // `CaptureService.stepPatrol`（完成 / 中止各一次，节奏与这里不同，见 [Haptics]）。
         appContext?.let { Haptics.flowStarted(it) }
+    }
+
+    /**
+     * 开始一次**立牌收集任务**（临时需求 temp/badge-share-1021，2026-10-21）。
+     *
+     * 与 [start] 同一套前置（起点判定 / 给用户看得懂的日志），差别只有两处：
+     * - 起点区间固定 `SWITCH_ONLY`（换号段）；
+     * - 进度写进 [BadgeSession] 而不是 [PatrolSession]（两条流程互斥，启动前先停巡查）。
+     *
+     * 刻意**不**做"等第一帧 / 等预热"那两道等待：它们按 [PatrolRequestSignal.Kind] 回调 [start]，
+     * 而这里走另一条启动路径；起点判定本身会在状态未知时拦下（红线 1），不会误动作。
+     */
+    private fun startBadge() {
+        val context = appContext ?: run {
+            MmLog.w(TAG, "换号取立牌：消费方还没拿到应用上下文 ⇒ 不启动")
+            return
+        }
+        val uiState = UiStateSignal.status
+        val recentHits = UiStateSignal.recentHits
+        val blocked = PatrolStartGate.blockReason(
+            uiState = uiState,
+            kind = PatrolRequestSignal.Kind.BADGE_COLLECT,
+            recentHits = recentHits,
+        )
+        if (blocked != null) {
+            val hits = recentHits.joinToString("、") { it.label }.ifEmpty { "（一屏都没命中）" }
+            MmLog.w(TAG, "换号取立牌：$blocked（不启动）｜滞回结论「${uiState.label}」，最近命中：$hits")
+            return
+        }
+        val effective = PatrolStartGate.effectiveState(uiState, recentHits)
+        val scene = (PatrolScenes.read(effective) as? PatrolScenes.Reading.Ready)?.scene
+        if (scene == null) {
+            MmLog.w(TAG, "换号取立牌：起点画面「${effective.label}」读不出场景 ⇒ 不启动")
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        val switch = PatrolFlow.start(scene, PatrolFlow.Range.SWITCH_ONLY, now)
+        if (switch == null) {
+            MmLog.w(TAG, "换号取立牌：起点不成立（当前「${effective.label}」）⇒ 不启动")
+            return
+        }
+        if (PatrolSession.current != null) {
+            MmLog.i(TAG, "换号取立牌：先停掉正在跑的巡查流程（同一时刻只允许一条流程）")
+            PatrolSession.stop()
+        }
+        val result = BadgeTask.start(context, switch, now)
+        if (!result.started) {
+            MmLog.w(TAG, "换号取立牌：${result.reason}（不启动）")
+            return
+        }
+        MmLog.i(TAG, "换号取立牌：起点 ${effective.label}，从换号第 ${switch.step.number} 步开始")
+        Haptics.flowStarted(context)
     }
 
     /**
@@ -404,6 +469,8 @@ object PatrolRequestConsumer {
 
         PatrolRequestSignal.Kind.SWITCH_SERVER,
         PatrolRequestSignal.Kind.VISIT_ONLY,
+        // 立牌任务按**清单顺序**整轮跑，与"下一个"的游标语义无关
+        PatrolRequestSignal.Kind.BADGE_COLLECT,
         PatrolRequestSignal.Kind.RESUME,
         PatrolRequestSignal.Kind.STOP,
             -> false

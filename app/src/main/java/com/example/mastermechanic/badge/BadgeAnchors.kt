@@ -101,6 +101,41 @@ object BadgeAnchors {
         BADGE_SHARE_TEXT_AREA,
     )
 
+    /**
+     * **允许同屏多处命中**的锚点（2026-10-21 Slice 3）：同一模板在一屏出现多次是**预期**，
+     * 不是"位置歧义"（红线 7 管的是"认没认出来"）。
+     *
+     * - [BADGE_CLAIM]：两条任务行各一个「领取」；
+     * - [BADGE_SHARE]：「我的立牌」每张卡一个「分享」。
+     *
+     * 拿到多个位置后**必须**按行文字 / 卡序 + 已读位置消歧；分不清就停下报原因（红线 3）。
+     */
+    val multiInstanceAnchors: Set<String> = setOf(BADGE_CLAIM, BADGE_SHARE)
+
+    /**
+     * 立牌点击锚点的**用途**（日志 / 中止原因里给人看的短名）。
+     *
+     * 为什么需要它：`badge_claim_entry` 同时是「活动中心」的状态**标志**，而 `SignalNames.of` 的口径是
+     * "标志与锚点同名时优先说标志" ⇒ 日志会写成「点「「活动中心」的界面标志」」，
+     * 看着像在点状态标志（红线 5 的错觉）。这里按**动作语义**说：获取立牌入口 / 领取 / 分享……
+     * （2026-10-22 真机日志暴露，改为本条）。
+     */
+    fun clickLabel(anchor: String): String = when (anchor) {
+        HALL_ACTIVITY -> "活动入口"
+        BADGE_CLAIM_ENTRY -> "获取立牌入口"
+        BADGE_CLAIM -> "领取"
+        BADGE_CONTINUE -> "点击继续"
+        BADGE_CLAIM_CLOSE -> "关闭获取立牌弹框"
+        BADGE_SHARE_ENTRY -> "分享立牌入口"
+        BADGE_SWITCH -> "切换"
+        BADGE_SHARE -> "分享"
+        BADGE_SHARE_CLOSE -> "关闭复制分享弹框"
+        BADGE_MY_CLOSE -> "关闭我的立牌弹框"
+        BADGE_ACTIVITY_EXIT -> "返回大厅"
+        BADGE_EMPTY_SLOT -> "空立牌槽"
+        else -> anchor
+    }
+
     /** 立牌流程各屏的用途（与 [usageByState] 一一对齐；空列表 = 该屏没有立牌用途）。 */
     fun purposesFor(state: UiState): List<PatrolAnchors.Purpose> = when (state) {
         UiState.HALL -> listOf(PatrolAnchors.Purpose("活动入口", HALL_ACTIVITY))

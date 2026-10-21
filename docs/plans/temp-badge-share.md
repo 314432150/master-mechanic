@@ -125,8 +125,81 @@
       2026-10-21 下午设备上线，装机 + 拉起已补做）
 - [x] Slice 3 前置：临时状态（4 态）+ 锚点契约（`badge/BadgeAnchors.kt`）+ 契约不变量测试
       （`-PfastTests` 全绿；已装机，标定页可选四个新状态）
-- [ ] Slice 3：标定批 1（按上面操作清单，**需用户在真机框选**）→ BadgeFlow 主链 +「换号取立牌」入口
-- [ ] Slice 4：标定批 2（异常态）+ 真机走查取证
+- [x] Slice 3 前置：标定批 1（2026-10-21 23:21 用户真机框选完成，产物结构已取证，
+      见 `docs/recognition/temp-badge-1021-calibration.md`）
+- [x] Slice 3 代码：`BadgeFlow` / `BadgeScenes` / `BadgeRunner` / `BadgeSession` / `BadgeTask` 主链 +
+      运行时接线 + 根菜单「换号取立牌」（`-PfastTests` 业务全绿；新建 `detectAllHits` / `locateAll` 多实例定位）
+- [x] Slice 3 收尾：**真机按 1 个区服走一遍全链**（2026-10-22 02:08 那次「发条权杖」全链走通；
+      验收点：五屏都认得出、每步验证通过、OCR 三块唯一、记录落盘、回到大厅 ✅）
+- [x] Slice 3 收尾：连续多区服（02:14–02:30 共跑 6 个区服：发条权杖 / 海鹰之羽 / 莲动渔舟 / 云海航线 /
+      白色死神 / 战利品，最后用户手动停止）；期间修掉的不停机缺陷见 `progress.md` 2026-10-22 各条
+- [x] Slice 3 收尾：立牌支线节流 **120ms**（用户拍板）+ 失效重发冷却 4s → **1.5s**
+- [x] Slice 2 口径追加：立牌池**不显示服务器名**、行显示「立牌名称 · N分」、复制内容
+      `【立牌名称+分享码】价值N分`（2026-10-22 用户口径）
+- [ ] Slice 4：标定批 2（异常态）+ 真机走查取证 —— **待确认项**见 `progress.md` 2026-10-22
+      「仍需确认（下一轮真机）」：领取后活动中心入口是否改名、多卡（≥2 张）场景、收集标记落盘
+
+## 接入跑号运行时（Slice 3 设计，2026-10-21）
+
+读完运行时（`PatrolRequestSignal` → `PatrolRequestConsumer` → `PatrolSession` → `PatrolFlow` /
+`PatrolAnchors` / `PatrolScenes` → `PatrolRunner` → `CaptureService.stepPatrol` → `ClickDispatch`）后定：
+**并列任务 + 独立状态机**，不扩 `PatrolFlow.Step`。
+
+### 为什么不是"往 PatrolFlow 里加步骤"
+
+1. `PatrolAnchors.Action(state, anchor, expect)` 是**静态映射**，装不下立牌的三处条件分支
+   （空槽判领取 / 今日已获取 / 已领取）；
+2. `PatrolFlow.Range` 是**单次线性区间**，装不下"换号 → 支线 → 换下一个区服"的循环；
+3. FR-T6 要求整支可删：混进主流程枚举，移除时就得回滚主流程（回归风险全落在巡查上）。
+
+⇒ 立牌自己一套（都在 `badge/` 包内），**只借用**主流程已验收的组件。
+
+### 借用（不复制）
+
+| 现有组件 | 立牌怎么用 |
+| --- | --- |
+| `PatrolFlow` + `PatrolRunner`（`Range.SWITCH_ONLY`） | 任务第 1 阶段就是换号段第 3~6 步（退出登录 → 换区 → 选服 → 登录进大厅），连同第 5 步的名称定位 / 跨屏扫描 / 单步预算 / 口径 A 一起复用 |
+| `PatrolScenes.read` / `startStates` | 起点判定与换号段验证目标完全一致 |
+| `AnchorLocator` / `ClickDispatch` / `ClickGate` | 锚点定位与点击下发（红线 1/6 的唯一实现点，不另开旁路） |
+| `PatrolDrivenExpectedSignals.watch` | 每轮把立牌的期望集合喂进**同一个**识别循环（识别只有一份） |
+
+### 新增（`badge/` 内，可整删）
+
+| 文件 | 职责 |
+| --- | --- |
+| `BadgeFlow` | 立牌支线纯状态机：步骤 / 分支 / 超时 / 失败停下（JVM 可测） |
+| `BadgeScenes` | 步骤 →（状态 / 锚点 / 期望）+ 每轮期望集合 + 分支判据（纯逻辑） |
+| `BadgeRunner` | 每轮编排：等 / 点 / 进下一步 / 停（与 `PatrolRunner` 同形、同样不点不识别） |
+| `BadgeSession` | 进行中的立牌任务（阶段 + 目标区服 + 已读卡位置 + 代次），与 `PatrolSession` 互斥 |
+| `BadgeTask` | 跨区服循环：清单顺序 + 今日已收集跳过（FR-T2）+ 收尾标记 |
+
+### 接线点（只有四处）
+
+1. **菜单**：`FloatingMenu` 根菜单加「换号取立牌」→ 新 `Kind.BADGE_COLLECT` →
+   `BadgeTask.start`（启动前 `PatrolSession.stop()`，同一时刻只允许一条流程）；
+2. **分派**：`CaptureService.stepPatrol` 入口先看 `BadgeSession.current`：非空 ⇒ `stepBadge`，
+   空 ⇒ 原路径（对巡查零影响）；
+3. **名称定位的目标来源**：`serverPlanOf` 读的 `PatrolSession.targetServer` 改为
+   `activeTargetServer()`（badge 会话优先）—— 否则换号段拿不到"下一个区服"；
+4. **收尾**：`markCollected` + 取清单下一个未收集区服；结束语走 `BadgeSession.note`，
+   **不**复用 `PatrolResultSignal`（它绑死 `PatrolFlow.State`）。
+
+### 点击来源
+
+新增 `ClickSource.BADGE_STEP("立牌", "立牌收集流程步骤（临时需求）")`：红线 2 的合法来源仍是
+「用户经悬浮窗菜单发起的操作」，审计单列一类只为排障时能与巡查步骤分开读，移除时一并删。
+
+### 多实例消歧（红线 3/7）
+
+- **领取**：任务行文字 OCR 含「登录游戏」→ 行带内取 `badge_claim` 命中；文字读不出 / 两行都像
+  ⇒ 停下报原因，不点；
+- **分享**：`badge_share` 命中按 y 自上而下排序，逐个点并把点过的帧坐标记进 `BadgeSession`；
+  关闭回「我的立牌」后取下一个未点过的；同一位置再次命中 ⇒ 视为"关闭没生效"⇒ 停下。
+
+### 每日首次自动提交：等，不点
+
+进入活动中心后先等"可交互"：`badge_claim_entry` 与 `badge_share_entry` **都**定位到
+（= 自动提交动效结束、页面可点），最少再等 1 秒；超时按 FR-T5 停下报原因。**不点「跳过」**（红线 2）。
 
 ## 实现期决策（补记）
 
