@@ -53,14 +53,15 @@ class BadgeAnchorsTest {
     }
 
     @Test
-    fun shareDialogInfoAreasAreRegionOnly() {
-        // 复制分享弹框的立牌信息三块（分数 / 立牌名称 / 分享码，2026-10-21 真机确认）都只圈区域
-        // （文字识别输入），不是可点击目标
+    fun recognitionAreasAreRegionOnly() {
+        // 只圈区域（文字识别输入）、不是可点击目标的四个：复制分享的立牌信息三块
+        // （分数 / 立牌名称 / 分享码）+ 活动中心的「今日总分」数字（领取判据）
         assertEquals(
             setOf(
                 BadgeAnchors.BADGE_SHARE_SCORE_AREA,
                 BadgeAnchors.BADGE_SHARE_NAME_AREA,
                 BadgeAnchors.BADGE_SHARE_TEXT_AREA,
+                BadgeAnchors.BADGE_TODAY_SCORE_AREA,
             ),
             BadgeAnchors.regionAnchors,
         )

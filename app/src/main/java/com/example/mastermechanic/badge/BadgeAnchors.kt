@@ -45,6 +45,20 @@ object BadgeAnchors {
     /** 活动中心 · 分享立牌（打开「复制分享」弹框；2026-10-21 真机确认有此入口）。 */
     const val BADGE_SHARE_ENTRY = "badge_share_entry"
 
+    /**
+     * 活动中心 · 「今日总分」数字（**只圈区域**）：领取判据 —— **>0 ⇒ 今日已获取过立牌**，
+     * 0/读不出 ⇒ 按"未获取"走领取分支（兜底容错，见任务卡）。
+     * 三态对照（2026-10-21 用户三张截图）：未获取 0、已获取未提交 1028（=750+278）、已提交 1130。
+     * ⚠ 只框**数字本身**，别把「低分 / 暴击+10%」框进去（会多出数字串，判据失效）。
+     */
+    const val BADGE_TODAY_SCORE_AREA = "badge_today_score_area"
+
+    /**
+     * 活动中心 · 空立牌槽（**只判存在，不点**）：蛋糕上方圆形「+」槽空着 ⇒ 今日还没领到立牌；
+     * 领到后槽里换成立牌 + 分数（对照帧已证）。作为「今日总分」的第二证据（防 OCR 读岔）。
+     */
+    const val BADGE_EMPTY_SLOT = "badge_empty_slot"
+
     /** 获取立牌弹框 · 领取（登录游戏那条任务行的领取按钮；多实例，见文件头）。 */
     const val BADGE_CLAIM = "badge_claim"
 
@@ -90,6 +104,7 @@ object BadgeAnchors {
         BADGE_SHARE_SCORE_AREA,
         BADGE_SHARE_NAME_AREA,
         BADGE_SHARE_TEXT_AREA,
+        BADGE_TODAY_SCORE_AREA,
     )
 
     /** 立牌流程各屏的用途（与 [usageByState] 一一对齐；空列表 = 该屏没有立牌用途）。 */
@@ -99,6 +114,8 @@ object BadgeAnchors {
         UiState.ACTIVITY_CENTER -> listOf(
             PatrolAnchors.Purpose("获取立牌入口", BADGE_CLAIM_ENTRY),
             PatrolAnchors.Purpose("分享立牌", BADGE_SHARE_ENTRY),
+            PatrolAnchors.Purpose("今日总分识别区域", BADGE_TODAY_SCORE_AREA),
+            PatrolAnchors.Purpose("空立牌槽（只判存在）", BADGE_EMPTY_SLOT),
             PatrolAnchors.Purpose("返回", BADGE_ACTIVITY_EXIT),
         )
 
@@ -132,7 +149,13 @@ object BadgeAnchors {
      */
     val usageByState: Map<UiState, Set<String>> = mapOf(
         UiState.HALL to setOf(HALL_ACTIVITY),
-        UiState.ACTIVITY_CENTER to setOf(BADGE_CLAIM_ENTRY, BADGE_SHARE_ENTRY, BADGE_ACTIVITY_EXIT),
+        UiState.ACTIVITY_CENTER to setOf(
+            BADGE_CLAIM_ENTRY,
+            BADGE_SHARE_ENTRY,
+            BADGE_TODAY_SCORE_AREA,
+            BADGE_EMPTY_SLOT,
+            BADGE_ACTIVITY_EXIT,
+        ),
         UiState.BADGE_CLAIM to setOf(BADGE_CLAIM, BADGE_CONTINUE, BADGE_CLAIM_CLOSE),
         UiState.BADGE_MY to setOf(BADGE_SHARE, BADGE_MY_CLOSE),
         UiState.BADGE_SHARE to setOf(
