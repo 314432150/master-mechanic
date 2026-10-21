@@ -53,10 +53,15 @@ class BadgeAnchorsTest {
     }
 
     @Test
-    fun shareTextAreaIsRegionOnly() {
-        // 分享码文本区只圈区域（文字识别输入），不是可点击目标
+    fun shareDialogInfoAreasAreRegionOnly() {
+        // 复制分享弹框的立牌信息三块（分数 / 立牌名称 / 分享码，2026-10-21 真机确认）都只圈区域
+        // （文字识别输入），不是可点击目标
         assertEquals(
-            setOf(BadgeAnchors.BADGE_SHARE_TEXT_AREA),
+            setOf(
+                BadgeAnchors.BADGE_SHARE_SCORE_AREA,
+                BadgeAnchors.BADGE_SHARE_NAME_AREA,
+                BadgeAnchors.BADGE_SHARE_TEXT_AREA,
+            ),
             BadgeAnchors.regionAnchors,
         )
     }

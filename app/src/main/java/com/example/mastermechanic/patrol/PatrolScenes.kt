@@ -256,11 +256,12 @@ object PatrolScenes {
         // 再给一个独立选项只会让人以为"还有第二个农场要标"。旧产物里写着它的记录照旧能读
         // （产物清单把它们并进「农场」那组，见 CalibrationArtifactGroups）。
         // —— 立牌流程四屏（临时需求 temp/badge-share-1021，活动结束随分支移除）：
-        // 按流程顺序接在最后（进活动中心 → 获取立牌 → 我的立牌 → 复制分享）。
+        // 按流程顺序接在最后（2026-10-21 真机确认链路：进活动中心 → 获取立牌 →
+        // 「分享立牌」进复制分享 → 「切换」进我的立牌 → 卡上「分享」再进复制分享）。
         UiState.ACTIVITY_CENTER,
         UiState.BADGE_CLAIM,
-        UiState.BADGE_MY,
         UiState.BADGE_SHARE,
+        UiState.BADGE_MY,
     )
 
     /**

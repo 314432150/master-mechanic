@@ -13,8 +13,9 @@ import com.example.mastermechanic.patrol.PatrolAnchors
  *
  * ## 本表只含"已经见过屏"的控件（红线：不凭猜测开工）
  *
- * 依据 = 用户 2026-10-21 给的截图与流程描述。「继续」「切换」、活动介绍的「跳过」、
- * 第二个「返回」在哪个屏上**还没见过** ⇒ 不声明，标定走到那几屏时再补（任务卡有清单）。
+ * 依据 = 用户 2026-10-21 给的截图、流程描述与真机标定走查。「切换」已确认在**复制分享弹框**上
+ * （点它才进「我的立牌」，2026-10-21 真机）；立牌信息**分三块**（分数 / 立牌名称 / 分享码）。
+ * 还没见过的：「继续」、活动介绍的「跳过」、第二个「返回」 ⇒ 仍不声明，见屏再补。
  *
  * ## 多实例锚点（运行时消歧，Slice 3）
  *
@@ -41,6 +42,9 @@ object BadgeAnchors {
     /** 活动中心 · 返回（左上角 «；退出活动中心回大厅）。 */
     const val BADGE_ACTIVITY_EXIT = "badge_activity_exit"
 
+    /** 活动中心 · 分享立牌（打开「复制分享」弹框；2026-10-21 真机确认有此入口）。 */
+    const val BADGE_SHARE_ENTRY = "badge_share_entry"
+
     /** 获取立牌弹框 · 领取（登录游戏那条任务行的领取按钮；多实例，见文件头）。 */
     const val BADGE_CLAIM = "badge_claim"
 
@@ -54,10 +58,23 @@ object BadgeAnchors {
     const val BADGE_MY_CLOSE = "badge_my_close"
 
     /**
-     * 复制分享弹框 · 分享码文本区（**只圈区域**，不点）：
-     * `【墨子顶级立牌1M09G2】价值877分` 那一块 —— 文字识别的输入范围（[ShareCodeParser] 吃它的输出）。
+     * 复制分享弹框 · 分享码文本区（**只圈区域**，不点）：分享码那一块。
+     * 2026-10-21 真机确认：弹框上立牌信息**分三块**（分数 / 立牌名称 / 分享码），三块各圈一个区域
+     * 送去文字识别（原来按 `【…】价值…分` 整行解析的口径随之调整，见任务卡）。
      */
     const val BADGE_SHARE_TEXT_AREA = "badge_share_text_area"
+
+    /** 复制分享弹框 · 分数识别区域（**只圈区域**）：三块之一。 */
+    const val BADGE_SHARE_SCORE_AREA = "badge_share_score_area"
+
+    /** 复制分享弹框 · 立牌名称识别区域（**只圈区域**）：三块之一。 */
+    const val BADGE_SHARE_NAME_AREA = "badge_share_name_area"
+
+    /**
+     * 复制分享弹框 · 切换：点它**才进入「我的立牌」弹框**（2026-10-21 真机确认；
+     * 原以为「切换」在获取立牌弹框上 —— 没见过屏不声明，见过才落）。
+     */
+    const val BADGE_SWITCH = "badge_switch"
 
     /** 复制分享弹框 · 关闭（右上角 X / 返回）。 */
     const val BADGE_SHARE_CLOSE = "badge_share_close"
@@ -65,7 +82,11 @@ object BadgeAnchors {
     // ------------------------------------------------------------------ 用途表
 
     /** 只圈区域（给文字识别圈范围）的锚点：不进模板点击定位（与 `PatrolAnchors.nonLocatableAnchors` 合并）。 */
-    val regionAnchors: Set<String> = setOf(BADGE_SHARE_TEXT_AREA)
+    val regionAnchors: Set<String> = setOf(
+        BADGE_SHARE_SCORE_AREA,
+        BADGE_SHARE_NAME_AREA,
+        BADGE_SHARE_TEXT_AREA,
+    )
 
     /** 立牌流程各屏的用途（与 [usageByState] 一一对齐；空列表 = 该屏没有立牌用途）。 */
     fun purposesFor(state: UiState): List<PatrolAnchors.Purpose> = when (state) {
@@ -73,6 +94,7 @@ object BadgeAnchors {
 
         UiState.ACTIVITY_CENTER -> listOf(
             PatrolAnchors.Purpose("获取立牌入口", BADGE_CLAIM_ENTRY),
+            PatrolAnchors.Purpose("分享立牌", BADGE_SHARE_ENTRY),
             PatrolAnchors.Purpose("返回", BADGE_ACTIVITY_EXIT),
         )
 
@@ -87,7 +109,10 @@ object BadgeAnchors {
         )
 
         UiState.BADGE_SHARE -> listOf(
+            PatrolAnchors.Purpose("分数识别区域", BADGE_SHARE_SCORE_AREA),
+            PatrolAnchors.Purpose("立牌名称识别区域", BADGE_SHARE_NAME_AREA),
             PatrolAnchors.Purpose("分享码文本区", BADGE_SHARE_TEXT_AREA),
+            PatrolAnchors.Purpose("切换", BADGE_SWITCH),
             PatrolAnchors.Purpose("关闭", BADGE_SHARE_CLOSE),
         )
 
@@ -102,9 +127,15 @@ object BadgeAnchors {
      */
     val usageByState: Map<UiState, Set<String>> = mapOf(
         UiState.HALL to setOf(HALL_ACTIVITY),
-        UiState.ACTIVITY_CENTER to setOf(BADGE_CLAIM_ENTRY, BADGE_ACTIVITY_EXIT),
+        UiState.ACTIVITY_CENTER to setOf(BADGE_CLAIM_ENTRY, BADGE_SHARE_ENTRY, BADGE_ACTIVITY_EXIT),
         UiState.BADGE_CLAIM to setOf(BADGE_CLAIM, BADGE_CLAIM_CLOSE),
         UiState.BADGE_MY to setOf(BADGE_SHARE, BADGE_MY_CLOSE),
-        UiState.BADGE_SHARE to setOf(BADGE_SHARE_TEXT_AREA, BADGE_SHARE_CLOSE),
+        UiState.BADGE_SHARE to setOf(
+            BADGE_SHARE_SCORE_AREA,
+            BADGE_SHARE_NAME_AREA,
+            BADGE_SHARE_TEXT_AREA,
+            BADGE_SWITCH,
+            BADGE_SHARE_CLOSE,
+        ),
     )
 }
