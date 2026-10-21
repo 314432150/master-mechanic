@@ -108,7 +108,7 @@ object BadgeAnchors {
         UiState.ACTIVITY_CENTER -> listOf(
             PatrolAnchors.Purpose("获取立牌入口", BADGE_CLAIM_ENTRY),
             PatrolAnchors.Purpose("分享立牌", BADGE_SHARE_ENTRY),
-            PatrolAnchors.Purpose("空立牌槽（只判存在）", BADGE_EMPTY_SLOT),
+            PatrolAnchors.Purpose("空立牌槽", BADGE_EMPTY_SLOT),
             PatrolAnchors.Purpose("返回", BADGE_ACTIVITY_EXIT),
         )
 
