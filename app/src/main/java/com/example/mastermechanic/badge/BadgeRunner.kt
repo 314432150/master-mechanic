@@ -324,8 +324,25 @@ object BadgeRunner {
         val actions = BadgeScenes.actions(state.step)
 
         // ④ 验证：看到期望画面（同屏动作还要看到 expectAnchor）⇒ 进下一步
-        val passed = actions.firstOrNull { BadgeScenes.check(it, input.state, anchorNames) }
+        //
+        // [BadgeScenes.Action.restartStep] 的动作（第 1 步的「返回」）只在**刚才那一击确实是它**时才算通过：
+        // 否则人已经站在大厅（返回的落点），那条动作每轮都会"通过"，步骤就再也走不到点「活动入口」。
+        // @param restartStep 的动作还要额外确认"刚才那一击就是在它那一屏上发的"（否则回到大厅后
+        // 每轮都会被它判成通过，步骤永远走不到点「活动入口」）。
+        val passed = actions.firstOrNull {
+            BadgeScenes.check(it, input.state, anchorNames) &&
+                (!it.restartStep || (state.lastActionAtMs > 0 && state.stateAtLastAction == it.state))
+        }
         if (passed != null) {
+            // 第 1 步的兜底动作（在「其他活动页」点返回）：点成功了，但**这一步的目标还没达成** ⇒
+            // 不推进步骤，清掉"已动手"标记，下一轮回到大厅继续点「活动入口」。
+            if (passed.restartStep) {
+                return RoundResult(
+                    BadgeFlow.withoutPendingAction(state),
+                    note = "第 ${state.step.number} 步：已退回大厅（第 ${state.entryAttempts} 次进入尝试没进到立牌活动）" +
+                        " ⇒ 重新点「活动入口」",
+                )
+            }
             var next = BadgeFlow.advance(state, input.nowMs)
             var jump = ""
             // 读完一张卡、关掉复制分享之后**必须回到「选卡」**判断还有没有未读卡
@@ -446,12 +463,27 @@ object BadgeRunner {
             return RoundResult(state, note = "点击间隔未满 ${BadgeFlow.CLICK_GAP_MS}ms，等下一轮")
         }
 
+        // ⑩½ 第 1 步的**次数上限**：点「活动」可能进的是别的活动页，兜底是返回再点；
+        // 用户口径"极大概率"能进但不是必然 ⇒ 到上限就停（FR-T5），不无限重试。
+        val countingEntry = state.step == BadgeFlow.Step.ENTER_ACTIVITY &&
+            candidate.anchor == BadgeAnchors.HALL_ACTIVITY
+        val attempts = if (countingEntry) state.entryAttempts + 1 else state.entryAttempts
+        if (countingEntry && attempts > BadgeFlow.ENTRY_MAX_ATTEMPTS) {
+            return fail(
+                state,
+                input,
+                "第 ${state.step.number} 步：连续 ${BadgeFlow.ENTRY_MAX_ATTEMPTS} 次点「活动入口」都没进到立牌活动" +
+                    "（每次都进的是别的活动页，返回重进也没用）⇒ 停下，请手动进入一次立牌活动后重跑",
+            )
+        }
+
         // ⑪ 点这一下
         val earlyExit = input.nowMs - state.lastActionAtMs < SETTLE_WAIT_MS
         val expectText = candidate.expect?.label
             ?: input.anchorLabel(candidate.expectAnchor ?: "")
+        val clickState = if (countingEntry) state.copy(entryAttempts = attempts) else state
         return RoundResult(
-            BadgeFlow.acted(state, input.nowMs, input.state),
+            BadgeFlow.acted(clickState, input.nowMs, input.state),
             ClickRequest(
                 decisionId = input.decisionId,
                 source = ClickSource.BADGE_STEP,
@@ -459,8 +491,9 @@ object BadgeRunner {
                 frameX = hit.frameX,
                 frameY = hit.frameY,
             ),
-            "第 ${state.step.number} 步：点「${input.anchorLabel(candidate.anchor)}」，" +
-                "之后应看到「$expectText」" +
+            "第 ${state.step.number} 步：点「${input.anchorLabel(candidate.anchor)}」" +
+                (if (countingEntry) "（第 $attempts/${BadgeFlow.ENTRY_MAX_ATTEMPTS} 次尝试进立牌活动）" else "") +
+                "，之后应看到「$expectText」" +
                 if (earlyExit) "（画面已切换，观察窗口提前结束）" else "",
         )
     }

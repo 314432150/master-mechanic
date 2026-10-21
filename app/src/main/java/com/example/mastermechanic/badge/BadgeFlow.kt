@@ -115,6 +115,14 @@ object BadgeFlow {
          * 只要有一轮命中就立刻清零并认「还没领取」（**存在是硬证据，缺席才需要确认**）。
          */
         val emptySlotAbsentRounds: Int = 0,
+        /**
+         * 第 1 步已经**点了几次「活动入口」**（2026-10-22）。
+         *
+         * 为什么要计数：点「活动」不一定进立牌活动（可能进上次看的别的活动页），兜底是"点返回 →
+         * 回大厅 → 再点活动"。没有上限就会无限循环（用户观察"极大概率"能进，不是必然）⇒
+         * 超过 [ENTRY_MAX_ATTEMPTS] 如实停下，让用户手动进一次。
+         */
+        val entryAttempts: Int = 0,
         val cardsRead: Int = 0,
         val outcome: Outcome = Outcome.RUNNING,
         val reason: String? = null,
@@ -145,8 +153,21 @@ object BadgeFlow {
         else -> STEP_TIMEOUT_MS
     }
 
-    /** 「进入活动中心」的预算（ms）：含活动弹窗被 FR-01 关掉后重新点击 + 加载。 */
-    const val ENTER_ACTIVITY_TIMEOUT_MS = 30_000L
+    /**
+     * 「进入活动中心」的预算（ms）：含活动弹窗被 FR-01 关掉后重新点击 + 加载。
+     *
+     * 2026-10-22 从 30s 提到 45s：这一屏现在还多了一种"进的是别的活动页 ⇒ 点返回、再点活动"的
+     * 兜底（单次往返约 4 秒），最多 [ENTRY_MAX_ATTEMPTS] 次。次数上限自己会停，不靠超时兜底。
+     */
+    const val ENTER_ACTIVITY_TIMEOUT_MS = 45_000L
+
+    /**
+     * 第 1 步最多点几次「活动入口」（含第一次）。
+     *
+     * 用户观察（2026-10-22）：进错活动时"点返回 → 再点活动"**极大概率**第二次就进立牌活动，
+     * 但不是必然 ⇒ 3 次仍不成立就停下报原因（FR-T5），绝不无限重试。
+     */
+    const val ENTRY_MAX_ATTEMPTS = 3
 
     /** 通用单步预算（ms）：点一下就切屏的动作，15s 是 7~15 倍余量（同 `PatrolFlow.STEP_TIMEOUT_MS` 的理由）。 */
     const val STEP_TIMEOUT_MS = 15_000L
@@ -228,6 +249,7 @@ object BadgeFlow {
         reason = null,
         stepEnteredAtMs = nowMs,
         emptySlotAbsentRounds = 0,
+        entryAttempts = 0,
         lastActionAtMs = 0L,
         stateAtLastAction = null,
         framesStalledSinceMs = 0L,

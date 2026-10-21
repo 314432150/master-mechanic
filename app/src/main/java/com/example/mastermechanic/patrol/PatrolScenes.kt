@@ -51,7 +51,9 @@ object PatrolScenes {
         // 立牌流程四屏（临时需求 temp/badge-share-1021）：画面清楚，同样不在 FR-04 起点表里。
         // ⚠ 它们**不是遮挡屏**（不进 `guardedOverlays`）——立牌弹框是流程本来就要待的界面，
         // 被自动关弹窗点掉就坏事了；FR-01 的白 X 误命中风险见 `BadgeAnchors` 文件头。
+        // 「其他活动页」（2026-10-22）：点「活动」进错活动时的那一屏，同样不在起点表里。
         UiState.ACTIVITY_CENTER, UiState.BADGE_CLAIM, UiState.BADGE_MY, UiState.BADGE_SHARE,
+        UiState.ACTIVITY_OTHER,
         -> Reading.Ready(PatrolFlow.Scene.NOT_A_START)
 
         // 遮挡屏盖住画面时，底下是什么界面**看不见** —— 既不能当场景用，也不能算"认不出来"。
@@ -259,6 +261,9 @@ object PatrolScenes {
         // 按流程顺序接在最后（2026-10-21 真机确认链路：进活动中心 → 获取立牌 →
         // 「分享立牌」进复制分享 → 「切换」进我的立牌 → 卡上「分享」再进复制分享）。
         UiState.ACTIVITY_CENTER,
+        // 2026-10-22：点「活动」可能进的是别的活动页（同一个窗口、另一个活动）——
+        // 它与「活动中心」必须**各标一份**：一个标志是「获取立牌」，另一个是左上角返回按钮。
+        UiState.ACTIVITY_OTHER,
         UiState.BADGE_CLAIM,
         UiState.BADGE_SHARE,
         UiState.BADGE_MY,

@@ -29,6 +29,14 @@ object BadgeScenes {
         val anchor: String,
         val expect: UiState? = null,
         val expectAnchor: String? = null,
+        /**
+         * 验证通过后**不推进步骤**，而是把这一步从头再来一遍（2026-10-22）。
+         *
+         * 只有一种用法：第 1 步在「其他活动页」上点**返回**退回大厅 —— 那一下点"成功"了，
+         * 但我们要的结果（进到活动中心）还没拿到，所以不能算这一步通过，必须回去重新点「活动入口」。
+         * 与"挑最像的"无关，也不放宽任何验证。
+         */
+        val restartStep: Boolean = false,
     )
 
     /**
@@ -39,8 +47,18 @@ object BadgeScenes {
      * 两者是**语义不同的两个控件**，选谁由"哪个存在"决定，与识别分数无关。
      */
     fun actions(step: BadgeFlow.Step): List<Action> = when (step) {
+        // 「活动」入口不一定进立牌活动（2026-10-22 用户口径）：进去的是上次看的别的活动页，
+        // 那里没有「获取立牌」⇒ 认不出「活动中心」。此时点**左上角返回**退回大厅，再重新点「活动」
+        // （用户实测"极大概率"第二次就进立牌活动）。返回按钮与活动中心那一个是**同一个**控件。
+        // 次数上限在 [BadgeFlow.ENTRY_MAX_ATTEMPTS]，超了如实停下（不无限重试）。
         BadgeFlow.Step.ENTER_ACTIVITY -> listOf(
             Action(UiState.HALL, BadgeAnchors.HALL_ACTIVITY, expect = UiState.ACTIVITY_CENTER),
+            Action(
+                UiState.ACTIVITY_OTHER,
+                BadgeAnchors.BADGE_ACTIVITY_EXIT,
+                expect = UiState.HALL,
+                restartStep = true,
+            ),
         )
 
         // 判定步：不点击（就绪判定 + 空槽存在性 ⇒ needsClaim）
@@ -129,7 +147,8 @@ object BadgeScenes {
      * [DECIDE_BRANCH] 返回自身：它就站在活动中心，验证的是"还在这一屏、且动效结束"。
      */
     fun expectedStates(step: BadgeFlow.Step): Set<UiState> = when (step) {
-        BadgeFlow.Step.ENTER_ACTIVITY -> setOf(UiState.ACTIVITY_CENTER)
+        // 大厅也要搜：从「其他活动页」点返回之后要立刻认出回到大厅（否则白等 2~3 轮认不出来的自愈）
+        BadgeFlow.Step.ENTER_ACTIVITY -> setOf(UiState.ACTIVITY_CENTER, UiState.HALL)
         BadgeFlow.Step.DECIDE_BRANCH -> setOf(UiState.ACTIVITY_CENTER)
         BadgeFlow.Step.CLAIM_ENTRY -> setOf(UiState.BADGE_CLAIM)
         // 同屏验证：画面仍是获取立牌弹框，靠 expectAnchor 判通过（见 [Action.expectAnchor]）

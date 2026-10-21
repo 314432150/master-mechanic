@@ -97,6 +97,57 @@ class BadgeRunnerTest {
     }
 
     @Test
+    fun wrongActivityPageClicksBackThenRetriesTheActivityEntry() {
+        // 2026-10-22 用户口径：点「活动」有时进的是**别的活动页**（没有「获取立牌」，只是同一窗口的另一个活动）。
+        // 那里认成「其他活动页」⇒ 点左上角返回退回大厅 ⇒ 再点「活动入口」，步骤不推进。
+        val onOther = state(BadgeFlow.Step.ENTER_ACTIVITY)
+        val back = BadgeRunner.onRound(
+            onOther,
+            input(
+                UiState.ACTIVITY_OTHER,
+                step = BadgeFlow.Step.ENTER_ACTIVITY,
+                anchors = listOf(hit(BadgeAnchors.BADGE_ACTIVITY_EXIT, 200.0, 90.0)),
+            ),
+        )
+        assertEquals("点返回，而不是乱点", BadgeAnchors.BADGE_ACTIVITY_EXIT, back.request?.anchorName)
+        assertEquals("点完仍停在第 1 步", BadgeFlow.Step.ENTER_ACTIVITY, back.state?.step)
+
+        // 返回的落点 = 大厅：这一击算"通过"，但**不算这一步完成**（restartStep）
+        val afterBack = BadgeRunner.onRound(
+            back.state!!.copy(lastActionAtMs = now - 500, stateAtLastAction = UiState.ACTIVITY_OTHER),
+            input(UiState.HALL),
+        )
+        assertEquals("退回大厅后不许直接进第 2 步", BadgeFlow.Step.ENTER_ACTIVITY, afterBack.state?.step)
+        assertEquals("已动手标记要清掉，下一轮才能重新点活动入口", 0L, afterBack.state?.lastActionAtMs)
+
+        // 下一轮在大厅：重新点「活动入口」，并且计数 +1
+        val retry = BadgeRunner.onRound(
+            afterBack.state!!,
+            input(UiState.HALL, anchors = listOf(hit(BadgeAnchors.HALL_ACTIVITY))),
+        )
+        assertEquals(BadgeAnchors.HALL_ACTIVITY, retry.request?.anchorName)
+        assertEquals(1, retry.state?.entryAttempts)
+    }
+
+    @Test
+    fun entryAttemptsAreCappedInsteadOfLoopingForever() {
+        // "极大概率"≠ 必然：3 次都没进立牌活动就停下报原因（FR-T5），不无限重试。
+        var current = state(BadgeFlow.Step.ENTER_ACTIVITY).copy(entryAttempts = BadgeFlow.ENTRY_MAX_ATTEMPTS)
+        val result = BadgeRunner.onRound(
+            current,
+            input(UiState.HALL, anchors = listOf(hit(BadgeAnchors.HALL_ACTIVITY))),
+        )
+        assertNull("到上限后不许再点", result.request)
+        assertEquals(true, result.state?.failed)
+        assertTrue(
+            "原因要说清是「进了别的活动」：${result.state?.reason}",
+            result.state?.reason.orEmpty().contains("别的活动"),
+        )
+        current = result.state!!
+        assertEquals(BadgeFlow.Step.ENTER_ACTIVITY, current.step)
+    }
+
+    @Test
     fun reachingTheExpectedScreenAdvancesWithoutClicking() {
         val result = BadgeRunner.onRound(
             state(BadgeFlow.Step.ENTER_ACTIVITY),
