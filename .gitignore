@@ -22,3 +22,7 @@ _tmp_check/
 
 # Kotlin 编译缓存（构建产物，不入库）
 .kotlin/
+
+# 探针 / 离线回放报告（`gradlew :app:test` 的工作目录是 app/，探针报告落在这里 ⇒ 构建产物，不入库；
+# 结论抄进 docs/ 即可，原始报告跑探针随时重新生成）
+/app/out/
