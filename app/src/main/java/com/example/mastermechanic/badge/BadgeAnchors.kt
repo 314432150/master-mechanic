@@ -51,6 +51,9 @@ object BadgeAnchors {
     /** 获取立牌弹框 · 关闭（右上角 X）。 */
     const val BADGE_CLAIM_CLOSE = "badge_claim_close"
 
+    /** 获取立牌弹框 · 点击继续（点「领取」之后出现的继续按钮；2026-10-21 用户确认归本弹框）。 */
+    const val BADGE_CONTINUE = "badge_continue"
+
     /** 我的立牌弹框 · 分享（立牌卡上的分享按钮；两张卡两个，见文件头）。 */
     const val BADGE_SHARE = "badge_share"
 
@@ -101,6 +104,7 @@ object BadgeAnchors {
 
         UiState.BADGE_CLAIM -> listOf(
             PatrolAnchors.Purpose("领取", BADGE_CLAIM),
+            PatrolAnchors.Purpose("点击继续", BADGE_CONTINUE),
             PatrolAnchors.Purpose("关闭", BADGE_CLAIM_CLOSE),
         )
 
@@ -129,7 +133,7 @@ object BadgeAnchors {
     val usageByState: Map<UiState, Set<String>> = mapOf(
         UiState.HALL to setOf(HALL_ACTIVITY),
         UiState.ACTIVITY_CENTER to setOf(BADGE_CLAIM_ENTRY, BADGE_SHARE_ENTRY, BADGE_ACTIVITY_EXIT),
-        UiState.BADGE_CLAIM to setOf(BADGE_CLAIM, BADGE_CLAIM_CLOSE),
+        UiState.BADGE_CLAIM to setOf(BADGE_CLAIM, BADGE_CONTINUE, BADGE_CLAIM_CLOSE),
         UiState.BADGE_MY to setOf(BADGE_SHARE, BADGE_MY_CLOSE),
         UiState.BADGE_SHARE to setOf(
             BADGE_SHARE_SCORE_AREA,
