@@ -330,4 +330,29 @@ class FloatingMenuTest {
             FloatingMenu.popupBlockedNotice("  遮挡屏在屏，但关闭控件锚点没命中  "),
         )
     }
+
+    @Test
+    fun openingBadgePoolResetsExpandedAndClearsReason() {
+        // temp/badge-share-1021：每次进立牌池先回到默认视图（top 3），别把上次的展开带进来
+        val opened = FloatingMenu.openBadgePool(
+            FloatingMenu.State(
+                level = FloatingMenu.Level.MORE,
+                reason = "刚才的失败",
+                badgeExpanded = true,
+            ),
+        )
+        assertEquals(FloatingMenu.Level.BADGE_POOL, opened.level)
+        assertNull(opened.reason)
+        assertFalse(opened.badgeExpanded)
+    }
+
+    @Test
+    fun badgeExpandedTogglesAndDropsOnBackAndCollapse() {
+        val expanded = FloatingMenu.toggleBadgeExpanded(FloatingMenu.openBadgePool(FloatingMenu.State()))
+        assertTrue(expanded.badgeExpanded)
+        assertFalse(FloatingMenu.toggleBadgeExpanded(expanded).badgeExpanded)
+        // 返回 / 收起面板把展开状态一并清掉（下次进来回到默认 top 3）
+        assertFalse(FloatingMenu.back(expanded).badgeExpanded)
+        assertFalse(FloatingMenu.collapsed().badgeExpanded)
+    }
 }

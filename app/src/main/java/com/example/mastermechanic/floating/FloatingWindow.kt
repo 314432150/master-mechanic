@@ -1,6 +1,8 @@
 package com.example.mastermechanic.floating
 
 import android.animation.ObjectAnimator
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
@@ -31,6 +33,8 @@ import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import com.example.mastermechanic.MainActivity
 import com.example.mastermechanic.R
+import com.example.mastermechanic.badge.BadgePoolView
+import com.example.mastermechanic.badge.BadgeStore
 import com.example.mastermechanic.action.PopupCloseSignal
 import com.example.mastermechanic.capture.CaptureSessionSignal
 import com.example.mastermechanic.capture.FrameExpectationSignal
@@ -569,6 +573,7 @@ class FloatingWindow(private val context: Context) {
             FloatingMenu.Level.CONFIG_SERVER -> renderConfigServerPick(container)
             FloatingMenu.Level.CONFIG_FRIEND -> renderConfigFriendPick(container)
             FloatingMenu.Level.OCR_RESULT -> renderOcrResult(container)
+            FloatingMenu.Level.BADGE_POOL -> renderBadgePool(container)
         }
         // 底部信息条：**失败原因**（红）或**提示 / 回执**（中性色）—— 同一条位置，二者互斥
         //（不另开 Toast：玩家在游戏里不会去看系统通知）。
@@ -1088,6 +1093,109 @@ class FloatingWindow(private val context: Context) {
             },
         )
         renderCaptureReview(container)
+    }
+
+    /**
+     * 「立牌池」页（temp/badge-share-1021，2026-10-21；活动结束随分支整体移除）：
+     * 当日收集的分享码，分数倒序 top 3 +「展开全部 / 收起」+ 行内「复制」。
+     *
+     * 数据每次进页现读（[BadgeStore.load] 自带跨日清空：非今天的条目读不出来，FR-T4）。
+     * 行样式是**紧凑列表行**（28dp，与选服 / 选好友列表同档）而不是功能行：一屏十几行，
+     * 且每行动作只有复制一件事 —— 行尾「复制」是明确标签，**整行点击也是复制**（省精确点）。
+     */
+    private fun renderBadgePool(container: LinearLayout) {
+        container.addView(
+            breadcrumbRow(R.string.badge_pool_title) { backToRoot() },
+        )
+        val data = BadgeStore.load(context)
+        if (data.records.isEmpty()) {
+            container.addView(noteRow(context.getString(R.string.badge_pool_empty)))
+            return
+        }
+        val rows = BadgePoolView.rows(data, menuState.badgeExpanded)
+        container.addView(
+            boundedScroll(
+                rows = rows.map { row -> badgeRow(row) },
+                rowCount = rows.size,
+            ),
+        )
+        if (BadgePoolView.showExpandToggle(data.records.size)) {
+            container.addView(
+                menuRow(
+                    context.getString(R.string.floating_menu_glyph_more),
+                    if (menuState.badgeExpanded) {
+                        R.string.badge_pool_collapse
+                    } else {
+                        R.string.badge_pool_expand
+                    },
+                ) {
+                    menuState = FloatingMenu.toggleBadgeExpanded(menuState)
+                    rerender()
+                },
+            )
+        }
+    }
+
+    /** 立牌池的一行：区服名 + 分数（小号口径），行尾「复制」；整行点击 = 复制分享码。 */
+    private fun badgeRow(row: BadgePoolView.Row): LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        // View 上是 `minimumHeight`（`minHeight` 只有 TextView 才有，见 [pickRow]）
+        minimumHeight = dp(FloatingMenu.PICK_ROW_HEIGHT_DP)
+        background = tapFeedbackBackground()
+        contentDescription = context.getString(
+            R.string.badge_pool_row_desc,
+            row.serverName,
+            row.score,
+        )
+        isClickable = true
+        setOnClickListener { copyBadgeCode(row) }
+        addView(
+            textView(12f, MENU_TEXT_COLOR).apply {
+                text = context.getString(R.string.badge_pool_row, row.serverName, row.score)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                gravity = Gravity.CENTER_VERTICAL
+                // 左内边距与 [pickRow] 同一条对齐线（8 + 图标槽 18）
+                setPadding(dp(8 + MENU_GLYPH_SLOT_DP), dp(2), dp(4), dp(2))
+                minHeight = dp(FloatingMenu.PICK_ROW_HEIGHT_DP)
+            },
+        )
+        addView(
+            textView(TRAILING_GLYPH_TEXT_SIZE_SP, MENU_GLYPH_COLOR).apply {
+                text = context.getString(R.string.badge_pool_copy)
+                gravity = Gravity.CENTER
+                contentDescription = context.getString(R.string.badge_pool_copy)
+                background = tapFeedbackBackground()
+                setPadding(dp(4), dp(4), dp(8), dp(4))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { copyBadgeCode(row) }
+            },
+        )
+    }
+
+    /**
+     * 「复制」= 把分享码写进系统剪贴板（用户拿去游戏里「粘贴码提交」用）。
+     * 只**写**剪贴板 —— 后台读被 Android 10+ 禁，写不受限；这条也是收集流程不碰剪贴板的底气。
+     */
+    private fun copyBadgeCode(row: BadgePoolView.Row) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        if (clipboard == null) {
+            menuState = FloatingMenu.fail(
+                menuState,
+                context.getString(R.string.badge_pool_copy_failed),
+            )
+            rerender()
+            return
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText("badge-share-code", row.code))
+        menuState = FloatingMenu.notice(
+            menuState,
+            context.getString(R.string.badge_pool_copied, row.serverName),
+        )
+        rerender()
+        MmLog.i(TAG, "立牌池：已复制「${row.serverName}」的分享码（${row.score} 分）")
     }
 
     /**
@@ -2925,10 +3033,11 @@ class FloatingWindow(private val context: Context) {
      * 自上而下 = **从"离开这一层 / 无害"到"会改状态 / 破坏性"**：
      * 1. 返回 App —— 最常见意图（回 App 看设置 / 授权），误触代价为零；
      * 2. 导入服务器 —— 读当前画面、写服务器清单（只增数据）；
-     * 3. 重新授权采集 —— 修"眼睛"（会话没了 / 定标改过要重建）；
-     * 4. 暂停 / 恢复自动关弹窗 —— 一个开关，随时要能按；
-     * 5. 重置提示位置 —— 只挪顶部那条标签；
-     * 6. 退出 —— 结束进程，**永远最后**（与"停止流程"一样，把会终止东西的那一类压在最底下）。
+     * 3. 立牌池 —— 看 / 复制当日收集的分享码（temp/badge-share-1021，活动结束随分支移除）；
+     * 4. 重新授权采集 —— 修"眼睛"（会话没了 / 定标改过要重建）；
+     * 5. 暂停 / 恢复自动关弹窗 —— 一个开关，随时要能按；
+     * 6. 重置提示位置 —— 只挪顶部那条标签；
+     * 7. 退出 —— 结束进程，**永远最后**（与"停止流程"一样，把会终止东西的那一类压在最底下）。
      */
     private fun renderMore(container: LinearLayout) {
         container.addView(
@@ -2957,6 +3066,18 @@ class FloatingWindow(private val context: Context) {
                 context.getString(R.string.floating_menu_glyph_capture),
                 R.string.floating_menu_import_servers,
             ) { onCaptureServers() },
+        )
+        // **「立牌池」**（temp/badge-share-1021，2026-10-21；活动结束随分支整体移除）：
+        // 当日收集的分享码（分数倒序 top 3 +「展开全部」+ 行内「复制」）。放本层而不是根菜单：
+        // 2026-10-20 口径「根菜单只留跑号动作」——它不启动流程，是看数据。
+        container.addView(
+            menuRow(
+                context.getString(R.string.floating_menu_glyph_badge_pool),
+                R.string.floating_menu_badge_pool,
+            ) {
+                menuState = FloatingMenu.openBadgePool(menuState)
+                rerender()
+            },
         )
         // **一键重新授权采集**（2026-10-01 用户口径，M5 期间插入）：与根菜单那条**条件行**同一个动作
         //（见 [renderRoot] 里 [FloatingMenu.recoveryAction] 的 REAUTHORIZE 分支），这里是**常驻**通路 ——

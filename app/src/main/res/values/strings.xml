@@ -746,4 +746,22 @@
 
     <!-- 「运行方式」卡（run_mode_*）已移除（2026-09-17 撤卡片 / 2026-09-22 连演练逻辑一并删除）：
          只识别不下发的能力不再存在，程序默认且唯一的行为就是真实点击，没有切换入口。 -->
+
+    <!-- ===== 临时需求：立牌池（temp/badge-share-1021，2026-10-21；活动结束随分支整体移除）=====
+         2026-10-21 拍板口径：分享码走 OCR 读屏（不点「复制分享码」、不清剪贴板）；
+         不做自动「提交领积分」；不做「每日对局」那张立牌。
+         展示 = 分数倒序 top 3 +「展开全部」+ 行内「复制」；行文案只留「小号名 + 分数」。
+         入口在「更多」层（2026-10-20 口径「根菜单只留跑号动作」）；展开行叫「展开全部」而不是
+         「更多」——菜单「更多」层里再放一个「更多」会分不清指的是哪一层。 -->
+    <string name="floating_menu_glyph_badge_pool">★</string>
+    <string name="floating_menu_badge_pool">立牌池</string>
+    <string name="badge_pool_title">立牌池</string>
+    <string name="badge_pool_empty">今天还没有收集到立牌</string>
+    <string name="badge_pool_row">%1$s · %2$d分</string>
+    <string name="badge_pool_row_desc">复制 %1$s 的 %2$d 分立牌分享码</string>
+    <string name="badge_pool_copy">复制</string>
+    <string name="badge_pool_expand">展开全部</string>
+    <string name="badge_pool_collapse">收起</string>
+    <string name="badge_pool_copied">已复制 %1$s 的分享码</string>
+    <string name="badge_pool_copy_failed">复制失败：系统剪贴板不可用</string>
 </resources>

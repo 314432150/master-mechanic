@@ -125,6 +125,15 @@ internal object FloatingMenu {
          * 单独一层能把面板高度全让给它（并且跳过了"根菜单才重画"那条限制，见 `FloatingWindow.refreshStatus`）。
          */
         OCR_RESULT,
+
+        /**
+         * 「立牌池」页（**临时需求** temp/badge-share-1021，2026-10-21；活动结束随分支整体移除）：
+         * 当日收集的分享码列表（分数倒序 top 3 +「展开全部」+ 行内「复制」）。
+         *
+         * 入口在「更多」层：2026-10-20 用户口径「根菜单只留跑号动作」——它不启动流程，是看数据。
+         * 与 [OCR_RESULT] 同款理由单开一层：列表十几行，挤进上一级会顶破面板。
+         */
+        BADGE_POOL,
     }
 
     /** 一级项（顺序即面板上的行序）。 */
@@ -158,12 +167,15 @@ internal object FloatingMenu {
      * @param notice 提示条（null = 不显示）：**只是告诉用户一件事**（回执 / 说明），界面**中性色**；
      *   与 [reason] 共用同一条显示位、二者互斥（见 [notice] 与 [fail]）。
      * @param draft 设置页的**草稿**：只在这几层里有效，保存前的临时值，取消/收起即丢弃。
+     * @param badgeExpanded 立牌池是否已「展开全部」（temp/badge-share-1021）：false = 只看 top 3；
+     *   进这一页时重置（见 [openBadgePool]），收起面板 / 返回一并清掉（[collapsed] / [back]）。
      */
     data class State(
         val level: Level = Level.ROOT,
         val reason: String? = null,
         val notice: String? = null,
         val draft: VisitPreset? = null,
+        val badgeExpanded: Boolean = false,
     ) {
         /** 设置页是否处于"正在编辑"状态（决定是否显示保存行）。 */
         val isEditing: Boolean get() = draft != null &&
@@ -221,6 +233,17 @@ internal object FloatingMenu {
      * 存在 `FriendListOcrSignal` 里（帧线程写、悬浮窗轮询读），本层只负责"把面板让给它"。
      */
     fun openOcrResult(state: State): State = state.copy(level = Level.OCR_RESULT, reason = null)
+
+    /**
+     * 进「立牌池」（temp/badge-share-1021）：清掉上一次的原因条，**展开状态重置**
+     * —— 每次进来先只看 top 3（用户口径的默认视图），要看全部自己点「展开全部」。
+     */
+    fun openBadgePool(state: State): State =
+        state.copy(level = Level.BADGE_POOL, reason = null, badgeExpanded = false)
+
+    /** 立牌池「展开全部 / 收起」切换。 */
+    fun toggleBadgeExpanded(state: State): State =
+        state.copy(badgeExpanded = !state.badgeExpanded)
 
     /**
      * 保存成功：**回到上级（根）菜单**并清掉草稿（2026-09-16 用户口径：保存后回到上一级，而不是把面板收掉）。
