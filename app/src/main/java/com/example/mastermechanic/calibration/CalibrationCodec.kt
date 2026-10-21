@@ -108,12 +108,12 @@ object CalibrationCodec {
         // 而不是"这是旧版、请删除产物后重新标注"这句能照着做的提示（2026-09-19 用户口径）
         if (declaredVersionInText != null && declaredVersionInText !in ACCEPTED_VERSIONS) {
             val hint = if (declaredVersionInText < VERSION) {
-                "——这是旧版产物（$declaredVersionInText），本版不再兼容：请在标定页删除产物后重新标注"
+                "——这是旧版标定结果（$declaredVersionInText），本版不再兼容：请在标定页删除标定结果后重新标注"
             } else {
                 ""
             }
             throw IllegalArgumentException(
-                "标定产物版本不受支持：可读 ${ACCEPTED_VERSIONS.sorted().joinToString(" / ")}，" +
+                "标定结果版本不受支持：可读 ${ACCEPTED_VERSIONS.sorted().joinToString(" / ")}，" +
                     "实际 $declaredVersionInText$hint",
             )
         }
@@ -136,7 +136,7 @@ object CalibrationCodec {
         val friends = LinkedHashMap<EntryKey, String>()
 
         fun fail(line: Int, reason: String): Nothing =
-            throw IllegalArgumentException("标定产物第 $line 行：$reason")
+            throw IllegalArgumentException("标定结果第 $line 行：$reason")
 
         body.split('\n').forEachIndexed { index, rawLine ->
             val line = rawLine.trim()
@@ -284,21 +284,21 @@ object CalibrationCodec {
         }
 
         if (format != FORMAT_TAG) {
-            throw IllegalArgumentException("标定产物格式标记不符：期待「$FORMAT_TAG」，实际「${format ?: "缺失"}」")
+            throw IllegalArgumentException("标定结果格式标记不符：期待「$FORMAT_TAG」，实际「${format ?: "缺失"}」")
         }
-        val declaredVersion = version ?: throw IllegalArgumentException("标定产物缺少 version 行")
+        val declaredVersion = version ?: throw IllegalArgumentException("标定结果缺少 version 行")
         if (declaredVersion !in ACCEPTED_VERSIONS) {
             val hint = if (declaredVersion < VERSION) {
-                "——这是旧版产物（$declaredVersion），本版不再兼容：请在标定页删除产物后重新标注"
+                "——这是旧版标定结果（$declaredVersion），本版不再兼容：请在标定页删除标定结果后重新标注"
             } else {
                 ""
             }
             throw IllegalArgumentException(
-                "标定产物版本不受支持：可读 ${ACCEPTED_VERSIONS.sorted().joinToString(" / ")}，实际 $declaredVersion$hint",
+                "标定结果版本不受支持：可读 ${ACCEPTED_VERSIONS.sorted().joinToString(" / ")}，实际 $declaredVersion$hint",
             )
         }
         if (windows.isEmpty()) {
-            throw IllegalArgumentException("标定产物没有任何 signal 行")
+            throw IllegalArgumentException("标定结果没有任何 signal 行")
         }
         val entries = windows.map { (key, window) ->
             val own = templates[key]
@@ -329,7 +329,7 @@ object CalibrationCodec {
         return CalibrationData(
             frameWidth = frameWidth,
             frameHeight = frameHeight,
-            params = params ?: throw IllegalArgumentException("标定产物缺少 params 行"),
+            params = params ?: throw IllegalArgumentException("标定结果缺少 params 行"),
             signals = entries,
             stateRules = rulesByState.values.toList(),
         )

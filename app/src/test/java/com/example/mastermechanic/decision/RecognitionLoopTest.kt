@@ -7,6 +7,7 @@ import com.example.mastermechanic.recognition.SearchWindow
 import com.example.mastermechanic.recognition.SignalSpec
 import com.example.mastermechanic.recognition.SyntheticImages
 import com.example.mastermechanic.recognition.Template
+import com.example.mastermechanic.recognition.TemplateMatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -307,6 +308,74 @@ class RecognitionLoopTest {
         assertEquals(fullRound.records, windowedRound.records)
         assertEquals(fullRound.state, windowedRound.state)
         assertTrue("场景应命中：${windowedRound.records}", windowedRound.records.first().matched)
+    }
+
+    // ===== 2026-10-18 N6-1 真机侧：分段计时（lastSignalPhaseMs） =====
+
+    /**
+     * 分段数据必须**与逐条总耗时同源同口径**，否则真机上两行日志对不上、占比会算错。
+     *
+     * 三条不变量：
+     * ① 本轮真正匹配的信号才有分段数据；
+     * ② **Σ分段 ≤ 单条总耗时**（分段只含 `findPeaks` 内部五段，总耗时还包着合并抑制与判据计算）；
+     * ③ 复用掉的信号**没有**分段样本（它这轮确实没花时间，与 `lastSignalCostMs` 同口径）。
+     */
+    @Test
+    fun phaseBreakdownIsReportedPerMatchedSignalAndNeverExceedsTheTotal() {
+        val (loop, image) = calibratedLoop()
+        loop.process(image, isForeground = true)
+
+        val phases = loop.lastSignalPhaseMs
+        assertEquals("只有一条信号真正匹配了", setOf("农场标志"), phases.keys)
+        val byPhase = phases.getValue("农场标志")
+        for (required in listOf(
+            TemplateMatcher.PHASE_PREFIX,
+            TemplateMatcher.PHASE_COARSE,
+            TemplateMatcher.PHASE_PICK,
+            TemplateMatcher.PHASE_REFINE,
+            TemplateMatcher.PHASE_SUPPRESS,
+        )) {
+            assertTrue(
+                "段「$required」必须被量到：$byPhase",
+                byPhase.containsKey(required),
+            )
+        }
+        val total = loop.lastSignalCostMs.getValue("农场标志")
+        val phaseSum = byPhase.values.sum()
+        assertTrue(
+            "Σ分段($phaseSum) 必须 ≤ 单条总耗时($total)",
+            phaseSum <= total,
+        )
+    }
+
+    @Test
+    fun aReusedSignalHasNoPhaseSampleAndAFrozenRoundClearsThem() {
+        val (loop, image) = calibratedLoop()
+        loop.process(image, isForeground = true)
+        assertTrue("第一轮是真算的", loop.lastSignalPhaseMs.isNotEmpty())
+
+        // 同一块画面（新的 GrayImage、内容逐字节相同）⇒ 走复用
+        val again = GrayImage(image.width, image.height, image.pixels.copyOf())
+        loop.process(again, isForeground = true)
+        assertEquals(
+            "复用掉的信号这轮没花时间，不该有分段样本（否则把'信号有多贵'稀释成假象）",
+            emptyMap<String, Map<String, Double>>(),
+            loop.lastSignalPhaseMs,
+        )
+
+        // ⚠ 必须给**内容不同**的画面：复用判据是"窗口像素逐字节相同"，
+        // 拿原来那张再跑一次仍然会复用（这是复用的本意，不是 bug）。
+        val changed = image.pixels.copyOf()
+        changed[40 * image.width + 30] = (changed[40 * image.width + 30] + 40).toByte()
+        loop.process(GrayImage(image.width, image.height, changed), isForeground = true)
+        assertTrue("重新实算后又该有分段数据", loop.lastSignalPhaseMs.isNotEmpty())
+
+        loop.process(image, isForeground = false)
+        assertEquals(
+            "冻结轮必须清空，不能让调用方读到上一轮的陈旧值",
+            emptyMap<String, Map<String, Double>>(),
+            loop.lastSignalPhaseMs,
+        )
     }
 
     /** 可改期望集合（模拟阶段推进 / 流程换步）。 */

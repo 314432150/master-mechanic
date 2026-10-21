@@ -85,7 +85,7 @@ object FriendRenameSync {
             }
         } catch (e: Exception) {
             MmLog.w(TAG, "标定产物同步失败（产物读不了、写不进，或新名字写不进产物）", e)
-            return Report(presetRenamed = presetRenamed, failure = "标定产物：${reason(e)}")
+            return Report(presetRenamed = presetRenamed, failure = "标定结果：${reason(e)}")
         }
 
         if (presetRenamed || anchorsRenamed > 0) {

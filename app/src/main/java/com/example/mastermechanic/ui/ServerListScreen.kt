@@ -38,6 +38,9 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -199,8 +202,9 @@ private data class ServerDeleteAsk(
  *
  * 只做**格式**校验：区服名称必填（它是换号时唯一用于定位的字段），角色名与等级可留空。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ServerListRoute(resumeTick: Int, onBack: () -> Unit) {
+fun ServerListRoute(resumeTick: Int, addTick: Int = 0) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -409,12 +413,20 @@ fun ServerListRoute(resumeTick: Int, onBack: () -> Unit) {
         renameNotice = null
     }
 
+    // M5-U4：**「新增」搬进壳的标题栏**（ADR-009 决策五）⇒ 壳用 tick 通知本页"用户点了新增"。
+    // 编辑状态**仍留在页面**（不往上提升：那是页面的私有状态，提升只会让壳越来越重）。
+    LaunchedEffect(addTick) {
+        if (addTick > 0) {
+            editingIndex = null
+            editorOpen = true
+        }
+    }
+
     ServerListScreen(
         state = state,
         entries = entries,
         message = message,
         snackbarHostState = snackbarHostState,
-        onBack = onBack,
         onAbout = { aboutOpen = true },
         onAdd = {
             editingIndex = null
@@ -442,14 +454,18 @@ fun ServerListRoute(resumeTick: Int, onBack: () -> Unit) {
         val initial = editingIndex?.let { loadedList?.entries?.getOrNull(it) }
         // 一个区服只有一个小号：编辑页据此在保存前就能给出「这个区服已在清单里」的提示
         // （正在编辑的这条自己不算重名，否则连角色名都改不了）
-        val takenServerNames = loadedList?.entries.orEmpty()
+        val others = loadedList?.entries.orEmpty()
             .filterIndexed { index, _ -> index != editingIndex }
-            .map { it.serverName }
+        val takenServerNames = others.map { it.serverName }
+        // 2026-10-19 用户拍板「A. 拦」：**区号也不能重复** —— 它是换号的主判据，两条同号 ⇒ 运行时
+        // 必然停在「区号命中 2 行」，与其白跑一趟不如录入时就说清。空区号不参与（旧数据可能为空）。
+        val takenServerNos = others.map { it.serverNo }.filter { it.isNotEmpty() }
         ServerEntryEditor(
             isNew = editingIndex == null,
             index = editingIndex,
             initial = initial,
             takenServerNames = takenServerNames,
+            takenServerNos = takenServerNos,
             onDismiss = { editorOpen = false },
             onConfirm = { entry ->
                 val index = editingIndex
@@ -527,30 +543,36 @@ fun ServerListRoute(resumeTick: Int, onBack: () -> Unit) {
         )
     }
 
-    // 「说明」：原来常驻的 4 行长副标题挪进这里（读一次就够的信息不该一直占着列表的高度）
+    // 「说明」：原来常驻的 4 行长副标题挪进这里（读一次就够的信息不该一直占着列表的高度）。
+    // M5-U4：从 `AlertDialog` 换成**底部弹层**（ADR-009 决策二：行内说明一律走 `ModalBottomSheet`）
+    // —— 一屏高的对话框会压住上下文；弹层从底部上来、随时滑走，"我在看的是哪个列表"一直看得见。
     if (aboutOpen) {
-        AlertDialog(
-            onDismissRequest = { aboutOpen = false },
-            title = { Text(stringResource(R.string.server_about)) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ModalBottomSheet(onDismissRequest = { aboutOpen = false }) {
+            Column(
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.server_about),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                // **一段一句、行首带标签、每句 ≤60 字**（用户 2026-10-01："内容太啰嗦了，而且没有排版、
+                // 阅读困难 ⇒ 精简内容、只留最核心的、重新排版以便于阅读"）。
+                // 顺序是"从最容易踩坑的到最常见的"：判重 → 定位 → 字段 → 顺序 → 手势。
+                listOf(
+                    R.string.server_about_unique,
+                    R.string.server_about_locate,
+                    R.string.server_about_fields,
+                    R.string.server_about_order,
+                    R.string.server_about_gestures,
+                ).forEach { line ->
                     Text(
-                        text = stringResource(R.string.server_subtitle),
+                        text = stringResource(line),
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    Text(
-                        text = stringResource(R.string.server_hint),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { aboutOpen = false }) {
-                    Text(stringResource(R.string.server_about_close))
-                }
-            },
-        )
+            }
+        }
     }
 }
 
@@ -582,7 +604,6 @@ fun ServerListScreen(
     state: ServerListState,
     entries: List<ServerEntry>,
     message: String?,
-    onBack: () -> Unit,
     onAbout: () -> Unit,
     onAdd: () -> Unit,
     onEdit: (Int) -> Unit,
@@ -596,26 +617,19 @@ fun ServerListScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        // ⚠ **别再吃一遍系统栏 inset**（2026-10-02 用户第二次报"顶部空白还是太宽"的**真凶**）：
+        // 外层壳的 `Scaffold` 已经按标题栏 + 导航栏 + 系统栏算好 `innerPadding` 给了 `NavHost`，
+        // 页面这个 `Scaffold` 默认**又按系统栏加了一遍**（≈状态栏那一条）⇒ 顶/底各多出一段空白 ✗。
+        // 页面级 Scaffold 只负责"Snackbar 落脚"，inset 一律交给壳 ⇒ 这里清零。
+        contentWindowInsets = WindowInsets(0.dp),
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                // 页面自己只留 2dp（**真正的空白来自上面那个双层 inset，不是这个数**）
+                .padding(horizontal = 16.dp, vertical = 2.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = stringResource(R.string.server_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = onAbout) {
-                    Text(stringResource(R.string.server_about))
-                }
-                TextButton(onClick = onBack) {
-                    Text(stringResource(R.string.server_back))
-                }
-            }
 
             message?.let { text ->
                 Text(
@@ -649,28 +663,22 @@ fun ServerListScreen(
                     }
                 }
                 is ServerListState.Loaded -> {
+                    // M5-U4：「新增」已搬进**壳的标题栏**（ADR-009 决策五）⇒ 这一行只剩「条数 + 说明」。
+                    // 「说明」**贴着"服务器（N 条）"放**（用户 2026-10-01：挪到这一行）—— 它讲的就是这些东西，
+                    // 单独占一行标题反而多占一行的位置（首屏越短越好，验收 V2）。
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = stringResource(R.string.server_list_title, entries.size),
                             style = MaterialTheme.typography.titleMedium,
                             modifier = Modifier.weight(1f),
                         )
-                        Button(
-                            onClick = onAdd,
-                            modifier = Modifier.heightIn(min = 48.dp),
-                        ) {
-                            Text(stringResource(R.string.server_add))
+                        TextButton(onClick = onAbout) {
+                            Text(stringResource(R.string.server_about))
                         }
                     }
-                    // 手势提示：按钮全删掉之后，这三个手势唯一的"发现入口"（空态另有教学文案）
-                    if (entries.isNotEmpty()) {
-                        Text(
-                            text = stringResource(R.string.server_gesture_hint),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
-                        )
-                    }
+                    // ⚠ 手势提示那一行**已移除**（用户 2026-10-01："服务器下一行的交互说明移除"）。
+                    // 但**三个手势不能就此没了说法** —— 它们搬进了「说明」弹层（[R.string.server_about_gestures]）。
+                    // 也就是说：**发现入口从"列表上方常驻一行"改成"点「说明」看"**。别再往这里加回来。
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -799,7 +807,7 @@ private val RevealButtonShape = RoundedCornerShape(topEnd = 12.dp, bottomEnd = 1
 private const val SwipeSettleMillis = 180
 
 /**
- * 清单列表：**行内没有任何常驻按钮**，三个手势各管一件事——双击编辑 / 长按上下拖排序 /
+ * 清单列表：**行内没有任何常驻按钮**，三个手势各管一件事——点按编辑 / 长按上下拖排序 /
  * 左滑把红色「删除」按钮压出来（**点按钮就直接删**）。
  *
  * 拖动排序的口径（为什么这么做，见 `docs/plans/m3-inspection-config.md` 的手势表）：
@@ -1004,8 +1012,8 @@ private fun ServerEntryList(
  *   （[ServerListGestures.revealFraction]），按钮自己按这个比例从行尾压进来；
  *   松手按 [ServerListGestures.swipeRevealsDeleteButton] 吸附成"全盖住"或"回弹收起"；
  * - `mode = 2` 拖动：只取纵向位移，横向丢掉（纵向已被拖动占用，滚动不再响应）；
- * - **双击**：两次点击各自位移都在 `touchSlop` 内、间隔在 `doubleTapTimeoutMillis` 内 → 进编辑。
- *   单击不做事（用户口径是"双击进编辑"），提示行会写清楚；**但已露出删除按钮时单击 = 收起**；
+ * - **点按即编辑**（2026-09-15 用户拍板，与好友清单统一）：**单击就进编辑**，双击的第一下已经进去，
+ *   第二下不会再造成别的影响 —— 老习惯天然兼容（[SwipeActionRow] 同口径）。**已露出删除按钮时单击 = 收起**；
  * - 手指落在**已露出的删除按钮**上 → 本状态机整块退出（[ServerListGestures.isOnRevealedDeleteButton]），
  *   事件让给按钮自己处理——否则会变成"点删除没反应，只把按钮收起来了"。
  */
@@ -1065,7 +1073,10 @@ private fun ServerEntryRow(
             stringResource(
                 R.string.server_row_desc,
                 index + 1,
-                if (platformNoText.isEmpty()) entry.serverName else "$platformNoText $entry.serverName",
+                // ⚠ 必须写成 `${entry.serverName}`：`"$entry.serverName"` 在 Kotlin 里是
+                // `$entry` 后跟字面量 ".serverName" ⇒ 读屏会把 `ServerEntry(...)` 整个 toString 念一遍
+                // （2026-10-19 真机 uiautomator 抓到的原文，见 docs/verification/m5/README.md U4 节 8b）
+                if (platformNoText.isEmpty()) entry.serverName else "$platformNoText ${entry.serverName}",
             ),
         )
         if (entry.hasCharacterName) {
@@ -1379,6 +1390,8 @@ private fun ServerEntryEditor(
     index: Int?,
     initial: ServerEntry?,
     takenServerNames: List<String>,
+    /** 清单里**其它**条目已占用的区号（空区号不进来）；保存前据此拦重复。 */
+    takenServerNos: List<String>,
     onDismiss: () -> Unit,
     onConfirm: (ServerEntry) -> Unit,
 ) {
@@ -1400,15 +1413,19 @@ private fun ServerEntryEditor(
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val requiredText = stringResource(R.string.server_field_required)
     val duplicateText = stringResource(R.string.server_field_duplicate)
+    val duplicateNoText = stringResource(R.string.server_field_duplicate_no)
     val separatorText = stringResource(R.string.server_field_separator)
     val optionalHint = stringResource(R.string.server_field_optional_hint)
 
     fun save() {
         val server = serverName.trim()
         when {
-            server.isEmpty() -> error = requiredText
+            // 2026-10-19 用户口径：**区号不能为空**（换号时按区号定位，空着等于没主键）
+            server.isEmpty() || serverNo.isBlank() -> error = requiredText
             // 一个区服只有一个小号：与清单里其它条目重名 → 明确提示，不写入、不覆盖
             takenServerNames.any { it == server } -> error = duplicateText
+            // 区号也不能重复（主判据重复 ⇒ 运行时只能停下）
+            takenServerNos.any { it == serverNo.trim() } -> error = duplicateNoText
             !ServerList.isValidServerName(server) ||
                 !ServerList.isValidOptionalField(serverNo) ||
                 !ServerList.isValidOptionalField(characterName) ||
@@ -1609,7 +1626,7 @@ private val PlatformChoiceShape = RoundedCornerShape(8.dp)
  * **共占一行**（理由见 [ServerEntryEditor] 的说明：列表行里这两个本来就是连写的「微信392」）。
  *
  * - **点已选中的那一个 = 取消选择**（回到"没填"）——比再加一个「不填」选项省地方，
- *   也和"平台与区号都可以留空"的口径一致；两侧都不选就是留空；
+ *   **平台**可以留空（2026-10-19 起**区号不行**：它是换号定位的主键，保存时必填）；
  * - 平台用**选项**而不是输入框：只有两个值，让人自己打字就会冒出「wx」「WeChat」「微信 」三种写法，
  *   而它是要一眼扫过去的辨识信息，写法必须先统一（模型层就是枚举，见 [ServerPlatform]）。
  */

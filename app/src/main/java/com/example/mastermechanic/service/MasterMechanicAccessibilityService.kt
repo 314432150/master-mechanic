@@ -14,6 +14,8 @@ import com.example.mastermechanic.floating.FloatingWindow
 import com.example.mastermechanic.foreground.ForegroundEvaluator
 import com.example.mastermechanic.foreground.ForegroundSignal
 import com.example.mastermechanic.foreground.ForegroundStatus
+import com.example.mastermechanic.foreground.TargetApp
+import com.example.mastermechanic.log.MmLog
 
 /**
  * 无障碍服务：点击注入（ADR-002）、悬浮窗（ADR-004）、前台判定（ADR-005）的共同承载者。
@@ -39,6 +41,18 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
 
     /** 是否已有一次前台查询在飞（只被主线程读写）。 */
     private var foregroundQueryBusy = false
+
+    /**
+     * **"判不在前台"的首次怀疑时刻**（0 = 没有怀疑；见 [refreshForeground] 的两段式）。
+     *
+     * 2026-10-01 加（用户报"**游戏在前台，却提示不在前台**"）：vivo 桌面会短暂抢走"活动窗口"
+     * （真机 2.70 / 2.99 秒两次），而游戏窗口一直在屏上；同日又发现**一次查询的瞬时结论本身也会错**
+     * （`21:05:46` / `21:07:07` 报"游戏窗口 0 个"，1 秒后游戏窗口事件就把前台打回来了）。
+     * ⇒ 现在**任何** NOT 结论都先当成"可疑"：**先闸点击**（安全侧不延迟）、
+     * **等下一次复核确认**（≥ [FOREGROUND_SUSPECT_CONFIRM_MS]）才改判前台状态。
+     */
+    @Volatile
+    private var foregroundSuspectSinceMs = 0L
 
     private val floatingWindow by lazy { FloatingWindow(this) }
 
@@ -82,6 +96,8 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
         ForegroundSignal.addListener(onForegroundChanged)
         onForegroundChanged(ForegroundSignal.status) // 初始同步（监听只覆盖后续变化）
         handler.postDelayed(recheck, RECHECK_INTERVAL_MS)
+        // 2026-10-20：「重启 App」的自动拉起已按用户要求删除（两次真机都做不到，见 `docs/progress.md` 470/471）：
+        // 这里原来读交接单并 `startActivity`，前提是"进程死后系统会重绑本服务"，而本机实测不重绑。
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -108,10 +124,12 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
                     // 12:00:44 悬浮窗已移除 / 12:00:45 跑号: 游戏不在前台，已暂停        ← 副作用立刻发生
                     // 12:00:46 前台: NOT_FOREGROUND -> FOREGROUND（来源: 周期复核）      ← 1.4 秒后又对了
                     // ```
-                    // ⇒ 游戏**一直在前台**，那是一次 1.4 秒的抖动，代价却是"悬浮窗被摘 + 跑号被暂停（要用户手动点继续）"。
+                    // ⇒ 游戏**一直在前台**，那是一次 1.4 秒的抖动，代价却是"悬浮窗被摘 + 流程被暂停（要用户手动点继续）"。
                     // ⇒ 判"不在前台"**立刻有副作用**（摘窗、暂停、冻结识别），值得比"回到前台"更保守；
                     //    而"回到前台"晚一点**没有代价** ⇒ 两个方向**不对称**处理。
                     if (verdict == ForegroundStatus.FOREGROUND) {
+                        // **游戏自己发来的窗口事件 = 最权威的"它回来了"** ⇒ 顺手解除"前台可疑"（若有）
+                        clearForegroundSuspect("窗口事件（$packageName）")
                         ForegroundSignal.update(verdict, "窗口事件")
                     } else {
                         // 复核走**权威查询**（活动窗口）：我们自己的覆盖窗不可聚焦 ⇒ 不会把自己算成活动窗口
@@ -133,6 +151,7 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
         SystemKeys.uninstall()
         ForegroundSignal.removeListener(onForegroundChanged)
         floatingWindow.hide()
+        clearForegroundSuspect("服务被中断")
         ForegroundSignal.reset("服务被中断")
     }
 
@@ -154,6 +173,7 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
         SystemKeys.uninstall()
         ForegroundSignal.removeListener(onForegroundChanged)
         floatingWindow.hide()
+        clearForegroundSuspect("服务已销毁")
         ForegroundSignal.reset("服务已销毁")
         super.onDestroy()
     }
@@ -187,17 +207,124 @@ class MasterMechanicAccessibilityService : AccessibilityService() {
         if (foregroundQueryBusy) return
         foregroundQueryBusy = true
         foregroundHandler.post {
-            val activePackage = try {
-                windows?.firstOrNull { it.isActive }?.root?.packageName?.toString()
+            // 一次查询顺手取三件事（都来自同一份 `windows`，不额外建树）：
+            //   ① 活动窗口包名（判据本身）；② **目标游戏的窗口还在不在 / 可见吗**（判"真离开"与"只是焦点被抢"）；
+            //   ③ 窗口总数（诊断：下次复发时一眼能看出那一屏到底有几个窗口）。
+            // ⚠ ②③ 是 2026-10-01 加的：此前只记"事件判 X 不在前台"，**看不出**活动窗口到底是谁、
+            // 游戏是不是还在屏上 ⇒ 用户报"游戏在前台却提示不在前台"时无法定论。
+            var activePackage: String? = null
+            var targetWindows = 0
+            var targetVisible = false
+            var windowCount = 0
+            try {
+                val list = windows.orEmpty()
+                windowCount = list.size
+                list.forEach { w ->
+                    val pkg = w.root?.packageName?.toString()
+                    if (pkg == TargetApp.PACKAGE_NAME) {
+                        targetWindows++
+                        // 用**节点**上的 `isVisibleToUser`（`AccessibilityWindowInfo.isVisible`
+                        // 在这套 SDK 桩里取不到）：目标是"这一屏上还看得见游戏吗"——被别的窗口盖住
+                        // 也算看得见（那只是焦点被抢），切走 / 回桌面才算看不见。
+                        if (w.root?.isVisibleToUser == true) targetVisible = true
+                    }
+                    if (w.isActive) activePackage = pkg
+                }
             } catch (e: Exception) {
-                null
+                // 查询失败 ⇒ activePackage 留 null（ADR-005：判不了就按非前台）——
+                // 但走的仍是下面的**两段式**：多核实一次才影响用户可见的状态。
             }
-            ForegroundSignal.update(ForegroundEvaluator.evaluate(activePackage), source)
+            val verdict = ForegroundEvaluator.evaluate(activePackage)
+            val detail = "活动窗口 ${activePackage ?: "（查不到）"}｜游戏窗口 $targetWindows 个" +
+                (if (targetVisible) "（可见）" else "（不可见）") + "｜本屏共 $windowCount 个窗口"
+            if (verdict == ForegroundStatus.FOREGROUND) {
+                clearForegroundSuspect("$source：$detail")
+                ForegroundSignal.update(ForegroundStatus.FOREGROUND, source)
+            } else {
+                // **判"不在前台"一律要"下一次复核再确认"**（2026-10-01 两次真机教训合并后的口径）：
+                // ① vivo 桌面会短暂抢走活动窗口（2.70 / 2.99 秒，游戏一直在屏上）；
+                // ② **一次查询的瞬时结论本身也可能不对** —— 真机 `21:05:46` / `21:07:07` 都出现过
+                //    `游戏窗口 0 个（不可见）`，而 1 秒后游戏窗口事件就把前台打回来了（用户就坐在游戏里）。
+                // ⇒ 所以**不区分"窗口在不在"**：任何一次 NOT 都只算"可疑"，确认持续
+                // [FOREGROUND_SUSPECT_CONFIRM_MS] 才真的改判（暂停跑号 + 摘悬浮窗）。
+                // ⚠ **安全侧零延迟**：第一次怀疑就把点击闸住（`ClickDispatch.setForegroundSuspect`）
+                // ⇒ 确认期间**一枪都不会打出去**，所以"晚 3.5 秒暂停"没有安全代价。
+                val since = foregroundSuspectSinceMs
+                val nowMs = SystemClock.elapsedRealtime()
+                if (since == 0L) {
+                    foregroundSuspectSinceMs = nowMs
+                    ClickDispatch.setForegroundSuspect(true)
+                    // **视觉上立刻收起悬浮窗**（2026-10-01 用户报"切到后台后顶部标签不会立即消失、
+                    // 停留了一会儿"）：那 3.5 秒确认窗是为了**不误暂停跑号**而加的，但它顺手把
+                    // "标签收起"也一起延后了 ✗ —— 用户已经切走了，标签留在别人屏幕上只会碍事。
+                    // ⇒ 拆开：**看得见的后果**（收窗）**立刻**发生；**状态改判**（暂停跑号）等确认。
+                    // ⚠ 不会回到 2026-09-29 那次"每 1.4 秒挂载 / 移除 ⇒ ANR"的循环：那条路径是
+                    // "我们自己的覆盖窗事件被反复当成非前台"；这里只在真的出现非游戏窗口时发生一次，
+                    // 且下一次复核（1.5 秒）就会纠正 ⇒ 最多"收起 → 挂回"一次。
+                    handler.post { floatingWindow.hide() }
+                    MmLog.w(
+                        TAG,
+                        "前台**可疑**（$source：$detail）⇒ 立刻收起悬浮窗、先不放行任何点击，" +
+                            "等下一次复核确认是否真的离开（2026-10-01 加的护栏：桌面抢焦点 2.7 / 2.99 秒、" +
+                            "以及「游戏窗口 0 个」这种一次性的瞬时结论，都不能只凭一票就暂停流程）",
+                    )
+                } else if (nowMs - since >= FOREGROUND_SUSPECT_CONFIRM_MS) {
+                    // ⚠ **只在"真的还没改判"时记一次**（2026-10-01 真机日志刷屏修）：
+                    // 复核每 1.5 秒一轮，而确认之后 `since` 一直不为 0 ⇒ 不加这道判断就会
+                    // **每轮都重打一行 + 重复改判**（真机实录：`认下「不在前台」` 从"持续 4252ms"
+                    // 一路刷到"持续 44767ms"，把日志淹掉、真出故障时反而不好查）。
+                    if (ForegroundSignal.status != ForegroundStatus.NOT_FOREGROUND) {
+                        val heldMs = nowMs - since
+                        MmLog.w(
+                            TAG,
+                            "前台可疑持续 ${heldMs}ms ⇒ **认下「不在前台」**（$source：$detail）" +
+                                "：暂停流程 + 摘悬浮窗（点击闸保持）",
+                        )
+                        ForegroundSignal.update(
+                            ForegroundStatus.NOT_FOREGROUND,
+                            "$source（持续 ${heldMs}ms：$detail）",
+                        )
+                    }
+                }
+            }
             handler.post { foregroundQueryBusy = false }
         }
     }
 
+    /**
+     * 撤销"前台可疑"：**解除点击闸**并清零计时（见 [refreshForeground] 的两段式）。
+     *
+     * 幂等：本来就没怀疑时什么都不做、也不打日志（周期复核每 1.5 秒一次，否则会刷屏）。
+     */
+    private fun clearForegroundSuspect(reason: String) {
+        val since = foregroundSuspectSinceMs
+        if (since == 0L && !ClickDispatch.foregroundSuspect) return
+        foregroundSuspectSinceMs = 0L
+        val heldMs = if (since == 0L) 0L else SystemClock.elapsedRealtime() - since
+        if (ClickDispatch.foregroundSuspect) {
+            ClickDispatch.setForegroundSuspect(false)
+            // 可疑期间**立刻收起过悬浮窗**（见上面那条说明）⇒ 解除时要把**看得见的那部分还回去**：
+            // 信号没变过（那时不会触发变更监听）⇒ 这里必须显式挂回，否则游戏还在前台却一直没标签。
+            if (ForegroundSignal.isForeground) handler.post { floatingWindow.show() }
+            MmLog.i(TAG, "前台可疑已解除（$reason）⇒ 恢复放行点击（可疑共持续 ${heldMs}ms）")
+        }
+    }
+
     private companion object {
+        const val TAG = "MM-Foreground"
+
         const val RECHECK_INTERVAL_MS = 1500L
+
+        /**
+         * **"前台可疑"要持续多久才认下「不在前台」**（2026-10-01 加）。
+         *
+         * 取 3.5 秒的依据：真机里"桌面抢焦点"那两次分别持续 **2.70 / 2.99 秒**，而"这一次查询报了
+         * 游戏窗口 0 个"那两次也只撑了 1~2 秒（下一次事件就纠回来了）⇒ 3.5 秒把这两类抖动**全部吸收**；
+         * 而真正被盖住 / 切走的情形，晚 3.5 秒生效**没有安全代价**（这期间点击已经闸住，一枪都不打），
+         * 只是"暂停 / 摘窗"晚一点而已。
+         * ⚠ 因此 FR-09 那条「生效延迟 2 秒」对**判"不在前台"**这一侧放宽到 3.5 秒（口径修订一有记）；
+         * 判"回到前台"仍是**立刻**生效、一根毛都不延迟。
+         */
+        const val FOREGROUND_SUSPECT_CONFIRM_MS = 3_500L
     }
 }

@@ -119,11 +119,12 @@ object PatrolSession {
         private set
 
     /**
-     * 本次的 [targetServer] 是不是**顺序轮换算出来的**（2026-09-24）。
+     * 本次的 [targetServer] 是不是**「下一个」算出来的**（2026-09-24）。
      *
-     * 用途只有一个：第 5 步**真的换成功**之后（流程走进第 6 步）才把游标推进到它
-     * （`ServerRotation.saveCursor`）。**成功才推进**，所以中途失败 / 中止时游标不动 ——
-     * 用户重试仍指向同一个区服，不会"悄悄跳过一个号"。
+     * ⚠ **2026-10-19 U8 起它不再参与游标推进的判据**：推进改成"任何真换到的区服都写"
+     * （判据 `ServerRotation.switchedTo`）。手选一个区服换过去，下次「下一个」就该是它的下一条 ——
+     * 原来只认"轮换算出来的"，手选完不写 ⇒ 下次仍从旧游标后面取。
+     * 现在它**只用于日志**说明来路（"轮换算出来的 / 手动选择的"），不参与任何判定。
      */
     @Volatile
     var targetServerFromRotation: Boolean = false
@@ -196,6 +197,19 @@ object PatrolSession {
         }
     }
 
+    /**
+     * **画面刚恢复 ⇒ 这一步的预算重新起算**（见 [PatrolFlow.rebaseStepBudget] 里的真机证据）。
+     *
+     * 调用点在**帧线程**：`CaptureService.processFrame` 解除「画面采集已停」那道闸的那一刻
+     * （收到停更后的第一帧）。与 [commit] 同一条规矩：代次变了（用户按了停止 / 又开了一轮）就不写回。
+     */
+    fun rebaseStepBudget(nowMs: Long) {
+        val snapshot = state ?: return
+        val generation = this.generation
+        val next = PatrolFlow.rebaseStepBudget(snapshot, nowMs)
+        if (next !== snapshot) commit(next, generation)
+    }
+
     /** 记下这一句给人看的话。 */
     fun note(text: String?) {
         lastNote = text
@@ -212,6 +226,18 @@ object PatrolSession {
         // 准入条件与「菜单要不要显示这一项」共用 [canResume]：分成两处写会出现"点了没用"的死按钮
         if (!canResume) return false
         state = PatrolFlow.resume(s, nowMs)
+        // **递增代次**（2026-10-01 真机修，与 [start] / [stop] 同一条规矩）：
+        // 帧线程可能在用户点「继续」**之前**就已经把那份"已暂停"的快照读走了，算完之后 [commit] 回来
+        // ⇒ 把刚恢复的流程**又写回暂停** ✗。
+        // 真机症状（用户原话："**从桌面切回游戏，点了继续后依然报「游戏不在前台，已暂停」，
+        // 需要再次点「继续」才正常恢复流程**"）：
+        // ```
+        // 21:07:10.120  跑号: 已暂停，等用户点「继续」      ← 状态 = 暂停（快照被某轮读走）
+        // 21:07:14.776  用户请求继续（第 5 次）｜继续：从9步接着来   ← resume 成功（日志都打了）
+        // （此后没有任何点击 / 推进 ⇒ 被那一轮算完的旧快照覆盖回去了，而 note 文案相同 ⇒ 日志也不重现）
+        // 21:07:21.395  用户请求继续（第 6 次）⇒ 21:07:22.443 点「星月晚」的拜访图标 ✓
+        // ```
+        generation++
         lastNote = "已继续：第 ${state?.step?.number} 步"
         return true
     }

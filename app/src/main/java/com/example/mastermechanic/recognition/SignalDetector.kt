@@ -30,16 +30,25 @@ class SignalDetector(private val signals: List<SignalSpec>, private val params: 
     /**
      * 单信号判定：多模板峰值合并后按规则给出结论。
      *
+     * @param probe **只做分段计时**（N6-1 归因用），默认 `null` ⇒ 生产路径零开销
+     *   （`TemplateMatcher` 里五处插桩都是 `probe?.phase(...)` 短路形式，`null` 时连参数都不求值）。
+     *   多模板信号会**多次调用** [TemplateMatcher.findPeaks] ⇒ 同一个 probe 会收到多组段，
+     *   实现方负责累加（见 `MatchPhaseRecorder`）。
+     *
      * ⚠ 合并用的抑制半径走 [TemplateMatcher.effectiveSuppressRadius]（**不是**直接用 [MatchParams.peakMinDistance]）：
      * 多模板信号的各模板尺寸一致（标定侧强约束），跨模板的"同一处"同样是**峰肩**，半径必须随模板尺寸走
      * —— 否则与单模板路径口径不一致（真机故障与依据见 [TemplateMatcher.PEAK_SUPPRESS_DIVISOR]）。
      */
-    fun detectSignal(image: GrayImage, signal: SignalSpec): DetectionRecord {
+    fun detectSignal(
+        image: GrayImage,
+        signal: SignalSpec,
+        probe: TemplateMatcher.MatchCostProbe? = null,
+    ): DetectionRecord {
         val radius = signal.templates.maxOf {
             TemplateMatcher.effectiveSuppressRadius(params, it.width, it.height)
         }
         val peaks = signal.templates
-            .flatMap { TemplateMatcher.findPeaks(image, it, signal.window, params) }
+            .flatMap { TemplateMatcher.findPeaks(image, it, signal.window, params, probe) }
             .let { TemplateMatcher.suppressPeaks(it, radius) }
         return DetectionRecord(signal.name, judge(peaks), peaks.firstOrNull(), peaks.getOrNull(1))
     }

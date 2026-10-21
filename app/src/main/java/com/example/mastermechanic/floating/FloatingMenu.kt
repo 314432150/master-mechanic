@@ -58,6 +58,31 @@ internal object FloatingMenu {
      */
     const val PICK_ROW_HEIGHT_DP = 28
 
+    /**
+     * 区服列表的**两列网格**（2026-10-19 U8，用户口径"区服列表改两列"）。
+     *
+     * ⚠ **不能用 `weight` 做等分**：菜单窗是 `WRAP_CONTENT`，而 `measureSelf` 用 **UNSPECIFIED**
+     * 规格量内容 —— 这种测量下"宽 0 + 权重"的子视图会算成 **0 宽**（格子直接消失，复核页踩过，
+     * 见 `FloatingWindow.captureCardRow` 的说明）⇒ 每格必须给**显式像素宽**。
+     *
+     * 单格宽度上下限（dp）：下限保住"两字 + 勾号"不至于挤成一团；上限 = 4 个汉字（区服名的最长口径）
+     * 加左内边距（图标槽 18 + 前后 8/6）与勾号，两列合计 **≤ 260dp**（与 `STATUS_MAX_WIDTH_DP` 同源，
+     * 仍远窄于复核页的半屏）。实际宽度由 UI 按**这层最长的名字**量出来 ⇒ 面板宽度仍随区服名自适应。
+     */
+    const val PICK_COLUMNS = 2
+    const val PICK_COLUMN_GAP_DP = 4
+    const val PICK_CELL_MIN_WIDTH_DP = 64
+    const val PICK_CELL_MAX_WIDTH_DP = 128
+
+    /**
+     * 两列网格的**填充顺序**：按下标**行优先、先左后右**（第 1 行 = 第 0/1 格，第 2 行 = 第 2/3 格…）。
+     *
+     * **只做"怎么排"，不做任何重排 / 分组**（U8-1：第 k 格 = 清单第 k 条）。返回的是每一行放哪几个下标，
+     * UI 只按它 `addView` —— 顺序一旦在这层被改过，验收就无从对照（真机逐条比对清单页顺序）。
+     */
+    fun pickGridRows(cellCount: Int, columns: Int = PICK_COLUMNS): List<List<Int>> =
+        if (columns <= 0) emptyList() else (0 until cellCount).chunked(columns)
+
     /** 面包屑（返回）行高：与功能行同高，它自己也是一个可点目标。 */
     const val BREADCRUMB_HEIGHT_DP = 48
 
@@ -166,8 +191,8 @@ internal object FloatingMenu {
         state.copy(level = Level.CONFIG, reason = null, draft = current)
 
     /**
-     * 从"选服务器"那一层里选「顺序轮换」→ 回设置页，策略切回 NEXT 并**清掉具体区服名**
-     * （别留着上次的值误导：界面上会显示"服务器：顺序轮换"，但底下还存着个名字就说不清了）。
+     * 从"选服务器"那一层里选「下一个」→ 回设置页，策略切回 NEXT 并**清掉具体区服名**
+     * （别留着上次的值误导：界面上会显示"服务器：下一个"，但底下还存着个名字就说不清了）。
      */
     fun draftNextServer(state: State): State = state.copy(
         level = Level.CONFIG,
@@ -330,4 +355,35 @@ internal object FloatingMenu {
      * 只有冒号没有内容的垃圾行）；文案拼装（前缀 + 原因）留给 `FloatingWindow`（那里才有 Context）。
      */
     fun popupBlockedNotice(reason: String?): String? = reason?.trim()?.takeIf { it.isNotEmpty() }
+
+    // ---------------------------------------------------------------- 「重新授权采集」入口（纯逻辑）
+
+    /**
+     * 根菜单要不要显示「**⟳ 重新授权采集**」那一行。
+     *
+     * 用户口径（2026-10-01，M5 期间插入）：**"在悬浮窗菜单里插一个「一键重新授权采集」入口"** ——
+     * 起因是帧流静默停更（[FrameFreshness]）时，玩家在游戏里只能看着一轮跑号卡住，
+     * 得"收起悬浮窗 → 回 App → 找授权页 → 点建立采集"四步才回到游戏。
+     *
+     * 为什么**不是常驻行**：菜单每多一行面板就高一截，而**面板长高会让正在点的行整体位移** ⇒
+     * 误点相邻项（见 [ROW_HEIGHT_DP] 与 `FloatingWindow.controlRow` 那段说明）。
+     * 下面三个判据恰好就是"此刻眼睛 / 会话已经出问题"，那时多一行才值得：
+     * - ① **采集会话没了**（用户从系统侧停掉 / 系统回收）：程序什么都做不了，重建采集是**唯一**出路；
+     * - ② **画面久未更新**（[FrameFreshness.isStale]）：识别读的是重放的旧帧 ⇒ 老处置只能写"回 App 重建"；
+     * - ③ **这次授权没被投喂**（[FrameFreshness.isStarved]）：入口照给（用户可能还想再试一次），
+     *   但原因行会说清"**只重新授权通常没用、要换进程**"（2026-10-01 真机实证）。
+     *
+     * 正常跑着时三个都为假 ⇒ 面板与从前**一模一样**（零位移、零额外行）。
+     * （另有「更多」层里的一条**常驻**同类入口：改过标定产物之后"下次建立采集会话时生效"
+     * 需要一条稳定的重建通路，见 `FloatingWindow.renderMore`。）
+     *
+     * ⚠ 2026-10-20：这一档一度改成给「重启 App」（判据 `RecoveryAction`），但那套自动拉起在这台 vivo
+     * 上做不到（进程死后系统不重绑无障碍服务；闹钟拉起被后台启动限制吞掉）⇒ 用户当天要求**去掉重启
+     * 功能**，恢复成"只给重新授权采集"。证据见 `docs/progress.md` 470/471。
+     */
+    fun shouldOfferReauthorize(
+        captureActive: Boolean,
+        frameStale: Boolean,
+        frameStarved: Boolean,
+    ): Boolean = !captureActive || frameStale || frameStarved
 }

@@ -68,6 +68,64 @@ object FrameSignature {
     }
 
     /**
+     * 采**一块矩形区域**的签名（A2 局部证据，2026-10-02）。
+     *
+     * ## 为什么需要它（"阈值判断总有例外"那条口径）
+     *
+     * 整帧变化只会回答"变了多少"，**回答不了"变的是什么"** —— 实测"换了一个新弹窗"是 36.6~43.5%，
+     * "弹窗没了、露出下层界面"是 53.3~77.2%，两组只隔一道十几点的空档；50 那道线两边都踩着例外
+     * （真机 2026-10-02：点完一枪弹窗**内容换了一幅**=60.6% ⇒ 被误判成"弹窗没了"而停手，
+     * 而同一屏随后两轮弹窗标志仍以 0.9958 命中）。
+     * 2026-09-29 撤销整帧比较时留下的口径是：**别看整帧，改看"X 自己那一小块"**
+     * （见 `action/PopupCloseController` 的 `anchorKeptPercent` 与 `docs/progress.md` 第 421/422 条）。
+     *
+     * 本方法是那条口径的"尺子"：把**关闭控件锚点窗口**那一小块采成签名 ⇒ 与上一枪那张同区域签名比
+     * ⇒ "那个控件还在原样吗"（还在 = 弹窗还在、只是内容换了一幅；变样了 = 弹窗没了、下层顶上来）。
+     *
+     * ⚠ 与 [sample] 同一套亮度口径与步长，**同一矩形**两次采样的长度恒定 ⇒ 可直接丢给 [changedPercent]。
+     * 矩形不同（或几何变了）⇒ 长度不同 ⇒ [changedPercent] 如实给 `null`（不可比 ≠ 没变）。
+     *
+     * @param left 区域左边界（含）；[right] 右边界（**不含**）；[top] / [bottom] 同理。
+     */
+    fun sampleRegion(
+        rgba: ByteArray,
+        width: Int,
+        height: Int,
+        rowStride: Int,
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int,
+        step: Int = DEFAULT_STEP,
+    ): ByteArray {
+        require(width > 0 && height > 0) { "帧尺寸必须为正：${width}x$height" }
+        require(step > 0) { "采样步长必须为正：$step" }
+        require(rowStride >= width * PIXEL_BYTES) { "行跨度 $rowStride 小于一行像素字节数（${width * PIXEL_BYTES}）" }
+        require(left in 0 until width && right in (left + 1)..width) {
+            "区域横向越界：[${left}, $right)（帧宽 $width）"
+        }
+        require(top in 0 until height && bottom in (top + 1)..height) {
+            "区域纵向越界：[${top}, $bottom)（帧高 $height）"
+        }
+        require(rgba.size >= (bottom - 1) * rowStride + (right - 1) * PIXEL_BYTES + 3) {
+            "RGBA 数据不足以覆盖 ${width}x$height（rowStride=$rowStride，实际 ${rgba.size} 字节）"
+        }
+
+        val cols = (right - left + step - 1) / step
+        val out = ByteArray((bottom - top) * cols)
+        var index = 0
+        for (y in top until bottom) {
+            val rowStart = y * rowStride
+            var x = left
+            while (x < right) {
+                out[index++] = lumaAt(rgba, rowStart + x * PIXEL_BYTES)
+                x += step
+            }
+        }
+        return out
+    }
+
+    /**
      * 单点亮度（BT.601、整数四舍五入）：与 [RgbaToGray.toGray] 同一套公式
      * （公式在这里重写一份而不是去调它：那条路是**每帧 460 万次**的热路径，不该为"采样几个点"改它）。
      *

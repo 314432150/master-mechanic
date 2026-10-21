@@ -1,5 +1,6 @@
 package com.example.mastermechanic.patrol
 
+import com.example.mastermechanic.decision.UiState
 import com.example.mastermechanic.patrol.PatrolFlow.Outcome
 import com.example.mastermechanic.patrol.PatrolFlow.Range
 import com.example.mastermechanic.patrol.PatrolFlow.Scene
@@ -65,6 +66,17 @@ class PatrolFlowTest {
     }
 
     // ---------------------------------------------------------------- 区间
+
+    @Test
+    fun everyRangeSaysWhichFlowItIsInLogs() {
+        // 2026-10-03 用户定稿：日志前缀必须带**具体流程名** —— 上一版只写"流程"两个字，
+        // 用户问"**怎么区分具体是哪个流程？**"⇒ 菜单上有三种（换号 / 拜访 / 换号+拜访），日志要能对上。
+        // 取值标准 = **它到底在做什么**（= [Range] 决定的区间），不是"用户点了哪一行"：
+        // 「拜访（预设）」走的就是换号+拜访 ⇒ 日志写「换号+拜访」。
+        assertEquals("换号", Range.SWITCH_ONLY.logLabel)
+        assertEquals("拜访", Range.VISIT_ONLY.logLabel)
+        assertEquals("换号+拜访", Range.SWITCH_AND_VISIT.logLabel)
+    }
 
     @Test
     fun rangesCoverTheRightSteps() {
@@ -163,6 +175,58 @@ class PatrolFlowTest {
         assertEquals(running, PatrolFlow.resume(running))
     }
 
+    @Test
+    fun resumingAfterAPauseForgetsThePendingClickAndTheElapsedBudget() {
+        // 2026-10-01 真机（用户原话："**暂停后切出再切回游戏，点了继续没有用**"）：
+        // 暂停前那一击的标记 `lastActionAtMs` 留在状态里 ⇒ 继续后 `PatrolRunner` ⑤
+        //（"本步已下过击 ⇒ 只等期望画面、绝不补点"）立刻接手 ⇒ **既不重新定位也不补点** ⇒
+        // 干等到这一步的预算耗尽（真机实录：继续后从"已等 28 秒"一路涨到 47 秒+）✗
+        // ⇒ 继续时必须① 作废这一击 ② 把预算顺延到此刻（暂停的时长不该算进这一步的耐心）。
+        val paused = PatrolFlow.State(
+            range = Range.SWITCH_AND_VISIT,
+            step = Step.LOGOUT,
+            paused = true,
+            reason = "游戏不在前台，已暂停",
+            stepEnteredAtMs = 1_000L,
+            lastActionAtMs = 900L,
+            stateAtLastAction = UiState.HALL_SETTINGS,
+        )
+
+        val resumed = PatrolFlow.resume(paused, nowMs = 30_000L)
+
+        assertEquals(Outcome.RUNNING, resumed.outcome)
+        assertFalse(resumed.paused)
+        assertNull(resumed.reason)
+        assertEquals("预算顺延到此刻", 30_000L, resumed.stepEnteredAtMs)
+        assertEquals("本步已下过击的标记必须作废，否则会死在「只等画面」那一支", 0L, resumed.lastActionAtMs)
+        assertNull(resumed.stateAtLastAction)
+        assertFalse("顺延后不该立刻判超时", PatrolFlow.timedOut(resumed, 30_000L))
+    }
+
+    @Test
+    fun resumingAfterAnAbortAlsoForgetsThePendingClick() {
+        // 中止多半就发生在"等期望画面"超时的那一刻（那时同样 `lastActionAtMs > 0`）⇒ 继续后若不作废，
+        // 一样会死在 ⑤ 分支里。两条来路（暂停 / 中止）必须**一个口径**。
+        val failed = PatrolFlow.State(
+            range = Range.VISIT_ONLY,
+            step = Step.OPEN_FRIENDS,
+            outcome = Outcome.FAILED,
+            retries = 3,
+            reason = "等了 15 秒仍未识别出要等的画面",
+            stepEnteredAtMs = 1_000L,
+            lastActionAtMs = 900L,
+            stateAtLastAction = UiState.FARM,
+        )
+
+        val resumed = PatrolFlow.resume(failed, nowMs = 60_000L)
+
+        assertEquals(Outcome.RUNNING, resumed.outcome)
+        assertEquals(0, resumed.retries)
+        assertEquals(60_000L, resumed.stepEnteredAtMs)
+        assertEquals(0L, resumed.lastActionAtMs)
+        assertNull(resumed.stateAtLastAction)
+    }
+
     // ---------------------------------------------------------------- 时间预算（2026-09-20 增）
 
     @Test
@@ -193,7 +257,9 @@ class PatrolFlowTest {
         val failed = PatrolFlow.fail(
             state,
             "等超时",
-            nowMs = 1_000L + PatrolFlow.STEP_TIMEOUT_MS,
+            // ⚠ 2026-10-03：第 7 步（进入农场）有自己的 20s 预算（[FARM_ENTER_TIMEOUT_MS]），
+            // 这里必须用它 —— 拿旧的 15s 试，15s < 20s 就不算超时，钉不住"到点即中止"这件事。
+            nowMs = 1_000L + PatrolFlow.FARM_ENTER_TIMEOUT_MS,
         )
 
         assertEquals(Outcome.FAILED, failed.outcome)
@@ -211,6 +277,101 @@ class PatrolFlowTest {
 
         val picked = PatrolFlow.State(range = Range.SWITCH_ONLY, step = Step.PICK_SERVER, stepEnteredAtMs = 1_000L)
         assertTrue("其它步骤仍是 15s", PatrolFlow.timedOut(picked, 1_000L + PatrolFlow.STEP_TIMEOUT_MS))
+    }
+
+    @Test
+    fun enteringTheFarmGetsItsOwnTwentySecondsAndNobodyElseGetsBigger() {
+        // 2026-10-03 真机：第 7 步点下农场入口后**加载 8.7 秒**才被确认（另一次 6.6s）⇒ 15s 只剩 1.7 倍余量。
+        // 按项目自己的取法（实测最慢 × 2，第 3/6/9 步都这么定）给到 **20s**。
+        // ⚠ **不给 30s**：30s 是第 6 步（登录要启游戏拉资源）的档位；第 7 步的失败模式用户一眼能看出来，
+        // 干等 30 秒是纯亏、还会掩盖真故障。
+        assertEquals(20_000L, PatrolFlow.FARM_ENTER_TIMEOUT_MS)
+        assertEquals(20_000L, PatrolFlow.timeoutFor(Step.ENTER_FARM))
+
+        val entering = PatrolFlow.State(range = Range.SWITCH_AND_VISIT, step = Step.ENTER_FARM, stepEnteredAtMs = 1_000L)
+        assertFalse("15s（旧值）不该再把进农场卡成中止", PatrolFlow.timedOut(entering, 1_000L + PatrolFlow.STEP_TIMEOUT_MS))
+        assertTrue("到 20s 才算超时", PatrolFlow.timedOut(entering, 1_000L + PatrolFlow.FARM_ENTER_TIMEOUT_MS))
+
+        // 📌 用户 2026-10-03 问过"其他等待期可否统一 30s" ⇒ 不行：这四步点完画面 0.7~2.1 秒就变
+        // （真机：第 4 步 0.7s、第 5 步 2.1s），15s 已是 7~15 倍余量，统一只会把真故障的发现时间白拉长一倍
+        for (step in listOf(Step.CHECK_START, Step.LEAVE_FARM, Step.SWITCH_SERVER, Step.PICK_SERVER, Step.OPEN_FRIENDS)) {
+            assertEquals("$step 不许跟着加长", PatrolFlow.STEP_TIMEOUT_MS, PatrolFlow.timeoutFor(step))
+        }
+    }
+
+    @Test
+    fun thePatienceClockStartsWhenWeActuallyAct() {
+        // **乙方案（2026-10-03）**：耐心从"我们最后一次真动手"起算 —— "还没动手的时间不扣耐心"。
+        // 复刻当天那次真机：第 7 步 01:03:27.6 进入（准备 7.5s：让路窗 + FR-02 关两层新手屏），
+        // 01:03:35.2 才点下去，游戏加载 8.7s ⇒ 旧口径 16.3s > 15s 在命中前 1.24s 中止。
+        val entered = 1_000L
+        val acted = 8_500L // 进入后 7.5 秒才动手（＝点击那一刻）
+        val state = PatrolFlow.State(
+            range = Range.SWITCH_AND_VISIT,
+            step = Step.ENTER_FARM,
+            stepEnteredAtMs = entered,
+            lastActionAtMs = acted,
+        )
+
+        assertEquals("起算点 = 动手那一刻", acted, PatrolFlow.budgetBase(state))
+        assertFalse(
+            "从进入步骤算已经等了 15.5 秒，但耐心从动手那刻起算 ⇒ 不算超时",
+            PatrolFlow.timedOut(state, entered + PatrolFlow.STEP_TIMEOUT_MS),
+        )
+        assertTrue("从动手那刻起 20s 到点才超时（覆盖 8.7s 加载 ⇒ 余量 11.3s）", PatrolFlow.timedOut(state, acted + PatrolFlow.FARM_ENTER_TIMEOUT_MS))
+        assertFalse("还差 1ms 不算", PatrolFlow.timedOut(state, acted + PatrolFlow.FARM_ENTER_TIMEOUT_MS - 1))
+    }
+
+    @Test
+    fun beforeActingTheBudgetStillRunsFromStepEntrySoStuckStepsAreFoundFast() {
+        // 乙方案的**另一半**：还没动手时（锚点定位不到 / 迟迟不敢点）**仍旧**从进入这一步起算 15s
+        // ⇒ "点不动 / 进错界面"这类真故障不会被这条口径惯着 indefinitely 等下去。
+        val state = PatrolFlow.State(
+            range = Range.SWITCH_ONLY,
+            step = Step.OPEN_FRIENDS,
+            stepEnteredAtMs = 1_000L,
+        )
+
+        assertEquals(1_000L, PatrolFlow.budgetBase(state))
+        assertFalse("没到点不超时", PatrolFlow.timedOut(state, 1_000L + PatrolFlow.STEP_TIMEOUT_MS - 1))
+        assertTrue("到点即超时", PatrolFlow.timedOut(state, 1_000L + PatrolFlow.STEP_TIMEOUT_MS))
+    }
+
+    @Test
+    fun aRevokedActionDoesNotBuyExtraPatience() {
+        // "没点成"不许被当成"动过手"：门禁拒发 / 被遮挡屏吞掉都会
+        // [PatrolFlow.withoutPendingAction] 清掉标记 ⇒ 起点自动回退到进入步骤那一刻。
+        val acted = PatrolFlow.acted(
+            PatrolFlow.State(range = Range.SWITCH_AND_VISIT, step = Step.ENTER_FARM, stepEnteredAtMs = 1_000L),
+            8_500L,
+        )
+        val revoked = PatrolFlow.withoutPendingAction(acted)
+
+        assertEquals("标记清干净", 1_000L, PatrolFlow.budgetBase(revoked))
+        assertTrue(
+            "撤销之后仍按进入步骤那一刻判超时（否则一次被拒就能白赚一份 20s 耐心）",
+            PatrolFlow.timedOut(revoked, 1_000L + PatrolFlow.FARM_ENTER_TIMEOUT_MS),
+        )
+    }
+
+    @Test
+    fun aRebasedBudgetStartsFreshEvenIfWeActedBeforeIt() {
+        // 2026-10-01 既有口径"画面回来 ⇒ 重新起算"必须**盖过**"上一次动手"那个更早的起点：
+        // 画面停更期间那一击早已失去上下文（见 [PatrolFlow.rebaseStepBudget]），
+        // 顺延后的起点更晚 ⇒ [budgetBase] 取更晚的那个 = 给足一整份预算。
+        val rebased = PatrolFlow.rebaseStepBudget(
+            PatrolFlow.State(
+                range = Range.SWITCH_AND_VISIT,
+                step = Step.ENTER_FARM,
+                stepEnteredAtMs = 1_000L,
+                lastActionAtMs = 2_000L,
+            ),
+            100_000L,
+        )
+
+        assertEquals(100_000L, PatrolFlow.budgetBase(rebased))
+        assertFalse("刚恢复不该立刻超时", PatrolFlow.timedOut(rebased, 100_000L))
+        assertTrue("但要给足一整份预算", PatrolFlow.timedOut(rebased, 100_000L + PatrolFlow.FARM_ENTER_TIMEOUT_MS))
     }
 
     @Test
@@ -256,6 +417,32 @@ class PatrolFlowTest {
 
         val picking = PatrolFlow.State(range = Range.SWITCH_ONLY, step = Step.PICK_SERVER, stepEnteredAtMs = 1_000L)
         assertTrue("其它步骤仍是 15s", PatrolFlow.timedOut(picking, 1_000L + PatrolFlow.STEP_TIMEOUT_MS))
+    }
+
+    @Test
+    fun theBudgetRestartsWhenThePictureComesBack() {
+        // 2026-10-01 真机缺陷：点「重新授权采集」把采集会话换掉，画面回来的**那一轮**，
+        // 「停更期间累计的等待」被当成"这一步等超时"⇒ 立刻中止（文案写"等了 36 秒"，而预算只有 15 秒），
+        // 而期望的画面在 1 秒后就出现了 ✗。
+        // 口径（`PatrolRunner.RoundInput.framesStalled` 的注释一直这么写）：**画面一回来，
+        // 从那时起重新给足这一步的预算** —— 这个函数就是那件事的入口（帧线程解除闸时调用）。
+        val running = PatrolFlow.State(
+            range = Range.VISIT_ONLY,
+            step = Step.OPEN_FRIENDS,
+            stepEnteredAtMs = 1_000L,
+        )
+
+        val rebased = PatrolFlow.rebaseStepBudget(running, 100_000L)
+        assertEquals("预算从「画面回来」这一刻重新起算", 100_000L, rebased.stepEnteredAtMs)
+        assertFalse("刚恢复 ⇒ 不该立刻判超时", PatrolFlow.timedOut(rebased, 100_000L))
+        assertTrue(
+            "但要给足一整份预算",
+            PatrolFlow.timedOut(rebased, 100_000L + PatrolFlow.STEP_TIMEOUT_MS),
+        )
+
+        // 没在跑的（暂停 / 已中止 / 已完成）不动它 —— 那些状态的预算归「继续」管，别在这里替用户决定
+        val paused = running.copy(paused = true)
+        assertEquals(paused, PatrolFlow.rebaseStepBudget(paused, 100_000L))
     }
 
     @Test

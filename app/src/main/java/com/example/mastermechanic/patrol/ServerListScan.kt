@@ -356,7 +356,7 @@ class ServerListScan(
                 val learned = learnedTopKeys
                 when {
                     learned != null && sameScreen(learned, rowKeys) ->
-                        proposeDown("这一屏与上次跑号见到的**列表顶部**那一屏一致（重合 ${overlapText(learned, rowKeys)}）⇒ 跳过回顶，直接往下找")
+                        proposeDown("这一屏与上一次流程见到的**列表顶部**那一屏一致（重合 ${overlapText(learned, rowKeys)}）⇒ 跳过回顶，直接往下找")
 
                     // **刚登录进来 ⇒ 列表天然在顶部**（用户 2026-10-01 观察：每次重新登录服务器，
                     // 好友列表都会回到顶部）⇒ 第一屏就是顶部屏（顺便学下来），省掉那一下空滑

@@ -106,12 +106,14 @@ class CalibrationCodecTest {
     @Test
     fun olderVersionsAreRefusedWithAnActionableMessage() {
         // 2026-09-19 用户口径：旧产物不再兼容（要删掉重标）→ 报错必须说清"怎么办"，
-        // 不能只甩一句"版本不受支持"让人猜
+        // 不能只甩一句"版本不受支持"让人猜。
+        // ⚠ 2026-10-02 改断言：这批面向用户的文案里，「产物」**已统一改称「标定结果」**
+        //   （用户："标定保持不变，产物改为标定结果"）⇒ 这里跟着改，**判据不变**（依旧要求"说清怎么办"）。
         val good = CalibrationCodec.encode(sampleData())
         val error = assertThrows(IllegalArgumentException::class.java) {
             CalibrationCodec.decode(good.replace("version=4", "version=2"))
         }
-        assertTrue("应提示处理办法，实际：${error.message}", error.message.orEmpty().contains("删除产物"))
+        assertTrue("应提示处理办法，实际：${error.message}", error.message.orEmpty().contains("删除标定结果"))
     }
 
     @Test

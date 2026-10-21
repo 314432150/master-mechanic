@@ -107,6 +107,38 @@ class AnchorLocatorTest {
     }
 
     @Test
+    fun preferredNamesPicksTheNewStyleAnchorEvenWhenItIsDeclaredSecond() {
+        // **C′（2026-10-02）**：一屏可以标**多套样式**（活动弹窗 `activity_popup_e1` / `_e2`），而
+        // "换了个新弹窗（控件也换）"时**必须用新那套自己的**关闭控件 ⇒ 调用方把"本轮确认在场的标志名"
+        // 作为优先组传进来（配对依据是产物里的现成不变量：同一元素的**标志与锚点同名**）。
+        // ⚠ 两组内部都保持**声明顺序** ⇒ 空集合时与旧行为逐字段一致（上一条用例钉着）。
+        val (frame, template, _) =
+            scene(200, 150, blockX = 40, blockY = 50, blockWidth = 14, blockHeight = 11, seed = 621)
+        val locator = AnchorLocator(
+            mapOf(
+                UiState.ACTIVITY_POPUP to listOf(
+                    anchor("activity_popup_e1", template),
+                    anchor("activity_popup_e2", template),
+                ),
+            ),
+            params,
+        )
+
+        assertEquals(
+            "优先组里的那条要排到最前（声明顺序第二条照样拿得到）",
+            listOf("activity_popup_e2"),
+            locator.locateFirstHit(frame, UiState.ACTIVITY_POPUP, preferredNames = setOf("activity_popup_e2"))
+                .map { it.name },
+        )
+        assertEquals(
+            "优先组一条都没命中 ⇒ 落回声明顺序第一条（老行为不变）",
+            listOf("activity_popup_e1"),
+            locator.locateFirstHit(frame, UiState.ACTIVITY_POPUP, preferredNames = setOf("not_on_screen"))
+                .map { it.name },
+        )
+    }
+
+    @Test
     fun locateStillReturnsEveryHitBecausePatrolLooksAnchorsUpByName() {
         // **回归用例**（2026-09-30 真机事故）：`locate` 曾一度改成"命中即停"，而巡逻流程是**按名字**取
         // 锚点的（`PatrolRunner: input.anchors.firstOrNull { it.name == action.anchor }`）。

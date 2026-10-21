@@ -65,8 +65,10 @@ class PopupCloseControllerTest {
         nowMs: Long = tick(),
         frameAtMs: Long = nowMs,
         changedPercent: Double? = null,
+        anchorWindowChangedPercent: Double? = null,
         source: ClickSource = ClickSource.FR_01,
         overlayKey: String? = null,
+        matchedOverlayMarkers: Set<String> = emptySet(),
     ) = PopupRoundInput(
         foreground = foreground,
         popupConfirmed = confirmed,
@@ -76,8 +78,10 @@ class PopupCloseControllerTest {
         nowMs = nowMs,
         frameAtMs = frameAtMs,
         frameChangedPercent = changedPercent,
+        anchorWindowChangedPercent = anchorWindowChangedPercent,
         source = source,
         overlayKey = overlayKey,
+        matchedOverlayMarkers = matchedOverlayMarkers,
     )
 
     private fun skipNote(outcome: PopupRoundOutcome): String = (outcome.step as PopupStep.Skip).note
@@ -500,6 +504,154 @@ class PopupCloseControllerTest {
     }
 
     @Test
+    fun anchorWindowUnchangedMeansThePopupIsStillThereSoWeKeepGoing() {
+        // **A2（2026-10-02）**：用户口径 —— "**阈值判断总是存在例外的情况**"；
+        // 2026-09-29 撤销整帧比较时留下的口径是"**别再用整帧比较，改看『X 自己那一小块』**"。
+        // 真机 00:40 的现场：点完一枪弹窗**内容换了一幅**（整帧 60.6%）⇒ 旧写法判"弹窗没了"停手
+        // （再叠加 3 秒复位等待 ⇒ 一次关弹窗 7.9 秒）；而**关闭控件那一小块几乎没变**（控件还在原处）。
+        val controller = PopupCloseController()
+        click(controller.onRound(input()))
+
+        val outcome = controller.onRound(input(changedPercent = 60.6, anchorWindowChangedPercent = 3.0))
+
+        assertFalse("局部几乎没变 ⇒ 判『弹窗还在、只是内容换了一幅』⇒ 不停手", controller.gaveUp)
+        assertFalse("更不该给出『停手』这个动作", outcome.step is PopupStep.GiveUp)
+    }
+
+    @Test
+    fun anchorWindowChangedMeansThePopupIsGoneSoWeStop() {
+        // 2026-09-24"点进商城"那一枪的形态：弹窗没了、下层元素顶上来 ⇒ **关闭控件那一小块明显变样**
+        // ⇒ 按原来那条停手（安全侧一字未动）。
+        val controller = PopupCloseController()
+        click(controller.onRound(input()))
+
+        val stop = controller.onRound(input(changedPercent = 70.6, anchorWindowChangedPercent = 55.0))
+
+        assertTrue("局部也变了 ⇒ 必须停手", controller.gaveUp)
+        val stopped = stop.step as PopupStep.GiveUp
+        assertTrue("原因要说清是哪一半变了", stopped.reason.contains("关闭控件那一小块也变了"))
+    }
+
+    @Test
+    fun unknownAnchorWindowFallsBackToTheOldStopBehavior() {
+        // 拿不到局部证据（没基线 / 几何变了 / 不知道锚点窗口）⇒ **不参与** ⇒ 退回"整幅换掉 ⇒ 停手"。
+        // "不可比 ≠ 没变" —— 这条口径与其它几道闸一致。
+        val controller = PopupCloseController()
+        click(controller.onRound(input()))
+
+        val stop = controller.onRound(input(changedPercent = 70.6, anchorWindowChangedPercent = null))
+
+        assertTrue("不可比 ⇒ 保守停手", controller.gaveUp)
+        assertTrue((stop.step as PopupStep.GiveUp).reason.contains("拿不到"))
+    }
+
+    @Test
+    fun aNewPopupStyleIsRecognizedSoWeKeepGoingInsteadOfStopping() {
+        // **C′（2026-10-02）**：用户口径原话 —— "**把『换了个新弹窗（控件也换）』识别出来**"。
+        // 真机形态：上一枪关掉一个弹窗、紧接着冒出**另一个样式**的弹窗（用户标了两套：
+        // `activity_popup_e1` / `activity_popup_e2`）⇒ "关闭控件那一小块"**必然大变**
+        //（实测 66.6% / 99.3%：样式都换了）⇒ A2 的局部证据救不了它 ⇒ 旧写法一律当"弹窗没了"停手
+        //（再等 3 秒才自愈重试，用户感受就是"慢"）。
+        // ⇒ 两条**语义证据**：① 本轮定位到的锚点不是上一枪那条 ② 它自己的标志也在屏。
+        val controller = PopupCloseController()
+        click(controller.onRound(input(anchors = listOf(anchor(name = "activity_popup_e1")))))
+
+        val outcome = controller.onRound(
+            input(
+                changedPercent = 66.6,
+                anchorWindowChangedPercent = 99.3,
+                anchors = listOf(anchor(name = "activity_popup_e2", frameX = 1200.0)),
+                matchedOverlayMarkers = setOf("activity_popup_e2"),
+            ),
+        )
+
+        assertFalse("判出『换了个新弹窗』⇒ 不许停手", controller.gaveUp)
+        val fired = click(outcome)
+        assertEquals("必须改用**新那套**的关闭控件", "activity_popup_e2", fired.request.anchorName)
+        assertEquals("坐标也要跟着新的那条走", 1200.0, fired.request.frameX, 1e-9)
+        assertTrue("日志要能读出这是判据生效，而不是标定被改了", fired.note.contains("换了个新弹窗"))
+        assertTrue(fired.note.contains("activity_popup_e1"))
+    }
+
+    @Test
+    fun theHallFalsePositiveOf20260924StillStops() {
+        // **红线老账（2026-09-24 点进商城）**：弹窗关掉、露出大厅，而**老模板在大厅上满分命中**
+        // ⇒ 那一刻"锚点能定位到"照样成立，可定位到的**永远是上一枪那条** ⇒ 证据 ① 不成立 ⇒ 一律停手。
+        // 这一条是 C′ 的安全边界：**不许**为了"快"把它放宽成"能定位到就继续"。
+        val controller = PopupCloseController()
+        click(controller.onRound(input(anchors = listOf(anchor(name = "activity_popup_e1")))))
+
+        val stop = controller.onRound(
+            input(
+                changedPercent = 70.6,
+                anchorWindowChangedPercent = 55.0,
+                anchors = listOf(anchor(name = "activity_popup_e1")),
+                matchedOverlayMarkers = setOf("activity_popup_e1"),
+            ),
+        )
+
+        assertTrue("老模板假命中 ⇒ 必须停手", controller.gaveUp)
+        assertTrue((stop.step as PopupStep.GiveUp).reason.contains("整幅换掉"))
+    }
+
+    @Test
+    fun aDifferentAnchorWithoutItsOwnMarkerOnScreenStillStops() {
+        // 证据 ② 不能省：**"锚点能定位到" ≠ "那一屏还在"**（2026-09-24 的假命中正是"能定位到"）。
+        // 本轮定位到的是另一条锚点，可它自己的标志**没在屏**（不在 matchedOverlayMarkers 里）⇒ 停手。
+        val controller = PopupCloseController()
+        click(controller.onRound(input(anchors = listOf(anchor(name = "activity_popup_e1")))))
+
+        val stop = controller.onRound(
+            input(
+                changedPercent = 70.6,
+                anchorWindowChangedPercent = 88.0,
+                anchors = listOf(anchor(name = "activity_popup_e2")),
+                // e2 的标志本轮没在屏 ⇒ 光"换了一条锚点"不算证据
+                matchedOverlayMarkers = setOf("activity_popup_e1"),
+            ),
+        )
+
+        assertTrue("标志不在屏 ⇒ 不认它的锚点", controller.gaveUp)
+        assertTrue((stop.step as PopupStep.GiveUp).reason.contains("另一个样式"))
+    }
+
+    @Test
+    fun recognizingANewPopupStillWaitsForTheAnimationFloor() {
+        // 判出"新弹窗"只换来"**不停手**"这一个结论，**一个闸都没放宽**：这一枪照样要过动画下限
+        //（[PopupCloseController.DEFAULT_RENDERED_FLOOR_MS] = 300ms —— 别点在淡出 / 淡入中间）。
+        val controller = PopupCloseController()
+        val first = tick()
+        click(
+            controller.onRound(
+                input(nowMs = first, frameAtMs = first, anchors = listOf(anchor(name = "activity_popup_e1"))),
+            ),
+        )
+
+        val outcome = controller.onRound(
+            input(
+                nowMs = first + 200,
+                frameAtMs = first + 200,
+                changedPercent = 66.6,
+                anchorWindowChangedPercent = 99.3,
+                anchors = listOf(anchor(name = "activity_popup_e2")),
+                matchedOverlayMarkers = setOf("activity_popup_e2"),
+            ),
+        )
+
+        assertTrue("动画下限没到 ⇒ 再等一拍，不许点", outcome.step is PopupStep.Skip)
+        assertFalse("但**不是**停手（停手要等 3 秒才自愈）", controller.gaveUp)
+    }
+
+    @Test
+    fun anchorKeptThresholdIsTenPercent() {
+        // 口径钉死：先取 10，靠真机日志标定（每条 FR-01 行都会带"关闭控件那一小块变化 X%"）
+        assertEquals(10.0, PopupCloseController.DEFAULT_ANCHOR_KEPT_PERCENT, 1e-9)
+        assertThrows(IllegalArgumentException::class.java) {
+            PopupCloseController(anchorKeptPercent = -0.1)
+        }
+    }
+
+    @Test
     fun replacedThresholdBoundary() {
         // 阈值是">= 50%"：49.9 照旧补枪、50.0 停手
         val clickable = PopupCloseController()
@@ -609,7 +761,7 @@ class PopupCloseControllerTest {
     fun renderedChangeThresholdIsTwentyPercent() {
         // 口径钉死（用户口径 20%）：实测"换一个弹窗"是 39.8~43.5%、"弹窗没了"是 68.6~82%
         assertEquals(20.0, PopupCloseController.DEFAULT_RENDERED_CHANGE_PERCENT, 1e-9)
-        assertEquals(350L, PopupCloseController.DEFAULT_RENDERED_FLOOR_MS)
+        assertEquals(300L, PopupCloseController.DEFAULT_RENDERED_FLOOR_MS)
     }
 
     @Test

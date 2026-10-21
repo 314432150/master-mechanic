@@ -50,15 +50,27 @@ object PatrolFlow {
     }
 
     /** FR-04 的三种执行区间（由菜单项决定用哪一种）。 */
-    enum class Range {
+    enum class Range(
+        /**
+         * **日志 / 说明里这条流程叫什么**（2026-10-03 用户定稿）。
+         *
+         * 之前日志一律写「跑号」，2026-10-03 换成「流程」之后用户指出："**只写『流程』两个字，怎么区分
+         * 具体是哪个流程？**" ⇒ 菜单上本来就有三种（换号 / 拜访 / 换号+拜访），日志必须能对上其中一个。
+         *
+         * 取值标准 = **它到底在做什么**（由 [Range] 决定，即这次执行的区间），而不是"用户点了哪一行"：
+         * 「拜访（预设）」走的是 [SWITCH_AND_VISIT] ⇒ 日志就写「换号+拜访」，
+         * 与菜单那一行的名字一致 ✓。
+         */
+        val logLabel: String,
+    ) {
         /** 只换号：起点所在步 → 第 6 步（登录进大厅）。 */
-        SWITCH_ONLY,
+        SWITCH_ONLY("换号"),
 
         /** 只拜访：第 7 步 → 第 10 步（跳过全部换号步骤）。 */
-        VISIT_ONLY,
+        VISIT_ONLY("拜访"),
 
         /** 换号 + 拜访：起点所在步 → 第 10 步（「拜访（预设）」用它）。 */
-        SWITCH_AND_VISIT,
+        SWITCH_AND_VISIT("换号+拜访"),
     }
 
     /**
@@ -121,8 +133,11 @@ object PatrolFlow {
      *   画面确实换了另一屏、且新画面上这一步有事可做时，不必再等满 [PatrolRunner.SETTLE_WAIT_MS]
      *   （2026-09-21，真机实测每步白等 ≈1.1~1.4s）。null 时退化为"窗口内一律等"的老行为，
      *   于是纯逻辑调用方（单测 / 离线重跑）不受影响。
-     * @param stepEnteredAtMs **进入这一步**的时刻（0 = 未记录 → 不做超时判定，纯逻辑单测不受影响）。
-     *   编排层用它算"这一步等多久了"（[STEP_TIMEOUT_MS]，见那里的说明）。
+     * @param stepEnteredAtMs **进入这一步**的时刻（0 = 未记录→ 不做超时判定，纯逻辑单测不受影响）。
+     *   编排层用它算"这一步等多久了"（[STEP_TIMEOUT_MS]，见那里的说明）；⚠ **它不是唯一的起算点** ——
+     *   2026-10-03 起耐心从 [budgetBase]（进入这一步 / 最后一次真动手，两者取晚）起算。
+     * @param framesStalledSinceMs **这一次"收不到新帧"开始的时刻**（0 = 当前不在停更）。
+     *   只服务于 [rebaseOnStall] 的宽限上限，见那里。
      */
     data class State(
         val range: Range,
@@ -134,6 +149,7 @@ object PatrolFlow {
         val lastActionAtMs: Long = 0L,
         val stateAtLastAction: UiState? = null,
         val stepEnteredAtMs: Long = 0L,
+        val framesStalledSinceMs: Long = 0L,
     ) {
         val isRunning: Boolean get() = outcome == Outcome.RUNNING && !paused
     }
@@ -157,6 +173,21 @@ object PatrolFlow {
      *    同样 3 次重试在墙钟上只剩一半时间。要谈耐心，就得用**时间**谈。
      *
      * 取值：15s ≈ 实测最慢一次（6.6s）的 2 倍余量；到点即中止并说明等了多久（不静默卡住）。
+     *
+     * ## 2026-10-03：耐心从「我们最后一次真动手」起算（[budgetBase]）
+     *
+     * 上面那句"从**进入这一步**起算"本身是个坑，真机撞过一次（2026-10-03 01:03）：
+     * 第 7 步（进入农场）进入后**先有 7.5 秒我们下不了手**——① 这一步自带的让路窗 2.5s、
+     * ② 游戏自己弹了「新手引导」→「新手大厅」两层，③ FR-02 逐个关掉它们；
+     * 而游戏真正加载农场又花了 **8.7 秒** ⇒ 准备 7.5 + 加载 8.7 = **16.3s > 15s** ⇒
+     * **在「未知 -> 农场」命中前 1.24 秒中止**（用户报："换号+拜访中止在了自己的农场"）。
+     *
+     * ⇒ 一句话口径：**"我们还没动手的那段时间不该扣耐心"**（那是在等条件齐，不是白等）。
+     * 与 [rebaseStepBudget]（画面停更顺延）/ [resume]（暂停不计入）**同源**：都是"刚才那段等待不作数"。
+     *
+     * ⚠ **不加"3 份"硬上界**：现状设计下每步**至多推一次**起点（口径 A 一步一击 + 搜索链中间小步
+     * `advanceStep = false` 不记 + 第 5 步滚屏刻意不记）⇒ 总时长天然 ≈ 准备时间 + 一份耐心；
+     * "迟迟不敢动手"仍由 `lastActionAtMs == 0` 那段（从进入步骤起算 15s）快速发现 ✓。
      */
     const val STEP_TIMEOUT_MS = 15_000L
 
@@ -200,12 +231,39 @@ object PatrolFlow {
     const val LOGOUT_TIMEOUT_MS = 60_000L
 
     /**
-     * **这一步**的时间预算：第 6 步是"等游戏登录加载"、第 3 步是"等退出登录后游戏重启"
-     * （见 [LOGIN_TIMEOUT_MS] / [LOGOUT_TIMEOUT_MS]），其余步骤仍是 [STEP_TIMEOUT_MS]。
+     * **第 7 步（进入农场）的时间预算**（ms，2026-10-03 加，取 **20s**）。
+     *
+     * ## 取值：实测最慢 × 2（和第 3 / 6 / 9 步同一个取法，不是随手拍的）
+     *
+     * 两次真机实测"点下农场入口 → 状态确认「农场」"：**6.6s**（2026-09-20）/ **8.7s**（2026-10-03）⇒
+     * 最慢 8.7s，20s ≈ **2.3 倍**余量。（第 3 步 35s→60s 是 1.7 倍；第 6 步 14.2s→30s 是 2.1 倍；
+     * 第 9 步 ~12s→25s 是 2 倍。）
+     *
+     * ## 为什么不是 15s、也不是 30s
+     *
+     * - **不是 15s**：15/8.7 = 1.7 倍，**偏薄**——已经有两个样本 6.6 / 8.7，第三次落 12 秒就又白中止一次。
+     * - **不是 30s**：30s 是**第 6 步（登录）**的档位（要启动游戏、拉资源）；第 7 步只是"点一下进农场"，
+     *   它的失败模式（点歪了 / 入口没了 / 被带进活动页）用户**一眼能看出来** ⇒ 干等 30 秒是纯亏，
+     *   而且会**掩盖真故障**（2026-10-01 `03:26` 那次"点进活动页"就是靠这个超时报出来的）。
+     * - ⚠ 那 8.7 秒里**约 1.2 秒是识别慢造成的**（状态"连续 2 次命中"确认 + 识别 P95 215ms）⇒
+     *   NFR-01 提速后同样这次约 7.5 秒 ⇒ 20s 的余量自动升到 2.7 倍。**余量该在识别侧挣，不该用加时间买。**
+     *
+     * 📌 **别的步骤不同步加长**（用户 2026-10-03 问过"可否统一 30s"，答复是不）：第 1/2/4/5/8 步
+     * 点完画面 0.7~2.1 秒就变（真机：第 4 步 0.7s、第 5 步 2.1s）⇒ 15s 已是 7~15 倍余量，
+     * 提到 30s 只会把"点不动 / 进错界面"这类**真故障**的发现时间白拉长一倍。
+     */
+    const val FARM_ENTER_TIMEOUT_MS = 20_000L
+
+    /**
+     * **这一步**的时间预算：第 6 步是"等游戏登录加载"、第 3 步是"等退出登录后游戏重启"、
+     * 第 7 步是"进农场要加载一整屏"、第 9 步是"搜索链 + 结果页"
+     * （见 [LOGIN_TIMEOUT_MS] / [LOGOUT_TIMEOUT_MS] / [FARM_ENTER_TIMEOUT_MS] / [FRIEND_TIMEOUT_MS]），
+     * 其余步骤仍是 [STEP_TIMEOUT_MS]。
      */
     fun timeoutFor(step: Step): Long = when (step) {
         Step.LOGIN -> LOGIN_TIMEOUT_MS
         Step.LOGOUT -> LOGOUT_TIMEOUT_MS
+        Step.ENTER_FARM -> FARM_ENTER_TIMEOUT_MS
         Step.VISIT_FRIEND -> FRIEND_TIMEOUT_MS
         else -> STEP_TIMEOUT_MS
     }
@@ -316,8 +374,8 @@ object PatrolFlow {
     fun fail(state: State, reason: String, nowMs: Long = 0L): State {
         if (!state.isRunning) return state
         val retries = state.retries + 1
-        val timedOut = state.stepEnteredAtMs > 0 && nowMs > 0 &&
-            nowMs - state.stepEnteredAtMs >= timeoutFor(state.step)
+        val base = budgetBase(state)
+        val timedOut = base > 0 && nowMs > 0 && nowMs - base >= timeoutFor(state.step)
         return if (retries >= MAX_RETRIES || timedOut) {
             state.copy(retries = retries, outcome = Outcome.FAILED, reason = reason)
         } else {
@@ -325,17 +383,40 @@ object PatrolFlow {
         }
     }
 
-    /** 这一步已经等了多久（毫秒）；0 = 没记录过进入时刻。 */
-    fun waitedMs(state: State, nowMs: Long): Long =
-        if (state.stepEnteredAtMs > 0 && nowMs > state.stepEnteredAtMs) {
-            nowMs - state.stepEnteredAtMs
-        } else {
+    /**
+     * **这一步的耐心从哪一刻起算**（2026-10-03 加，乙方案；被 [waitedMs] / [timedOut] / [fail] 共用）。
+     *
+     * 口径一句话：**"我们还没动手的那段时间不该扣耐心"** ⇒
+     * `max(进入这一步的时刻, 这一步最后一次真动手的时刻)`。
+     *
+     * - 还没动手（[State.lastActionAtMs] == 0）⇒ 就是 [State.stepEnteredAtMs]（**老行为**）
+     *   ⇒ "迟迟不敢动手 / 锚点定位不到"仍能在 15 秒内快速发现，不会因为这条口径而永远等下去；
+     * - 动过手 ⇒ 从那一击起算 ⇒ 游戏自己的加载时间才由 [timeoutFor] 判，**"准备"（等弹层关掉、
+     *   等让路窗过去）不再扣耐心**；
+     * - [stepEnteredAtMs] == 0（纯逻辑调用方 / 单测没给时刻）⇒ 返回 0 ⇒ **永不超时**，
+     *   与这条口径上线前逐字段一致；
+     * - 那一击被[作废](withoutPendingAction)（门禁拒发 / 被遮挡屏吞掉）⇒ 标记已清 ⇒ 起点自动回退，
+     *   **"没点成"绝不会被当成"动过手"**（不会白赚一份耐心）。
+     *
+     * ⚠ 注意 [PatrolRunner] ⑦b 那个让路窗（`ENTER_FARM_SETTLE_MS`）**故意仍以 [State.stepEnteredAtMs]
+     * 起算** —— 它的语义是"刚进大厅这一小会儿别抢着点"，与耐心是两件事，别顺手也改成"最后一次动手"。
+     */
+    fun budgetBase(state: State): Long =
+        if (state.stepEnteredAtMs <= 0L) {
             0L
+        } else {
+            maxOf(state.stepEnteredAtMs, state.lastActionAtMs)
         }
+
+    /** 这一步已经等了多久（毫秒）；0 = 没记录过进入时刻。起算点见 [budgetBase]。 */
+    fun waitedMs(state: State, nowMs: Long): Long {
+        val base = budgetBase(state)
+        return if (base > 0 && nowMs > base) nowMs - base else 0L
+    }
 
     /** 是否已经超过这一步的时间预算（没记录进入时刻 → 永不超时：纯逻辑调用不受影响）。 */
     fun timedOut(state: State, nowMs: Long): Boolean =
-        state.stepEnteredAtMs > 0 && nowMs > 0 && waitedMs(state, nowMs) >= timeoutFor(state.step)
+        budgetBase(state) > 0 && nowMs > 0 && waitedMs(state, nowMs) >= timeoutFor(state.step)
 
     /** 游戏离开前台：**暂停**（不动作、不计数）。已经暂停 / 已结束就原样返回。 */
     fun pause(state: State): State =
@@ -373,6 +454,88 @@ object PatrolFlow {
         state.copy(lastActionAtMs = 0L, stateAtLastAction = null)
 
     /**
+     * **画面刚从"看不见"回到能看见 ⇒ 这一步的预算重新起算**（2026-10-01 真机缺陷修）。
+     *
+     * 这条口径本来就在 [PatrolRunner] 里写着（`RoundInput.framesStalled`：*"画面一回来，从那时起
+     * 重新给足这一步的预算"*），但实现只覆盖了"**停更期间还在跑轮次**"这条路径 —— 每轮把
+     * [State.stepEnteredAtMs] 顺延到当轮时刻。真机里还有另一条路：**停更期间轮次稀了 / 断了**
+     * （零新帧时识别轮不再按 200ms 走），而**画面回来的那一刻**闸先被解除（`processFrame` 收到新帧）、
+     * 紧接着那一轮拿到的 `waitedMs` 就已经是"停更期间累计"的：
+     * ```
+     * 20:35:48.602  第 8 步开始（点「农场」界面标志）
+     * 20:35:53.203  判定「画面采集已停」⇒ 停止一切点击（此后 60+ 秒零新帧）
+     * 20:36:52.245  用户点「重新授权采集」⇒ 会话被替换（→ 新会话 20:36:57.254 建立）
+     * 20:36:57.407  跑号: 已中止：第 8 步…**等了 36 秒**仍未识别出要等的画面（预算只有 15 秒）✗
+     * 20:36:58.398  状态转移: 未知 -> 好友列表          ← 中止后 1 秒，期望的画面就来了 ✗✗
+     * ```
+     * ⇒ 调用方（采集层）在**解除"画面采集已停"那道闸的那一刻**调用本函数：把这一步的时间预算
+     * 重新起算到"画面回来"这一刻。语义与 [resume] 的"预算重新起算"同源 —— 都是
+     * **"刚才那段等待不作数"**，区别只在触发者（用户点继续 / 画面自己回来）。
+     *
+     * ⚠ 只管**正在跑**的步骤：暂停 / 已中止 / 已完成的预算归 [resume] 管（别在这里替用户做决定）。
+     */
+    fun rebaseStepBudget(state: State, nowMs: Long): State =
+        if (state.isRunning && !state.paused) {
+            // 画面回来了 ⇒ 这一次停更结束，宽限重新起算（见 [rebaseOnStall]）
+            state.copy(stepEnteredAtMs = nowMs, framesStalledSinceMs = 0L)
+        } else {
+            state
+        }
+
+    /**
+     * **停更期间的"预算顺延"，但有宽限上限**（2026-10-18，progress 第 450 条）。
+     *
+     * ## 为什么要上限（真机实录，见 progress 第 449 条）
+     *
+     * `PatrolRunner` ⓪ 分支每轮都把 [State.stepEnteredAtMs] 顺延到当轮时刻（"画面一回来就重新给足预算"），
+     * 这对**短时**停更是对的（不该让看不见画面的时间扣掉步骤的耐心）。
+     * 但真机那次卡死的形态是：**画面永远不会回来**——
+     * ```
+     * 22:56:45.900  点击下发｜锚点: hall_settings（点之前画面已经静止 7 秒）
+     * 22:56:49.347  3 秒没有新帧 ⇒ 判定「画面采集已停」：停止一切点击
+     * 22:56:50.543  第 3 步判定读到的是「大厅」｜帧：兜底重放（8615ms 前拍到）｜settings_logout 未命中
+     * ```
+     * 用户切到的是**设置页**（一个**静态页**）⇒ 平台按"静态不出帧"的正常行为**一帧都不推**
+     * ⇒ 每轮都顺延 ⇒ [waitedMs] 恒≈ 0 ⇒ [timedOut] 永远 false ⇒ 这一步**永远不会中止**，
+     * 流程永远 `RUNNING`，用户既等不到"画面回来"、也看不到"已中止" ⇒ **实质是死等**。
+     *
+     * ## 口径
+     *
+     * - 停更**不足** [STALL_REBASE_GRACE_MS] ⇒ **照旧顺延**（老行为一字不变）；
+     * - 停更**超过**宽限 ⇒ **不再顺延**（[State.stepEnteredAtMs] 原样保留）⇒ [waitedMs] 自然累加
+     *   ⇒ 步骤预算到点 ⇒ 走既有的超时中止路径，**如实告诉用户"画面久未更新"**，而不是永远"运行中"。
+     *
+     * ## 为什么这样改是安全的
+     *
+     * 这个改动**只减权限、不加权限**：顺延没了 ⇒ 只会**更早**停止，绝不会多点一下；
+     * 也不碰任何闸与判定。[State.framesStalledSinceMs] 在两条"停更结束"路径上被清零
+     * （[rebaseStepBudget]＝画面回来那一刻、[resume]＝用户点「继续」）⇒ 宽限每次都重新起算。
+     */
+    fun rebaseOnStall(state: State, nowMs: Long): State {
+        if (!state.isRunning || state.paused) return state
+        // 第一次进入停更：起算这一次停更的起点
+        val since = if (state.framesStalledSinceMs > 0L) state.framesStalledSinceMs else nowMs
+        return if (nowMs - since >= STALL_REBASE_GRACE_MS) {
+            state.copy(framesStalledSinceMs = since)
+        } else {
+            state.copy(stepEnteredAtMs = nowMs, framesStalledSinceMs = since)
+        }
+    }
+
+    /**
+     * **停更顺延的宽限上限**（毫秒）：一次停更最多"不吃步骤预算"这么久。
+     *
+     * 取 60 秒的三条理由：
+     * ① 够长——真机上"切后台一会儿 / 弹系统框 / 游戏加载"这类真会自愈的停更都在这个量级内，
+     * 宽限内它们**仍然不吃预算**（老行为保住）；
+     * ② 与 [FrameFreshness] 那条"停更 ≥60 秒界面改说处置"的档位同量级 ⇒ 到点时用户早就在界面上
+     * 看到「画面久未更新·请重授权」了，流程这时才中止，两边话术对得上；
+     * ③ 顺延一旦停住，剩余时间就是**这一步自己的预算**（[STEP_TIMEOUT_MS] 15 秒，第 6 步 30 秒），
+     * 所以从"宽限用完"到"如实中止"最多再多等一个预算那么久——不会让用户觉得又卡了一分钟。
+     */
+    const val STALL_REBASE_GRACE_MS = 60_000L
+
+    /**
      * 用户点「继续」（FR-05）：**从失败的那一步重试**，不重跑前面的步骤；顺带解除暂停。
      *
      * 只在「已中止」或「已暂停」时有意义（还在跑的调用方没有副作用）。
@@ -385,9 +548,38 @@ object PatrolFlow {
             reason = null,
             paused = false,
             stepEnteredAtMs = nowMs,
+            // **作废"本步已下过击"**（2026-10-01）：见下面暂停分支的长注释（同一个坑）。
+            lastActionAtMs = 0L,
+            stateAtLastAction = null,
+            // 停更宽限重新起算（2026-10-18）：刚才那次停更不该继续占着宽限，见 [rebaseOnStall]。
+            framesStalledSinceMs = 0L,
         )
 
-        state.paused -> state.copy(paused = false, reason = null)
+        // ⚠ **暂停后继续：必须把"本步已下过击"一起作废，并重新起算预算**（2026-10-01 真机修）。
+        //
+        // 症状（用户原话"**暂停后切出再切回游戏，点了继续没有用**"）——真机实录：
+        // ```
+        // 20:14:30.526  跑号: 已暂停（游戏不在前台）        ← 此刻 lastActionAtMs > 0（刚点过「退出登录」）
+        // 20:14:54.912  继续：从3步接着来                    ← 「继续」其实点到了、也生效了
+        // 20:14:55.183  跑号: 第 3 步：刚点过，等画面切换，继续等（已等 28 秒）  ← 之后一直是这句
+        // 20:15:14.499  …（已等 47 秒）⇒ 一路涨到这一步的预算耗尽
+        // ```
+        // 根因：[PatrolRunner] 的 ⑤ 判据是**标志位**（`lastActionAtMs > 0 && !screenMovedOn`）
+        // ⇒ "本步已下过击：接下来只判期望画面、绝不补点"（口径 A，2026-09-24）。暂停前那一击的标记
+        // 留在状态里 ⇒ 继续后 ⑤ 立刻接手 ⇒ **既不重新定位、也不补点**，只能干等到超时 ✗。
+        // （暂停期间用户切出去又回来，画面早就该重新看一遍了 —— 那一击的上下文已经不成立。）
+        // ⚠ 同理，**暂停期间计时不该继续跑**：真机那次继续后是从"已等 28 秒"起算、只剩 32 秒，
+        //    等于把暂停的时长算进了这一步的耐心 ⇒ [nowMs] 非 0 时把预算顺延到此刻。
+        state.paused -> state.copy(
+            paused = false,
+            reason = null,
+            stepEnteredAtMs = if (nowMs > 0) nowMs else state.stepEnteredAtMs,
+            lastActionAtMs = 0L,
+            stateAtLastAction = null,
+            // 同上：停更宽限重新起算（2026-10-18，见 [rebaseOnStall]）
+            framesStalledSinceMs = 0L,
+        )
+
         else -> state
     }
 }

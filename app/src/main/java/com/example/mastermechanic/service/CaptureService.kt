@@ -30,6 +30,7 @@ import androidx.core.content.IntentCompat
 import com.example.mastermechanic.MainActivity
 import com.example.mastermechanic.R
 import com.example.mastermechanic.action.ClickDispatch
+import com.example.mastermechanic.action.Haptics
 import com.example.mastermechanic.action.SystemKeys
 import com.example.mastermechanic.action.TextInjector
 import com.example.mastermechanic.patrol.FriendSearch
@@ -43,6 +44,7 @@ import com.example.mastermechanic.action.PopupStep
 import com.example.mastermechanic.action.PopupVerification
 import com.example.mastermechanic.action.PreFireRecheck
 import com.example.mastermechanic.action.ScreenSize
+import com.example.mastermechanic.capture.FrameCostSignal
 import com.example.mastermechanic.capture.FrameFreshness
 import com.example.mastermechanic.calibration.CalibrationFramePool
 import com.example.mastermechanic.calibration.CalibrationData
@@ -69,6 +71,8 @@ import com.example.mastermechanic.capture.CaptureSessionSignal
 import com.example.mastermechanic.capture.FrameExpectationSignal
 import com.example.mastermechanic.capture.CaptureSessionStatus
 import com.example.mastermechanic.servers.ServerRotation
+import com.example.mastermechanic.capture.FrameFeedHealth
+import com.example.mastermechanic.capture.FrameReadiness
 import com.example.mastermechanic.capture.FrameThrottle
 import com.example.mastermechanic.capture.FrameTimingStats
 import com.example.mastermechanic.capture.FrameSignature
@@ -83,6 +87,7 @@ import com.example.mastermechanic.decision.RecognitionLoop
 import com.example.mastermechanic.recognition.SignalDetector
 import com.example.mastermechanic.recognition.Verdict
 import com.example.mastermechanic.decision.RoundResult
+import com.example.mastermechanic.decision.StartProbeSignal
 import com.example.mastermechanic.decision.UiState
 import com.example.mastermechanic.decision.UiStateSignal
 import com.example.mastermechanic.floating.FloatingScreen
@@ -114,6 +119,23 @@ class CaptureService : Service() {
     private var frameThrottle = FrameThrottle(ACTIVE_INTERVAL_MS)
 
     /**
+     * **帧供给体检**（2026-10-19，B）：判"平台是不是送得慢"。
+     *
+     * 只由帧线程访问（`handleFrameAvailable` / `processPixels` / 每秒心跳都在同一条线程上）。
+     * 判据与取舍见 [FrameFeedHealth] 的类注释：**不能看回调次数/秒**，要看"一轮结束后平台多久给下一帧"。
+     */
+    private val feedHealth = FrameFeedHealth()
+
+    /** 上一次因为"帧供给不足"换镜像表面的时刻（冷却用，与停更那条自救共用 [SURFACE_RETRY_MAX] 配额）。 */
+    private var lastSlowFeedHealAtMs = 0L
+
+    /** "帧供给不足"这句话是不是已经说过（同一段慢只留一行，避免每秒刷屏）。 */
+    private var slowFeedNoted = false
+
+    /** 上一次因为"兜底重放的旧画面"拒绝点击时留痕的时刻（同一条只记一次，见 stepPatrol 的那道闸）。 */
+    private var lastStaleReplayNoteAtMs = 0L
+
+    /**
      * 上一次**新帧**到达的时刻（只在 [processFrame] 里更新；静止兜底的重放**不算**）。
      *
      * 用途只有一个：把"帧流是不是还活着"写进心跳日志。2026-09-23 真机排障时，
@@ -137,6 +159,39 @@ class CaptureService : Service() {
 
     /** 与 [frameCallbacks] 配套：回调来了、却**取不到 buffer**（null / reader 已关）的次数。 */
     private var frameAcquiresEmpty = 0L
+
+    /**
+     * **探针自己的窗口起点**（2026-10-18，progress 第 452 条；0 = 还没起表）。
+     *
+     * ## 为什么要独立（原来它借用了 [lastStatsAt]）
+     *
+     * 原来 `logFrameProbeIfQuiet` 直接用 [lastStatsAt] 当窗口起点，而 [lastStatsAt] 是**统计行**的：
+     * 正常有帧时 [maybeLogStats] 每 10 秒把它推到当前时刻 ⇒ 探针刚想输出就被"让路"⇒ 只在
+     * **"统计行不再来"**（即停更）时才输出。**能工作，但它是副作用、不是显式设计**，代价有两个：
+     * ① 窗口相位与统计行**错位**（真机 2026-10-18 因此差点把"回调 35 次 / 取到 32 帧"误读成
+     * "平台冻结推送旧帧"——实际两个数字属于不同的窗）；② 探针还会**清零 [framesReceived]**，
+     * 而那是统计行"接收 N 帧"的同一个变量 ⇒ 两行互相截断。
+     *
+     * ⇒ 现在探针有自己的窗口（[PROBE_WINDOW_MS]）与自己的"取到帧"计数（[probeFramesReceived]），
+     * **不再碰 [lastStatsAt] / [framesReceived]**；"只在没有新帧时输出"改成**显式判据**
+     * （见 [logFrameProbeIfQuiet] 开头），不再依赖"统计行恰好没来"这个副作用。
+     */
+    private var probeWindowStartAtMs = 0L
+
+    /** 探针窗口内 `acquireLatestImage()` **成功**的次数（与统计行的 [framesReceived] 分开，见上）。 */
+    private var probeFramesReceived = 0L
+
+    /**
+     * **最后一次 `onImageAvailable` 回调**的时刻（[SystemClock.elapsedRealtime]；0 = 本会话一次都没回调过）。
+     *
+     * 为什么单列一个"最后时刻"（2026-10-18）：计数只能说"这一窗有多少次"，**说不出"从什么时候起没声了"**。
+     * 真机那次 3 分钟里每行都写「回调 0 次」，但**看不出停在哪一刻**——而"平台最后一次投喂的绝对时刻"
+     * 才是能与前后事件（点了什么、切了哪一步）对齐的唯一锚点。
+     *
+     * ⚠ 记的是**回调到达**，不是"帧被采纳"（后者是 [lastNewFrameAtMs]，还要过节流）⇒
+     * **这两者的差值本身就是信息**：回调一直在来而 [lastNewFrameAtMs] 不动 = 我们这一侧的问题。
+     */
+    private var lastFrameCallbackAtMs = 0L
 
     /**
      * 「换镜像表面」已经试了几次（每个会话归零，见 [checkSurfaceRetry]）。
@@ -250,7 +305,7 @@ class CaptureService : Service() {
 
     /**
      * 跑号期间的期望集合（T4-4b）：**弹窗 ∪ 当前步骤要认的画面**。
-     * 未跑号时它等价守护集合（只搜弹窗）——所以整条链路不必在"跑号 / 没跑号"之间换实现。仅帧线程访问。
+     * 没有流程在跑时它等价守护集合（只搜弹窗）——所以整条链路不必在"跑 / 没跑"之间换实现。仅帧线程访问。
      */
     private var patrolExpected: PatrolDrivenExpectedSignals? = null
 
@@ -334,37 +389,23 @@ class CaptureService : Service() {
     /** 上一次**新读**到的"行键 → 纵坐标"（量滑动位移用）。仅帧线程访问。 */
     private var lastServerRowYs: Map<String, Double>? = null
 
+    /**
+     * 上一次解释"**搜索链为什么在等**"的那句话（同一条只记一次，避免逐轮刷屏）。仅帧线程访问。
+     *
+     * 用于 2026-10-01 加的那道"**不在前台就不写文字**"护栏（见 [friendPlanOf] 的 ③）。
+     */
+    private var lastFriendSearchWaitingNote: String? = null
+
     /** 上一次"新读"之后是否下发过滑动（只测量用：没有滑动就不必量位移）。仅帧线程访问。 */
     private var serverScrollSinceRead = false
 
-    /**
-     * **第 9 步「逐屏滚动查找」的扫描状态**（2026-10-01，T4-10 刀 2；需求硬性要求 #4 已扩到好友列表）。
-     *
-     * 与第 5 步**各持一个实例**：同一套纯逻辑 [ServerListScan]，但"学到的顶部那一屏 / 已滑几下"各自独立
-     * （两个列表的内容与位置毫无关系，共用会把一方的状态当成另一方的）。
-     *
-     * ⚠ **好友这条现在是"兜底"，不是主路径**（2026-10-01 两次口径变更后）：
-     * 第 9 步的主路径是「**当前屏先找一次 → 没有就搜索**」（[friendSearch] + `friendPlanOf` ⑤），
-     * 滑屏只在**搜索链走不了**时才会用到 —— 即 [FriendSearch.start] 给出 `UNAVAILABLE`
-     * （三个搜索锚点没标定）或 `onTextWritten(false)`（写文字失败）。
-     * ⚠ 而"**搜索没结果**"按用户口径是**如实停下**、**不**回退滑屏（见 [friendPlanOf] 里那段说明）。
-     * 📌 同日的旧口径"命中前必须先回顶"（`atTopConfirmed` 拦命中）**已被用户推翻**（口径修订十一：
-     * "每次都滑到顶再找有点费事")—— 它还会毁掉用户称赞的"**回顶路上看到就点**"手感，别再加回来。
-     * 仅帧线程访问。
-     */
-    private val friendScan = ServerListScan(
-        targetNoun = "好友",
-        targetHint = "请确认好友的**备注名**（括号里那一段）与游戏里一致",
-        // ⚠ **好友这一步要等更久**（2026-10-01 实测对齐）：点击门禁的间隔是从**手势结束**算的
-        //（`ClickGate.spacingSatisfied` 用 `lastFinishedMs`），而好友的拖动时长是
-        // [FRIEND_SCROLL_DRAG_MS] = 600ms ⇒ "手势结束 + 间隔 300ms" ≈ 900ms 之后才允许下一次手势。
-        // 若仍用默认 800ms，**每一枪都会被门禁拒一次**（真机实录：`滑动拒绝（与上一次点击间隔不足）`
-        // —— 那一下被拒本身没危险，但它会白等一轮，还曾因回告写漏把扫描卡死）。取 1200ms 留足余量。
-        settleMs = FRIEND_SETTLE_MS,
-    )
-
-    /** 上一次打过的"第 9 步扫描"那一行的依据（同一句只记一次，免得刷屏）。仅帧线程访问。 */
-    private var lastFriendScanNote: String? = null
+    // ⚠ **第 9 步曾经有一套"逐屏滑屏找人"**（[ServerListScan] 的第二个实例 `friendScan`、三个好友专属
+    //   调参常量 `FRIEND_SCROLL_EDGE_RATIO` / `FRIEND_SCROLL_DRAG_MS` / `FRIEND_SETTLE_MS`、
+    //   以及滑动回告的路由分支）—— **2026-10-01 按用户口径整套删除**：
+    //    "**常用好友置顶，现在当前屏找、没找到再去点搜索框，这个搜索链已经够用了，可以去掉滑屏搜索的部分**"。
+    //    ⇒ 第 9 步只剩两条路径：**当前屏命中**（④）与**搜索链**（⑤）；搜索链走不了就**如实停下**（⑥）。
+    //    `ServerListScan` 本体**保留**（第 5 步「选服」在用 —— 区服列表没有搜索功能，那条能力不动）。
+    //    历史坑见 `docs/progress.md` 第 365 / 368 / 369 / 370 / 398 条，别再加回来。
 
     /**
      * 第 9 步**搜索式查找**的状态机（2026-10-01 用户拍板"当前屏没有就搜索"；顺序与口径见
@@ -393,6 +434,14 @@ class CaptureService : Service() {
      * 节点树实证它就在同一次会话里被我们抓到过（见 `TextInjector.dumpTreeVia`）。
      */
     private val searchConfirmLabel = "确定"
+
+    /**
+     * 搜索链 ③ **等前台**时的那句话（同一条只记一次，见 [lastFriendSearchWaitingNote]）。
+     *
+     * 2026-10-01 加：`ACTION_SET_TEXT` 写的是**当前活动窗口**的节点树 —— 游戏不在前台时这一写必然失败
+     * （真机日志：`根节点包名=com.bbk.launcher2`＝桌面）。
+     */
+    private val searchWaitForegroundNote = "游戏还没回到前台（这时写入必然失败）"
 
     /**
      * **写文字**（原生 `ACTION_SET_TEXT`，不弹键盘；见 `action/TextInjector` 的说明）。
@@ -530,6 +579,18 @@ class CaptureService : Service() {
      */
     private val signalCostStats = mutableMapOf<String, FrameTimingStats>()
 
+    /**
+     * 分段耗时累加器（2026-10-18 N6-1 真机侧，见 [recordSignalPhases]）：段名 → 累计毫秒。
+     * 只统计本轮真正做了匹配的信号；每 [PHASE_LOG_EVERY] 轮打印后清零。仅帧线程访问。
+     */
+    private val signalPhaseTotalsMs = LinkedHashMap<String, Double>()
+
+    /** 单条信号**总**耗时累加（信号名 → 累计毫秒），用来算「其余开销」＝ 总耗时 − 分段之和。 */
+    private val signalCostTotalMs = LinkedHashMap<String, Double>()
+
+    /** 分段统计已累加的轮数（满 [PHASE_LOG_EVERY] 输出并清零）。仅帧线程访问。 */
+    private var signalPhaseRounds = 0
+
     /** 节流目标档位上次生效值（T1-9 切换日志用）。仅帧线程访问。 */
     private var lastAppliedIntervalMs = ACTIVE_INTERVAL_MS
 
@@ -649,8 +710,13 @@ class CaptureService : Service() {
         mediaProjection = projection
         projection.registerCallback(projectionCallback, null)
 
-        // 帧线程提升为前台优先级（T1-10b）：降低后台调度把重处理挤到小核的概率
-        val thread = HandlerThread("MM-CaptureFrames", Process.THREAD_PRIORITY_FOREGROUND)
+        // 帧线程优先级（T1-10b → 2026-10-19 再上调一档到 DISPLAY）
+        //
+        // 真机证据（2026-10-19，同一次进程运行）：每次**重建采集会话**后的 1~2 分钟里，连"灰度换算"
+        // 这种简单循环的 P95 都从 3.7ms 涨到 35.5ms（9 倍）、识别从 78ms 涨到 697ms ⇒ 不是算法变慢，
+        // 是这个进程被系统合成/编码挤了 CPU。FOREGROUND(-2) 挡不住这一档抢占，DISPLAY(-4) 与
+        // SurfaceFlinger 同级：我们同样是"要按帧节奏干活的线程"，被挤掉一帧就直接拖慢整步判定。
+        val thread = HandlerThread("MM-CaptureFrames", Process.THREAD_PRIORITY_DISPLAY)
         thread.start()
         frameThread = thread
         // 显式两行：`.also { frameHandler = it }` 里的 `frameHandler` 会解析成**正在初始化的局部变量**，
@@ -713,7 +779,7 @@ class CaptureService : Service() {
             val anchorCount = calibration.signals.count { it.role == SignalRole.ANCHOR }
             MmLog.i(
                 TAG,
-                "标定产物已加载：信号 ${calibration.signals.size} 个（其中锚点 $anchorCount 个），" +
+                "标定结果已加载：信号 ${calibration.signals.size} 个（其中锚点 $anchorCount 个），" +
                     "标定帧 ${calibration.frameWidth}x${calibration.frameHeight}；" +
                     "搜索窗口 = 模板 + 每边固定余量（标志 ${SelectionWindow.MARKER_MARGIN_PX} / " +
                     "锚点 ${SelectionWindow.ANCHOR_MARGIN_PX} px；加载期已对「可证居中」的轴重算，见 tightenedWindows）",
@@ -736,6 +802,8 @@ class CaptureService : Service() {
         lastLoopFrozen = null
         lastSearchedNames = null
         timingStats.reset()
+        // 耗时读数**不跨会话**（同 `timingStats.reset()`）：诊断页不能显示上一次会话的旧值
+        FrameCostSignal.clear()
         grayTimingStats.reset()
         detectTimingStats.reset()
         lastAppliedIntervalMs = ACTIVE_INTERVAL_MS
@@ -782,7 +850,7 @@ class CaptureService : Service() {
      * 20:11:39.735  屏幕尺寸已更新: 屏幕 3168x1440   ← 用户重新授权、游戏在前台，才恢复横屏
      * 20:11:46.767  点击下发 ✓ (2912, 429)          ← **同一个坐标**放行
      * ```
-     * ⇒ 后果不只是"少点一下"：跑号把"被拒"当成"刚点过"，白等一整个步骤预算（16 秒）后中止，
+     * ⇒ 后果不只是"少点一下"：流程把"被拒"当成"刚点过"，白等一整个步骤预算（16 秒）后中止，
      * 而用户看到的是"卡在了打开好友列表"。
      *
      * 成本：一次 `FloatingScreen.spec` 读 + 一次比较（值没变就什么都不做），相对一次真实点击可忽略。
@@ -801,6 +869,11 @@ class CaptureService : Service() {
         frameCallbacks = 0L
         frameAcquiresEmpty = 0L
         lastStatsAt = 0L
+        // 探针自己的窗口与计数也不跨会话（2026-10-18）：否则新会话刚开始，探针会把上一会话的
+        // "最后一次回调"带过来，打出"距今几百秒"这种假象（那正是本次要根治的毛病）。
+        probeWindowStartAtMs = 0L
+        probeFramesReceived = 0L
+        lastFrameCallbackAtMs = 0L
         surfaceRetries = 0
         nextSurfaceRetryAtMs = 0L
         surfaceRetryGaveUp = false
@@ -810,8 +883,14 @@ class CaptureService : Service() {
         // "刚跑完的结果"同样不跨会话：否则新会话刚开始，标签/菜单就挂着上一段的「已完成」
         PatrolResultSignal.clear()
         frameExpectationNoted = false
+        // 帧供给体检（2026-10-19）：观测不跨会话（新会话的空闲间隔没有可比性）
+        feedHealth.reset()
+        // "算得动吗"的读数同样不跨会话（新会话的耗时与上一场没有可比性）
+        FrameReadiness.reset()
         // "自上一枪以来画面变化"的基准不跨会话
         lastClickSignature = null
+        lastClickAnchorSignature = null
+        lastClickAnchorBounds = null
         FrameExpectationSignal.reached()
         // "本轮吃的是哪张画面"同样不跨会话（见 [currentFrameAtMs]）
         currentFrameAtMs = 0L
@@ -953,6 +1032,12 @@ class CaptureService : Service() {
     /** 推迟 resize 的截止时刻（0 = 还没推迟过；成功应用后清零）。仅帧线程访问，常量见 [RESIZE_DEFER_LIMIT_MS]。 */
     private var resizeDeferDeadlineMs = 0L
 
+    /** 上一次"跳过 resize"的那句话（同一条只记一次，避免逐帧刷屏）。仅帧线程访问。 */
+    private var lastResizeSkipNote: String? = null
+
+    /** "目标不在前台 ⇒ 不动镜像"那句话（见 [applyMirrorResize]）。 */
+    private val resizeSkipNotForegroundNote = "目标不在前台，这时动镜像是白做"
+
     /**
      * 把镜像调整到新尺寸（**帧线程**调用，2026-09-23 起；转屏走这里，不重建 projection）。
      *
@@ -984,6 +1069,31 @@ class CaptureService : Service() {
             )
             return
         }
+        // **目标不在前台 ⇒ 不动镜像**（2026-10-01；相关性实证后的第 1 步验证，见 progress 第 401 条）。
+        //
+        // 依据：
+        // ① 17 天日志统计 —— 19 个"停更簇"里 **17 个（89.5%）** 在停更前 30 秒内出现过
+        //    `捕获内容尺寸变化 / 镜像 resize` 事件，而全时段基线只有 ~20%（**≈4~5 倍**）⇒ 强相关；
+        // ② `09-13 ~ 09-22` 那十天**从不**在会话中途 resize ⇒ **一次停更都没有**；
+        // ③ 真机实录里真正"应用"掉的那几次，恰恰都发生在**我们的 App 在前台**的时候
+        //    （`20:21:09 镜像 resize 推迟到期（本次会话只收到 0 帧）⇒ 照常应用`），
+        //    而那正是"目标不在前台、我们根本不识别"的时刻 ⇒ 这一 resize **纯属白做** ✗，
+        //    还正好踩在那个高风险窗口里。
+        // ⇒ 不在前台就**原样返回**。代价为零：口径 A 下镜像本来就是横屏，而游戏回到前台时报的也是
+        //    横屏 3168×1440 ⇒ 与当前缓冲一致，走下面的"去重"直接返回 —— 本来也不需要 resize ✓。
+        // （真转屏的竖屏内容由上面那条"竖屏内容 ⇒ 跳过"接住，两条合起来 = "只在游戏前台且横屏时才动镜像"。）
+        if (!ForegroundSignal.isForeground) {
+            if (lastResizeSkipNote != resizeSkipNotForegroundNote) {
+                lastResizeSkipNote = resizeSkipNotForegroundNote
+                MmLog.i(
+                    TAG,
+                    "镜像 resize 跳过：目标不在前台（${width}x$height）⇒ 不动镜像 —— " +
+                        "这时我们根本不识别，动镜像只会白踩高风险窗口（见 progress 401 的相关性实证）",
+                )
+            }
+            return
+        }
+        lastResizeSkipNote = null
         // ⚠ **先等帧流真正建立，再 resize**（2026-09-24 真机三次复现后的根因缓解）。
         //
         // 现象：会话建立后 ~1 秒内就收到"内容尺寸变化 ⇒ resize"，而 `resize()` + `setSurface()` 成功之后
@@ -1237,7 +1347,25 @@ class CaptureService : Service() {
         //   10:44:06 重授权后又来一次）。
         // 这条判据的本来目的就是"帧没跟上**游戏画面**"；游戏不在前台时屏幕方向是我们 App 的，
         // 帧保持横屏是**设计预期**，不是故障。产物那条（calibrationMismatch）不依赖屏幕方向，仍旧照判。
+        // ⚠ **2026-10-01 真机再补两条**（"需要重新采集"的真凶）：
+        // 上面那道"目标在前台"的闸**挡不住"桌面抢焦点"那几秒** —— 那时 `ForegroundSignal` 还是 true
+        //（新加的"前台可疑"要 3.5 秒才改判，比这里的 3 秒宽限**还晚**），而屏幕已经报竖屏、
+        // 镜像按口径 A 保持横屏 ⇒ **3 秒宽限一到就主动结束会话** ✗：
+        // ```
+        // 21:43:02.327  前台**可疑**（窗口事件复核：活动窗口 com.bbk.launcher2｜游戏窗口 1 个（不可见））
+        // 21:43:02.710  帧几何与屏幕不一致：帧 3168x1440｜屏幕 1440x3168（等 3 秒确认）
+        // 21:43:02.839  镜像 resize 跳过：平台报的是竖屏内容（本 App 锁竖屏）⇒ 镜像保持横屏
+        // 21:43:05.899  帧几何持续 3 秒与屏幕不一致 ⇒ **主动结束会话** ✗ ← "需要重新采集"就是这么来的
+        // ```
+        // ⇒ 两条补充判据：
+        //   ① **屏幕是竖屏 ⇒ 不判**（竖屏 = 我们的 App / 别的竖屏窗口在前台，帧保持横屏正是**设计预期**，
+        //      见 [attachMirror] 的口径 A；那时该做的事是"别动它"，resize 那条也早就跳过了）；
+        //   ② **前台可疑期间 ⇒ 不判**（`isForeground` 还没改判，但我们已经知道自己看不清了）。
+        // 真·"resize 没跟上"（屏幕横屏、帧却是别的几何）**照旧会被抓** ✓ 判据本身没有被削弱。
+        val screenPortrait = metrics.heightPixels > metrics.widthPixels
         val screenMismatch = ForegroundSignal.isForeground &&
+            !screenPortrait &&
+            !ClickDispatch.foregroundSuspect &&
             frameWidth > 0 && frameHeight > 0 &&
             (frameWidth != metrics.widthPixels || frameHeight != metrics.heightPixels)
         // **T4-6 增补**：帧还必须与**标定产物**同几何 —— 方向归一拆掉后，这是模板尺度成立的前提。
@@ -1251,7 +1379,7 @@ class CaptureService : Service() {
         if (geometryMismatchSinceMs == 0L) {
             geometryMismatchSinceMs = now
             val detail = if (calibrationMismatch) {
-                "帧几何与**标定产物**不一致：帧 ${frameWidth}x$frameHeight｜产物 " +
+                "帧几何与**标定结果**不一致：帧 ${frameWidth}x$frameHeight｜标定结果 " +
                     "${calibratedFrameWidth}x$calibratedFrameHeight（T4-6 起不再做方向归一 ⇒ 这一轮不判不点）"
             } else {
                 "帧几何与屏幕不一致：帧 ${frameWidth}x$frameHeight｜屏幕 " +
@@ -1443,8 +1571,8 @@ class CaptureService : Service() {
     }
 
     /**
-     * **帧迟迟不来时的探针行**（2026-09-30 加，见 [frameCallbacks]）：每 [STATS_WINDOW_MS] 一行，
-     * **只在"这一窗一帧都没到"时**输出 —— 正常工作时那一行由 [maybeLogStats] 负责，不必重复刷屏。
+     * **帧迟迟不来时的探针行**（2026-09-30 加，见 [frameCallbacks]）：每 [PROBE_WINDOW_MS] 一行，
+     * **只在"我们手上没有新帧"时**输出 —— 正常工作时那一行由 [maybeLogStats] 负责，不必重复刷屏。
      *
      * ## 怎么读它（一眼分清三种形态）
      *
@@ -1453,28 +1581,81 @@ class CaptureService : Service() {
      * | `回调 0 次` | **平台根本没往 surface 投喂** ⇒ 镜像通路停了 | [checkSurfaceRetry] 换表面 / 请用户重新授权 |
      * | `回调 N 次 / 取空 N 次 / 取到 0 帧` | **回调来了却拿不到 buffer** | 我们这一侧：缓冲没归还 / `MAX_IMAGES = $MAX_IMAGES` 队列卡死 |
      * | `回调 N 次 / 取到 N 帧` 而帧龄仍很大 | 三者不可能同时成立 | 说明还有别的口径（帧龄 / 计数）算错了，得查 |
+     *
+     * ## 「最后一次回调」这一项怎么用（2026-10-18 加）
+     *
+     * 它把"停更"从**一段时间的持续状态**变成**一个可对齐的时间点**：能直接和日志里"点了什么 / 切了哪一步"
+     * 对上，从而分辨三种完全不同的情况 ——
+     * ① 平台**从那一刻起**再没投喂（镜像通路断）；
+     * ② 平台**一直在投**，但我们**一帧都没采纳**（我们这一侧的问题：节流 / 复用把帧吃掉了）；
+     * ③ 平台在投、也在采纳，只是**内容确实相同**（画面真的静止）。
+     * 之前只能说"这一窗回调 0 次"，三种情况在日志里长得一样。
      */
     private fun logFrameProbeIfQuiet(now: Long) {
-        if (lastStatsAt == 0L) {
-            lastStatsAt = now // 第一次只起表（与 [maybeLogStats] 同一口径：否则窗口是个假数）
+        // ⚠ 显式判据，**不再借用** [lastStatsAt]（那是统计行的）：原先靠"统计行不再来 ⇒ 探针才输出"
+        //   这个副作用工作，但窗口与统计行错位、还会截断 [framesReceived]（见 [probeWindowStartAtMs]）。
+        val fresh = lastNewFrameAtMs > 0L && now - lastNewFrameAtMs < PROBE_WINDOW_MS
+        if (fresh) {
+            // 画面正在刷新 ⇒ 这一行由 [maybeLogStats] 说；顺手把探针窗口归零，下一次停更从头数。
+            probeWindowStartAtMs = 0L
+            frameCallbacks = 0L
+            frameAcquiresEmpty = 0L
+            probeFramesReceived = 0L
             return
         }
-        if (now - lastStatsAt < STATS_WINDOW_MS) return
+        if (probeWindowStartAtMs == 0L) {
+            probeWindowStartAtMs = now // 第一次只起表（否则"这一窗"是个假数）
+            return
+        }
+        if (now - probeWindowStartAtMs < PROBE_WINDOW_MS) return
+        val windowSec = (now - probeWindowStartAtMs) / 1000
         val ageSec = if (lastNewFrameAtMs == 0L) -1L else (now - lastNewFrameAtMs) / 1000
         val ageNote = if (ageSec < 0) "从未收到过帧" else "距上一新帧 ${ageSec}s"
         MmLog.w(
             TAG,
-            "帧回调探针（这一窗没有新帧）: onImageAvailable 回调 $frameCallbacks 次 / " +
-                "取到 $framesReceived 帧 / 取空 $frameAcquiresEmpty 次｜$ageNote｜" +
+            "帧回调探针（最近 ${windowSec}s 没有新帧）: onImageAvailable 回调 $frameCallbacks 次 / " +
+                "取到 $probeFramesReceived 帧 / 取空 $frameAcquiresEmpty 次｜$ageNote｜" +
+                "最后一次回调 ${wallClockTextOf(lastFrameCallbackAtMs)}" +
+                "（距今 ${lastCallbackGapSec(now)}s）｜" +
                 "目标${if (ForegroundSignal.isForeground) "在前台" else "不在前台"}｜" +
                 "缓冲 ${imageReader?.width}x${imageReader?.height}",
         )
-        lastStatsAt = now
-        framesReceived = 0
-        framesProcessed = 0
-        frameCallbacks = 0
-        frameAcquiresEmpty = 0
+        probeWindowStartAtMs = now
+        frameCallbacks = 0L
+        frameAcquiresEmpty = 0L
+        probeFramesReceived = 0L
     }
+
+    /**
+     * 把一个 [SystemClock.elapsedRealtime] 时刻翻成**日志时间戳同款**的墙上时刻（`HH:mm:ss.SSS`）。
+     *
+     * 为什么需要翻（2026-10-18）：日志每行的 `MM-DD HH:mm:ss.SSS` 是**墙上时钟**，而内部一律用
+     * `elapsedRealtime`（单调、不受用户改系统时间影响）。不翻的话，"最后一次回调"只能写成
+     * "距今 137s" —— 而**排障时要的恰恰是它落在哪一刻**，好和"点了什么 / 切了哪一步"对齐。
+     *
+     * 做法：在**输出这一刻**取一次 `currentTimeMillis` 与 `elapsedRealtime` 的差当偏移，
+     * 反推目标时刻。偏移在这几秒内不会变（两个时钟都按同一速率走）⇒ 不必缓存、也不会引入漂移累积。
+     */
+    private fun wallClockTextOf(elapsedMs: Long): String {
+        if (elapsedMs <= 0L) return "本会话从未回调过"
+        val offsetMs = System.currentTimeMillis() - SystemClock.elapsedRealtime()
+        val wallMs = elapsedMs + offsetMs
+        val t = java.time.Instant.ofEpochMilli(wallMs)
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalTime()
+        return String.format(
+            java.util.Locale.US,
+            "%02d:%02d:%02d.%03d",
+            t.hour,
+            t.minute,
+            t.second,
+            t.nano / 1_000_000,
+        )
+    }
+
+    /** "最后一次回调"距今多少秒（0 = 刚刚回调过；-1 = 本会话从没回调过）。 */
+    private fun lastCallbackGapSec(now: Long): Long =
+        if (lastFrameCallbackAtMs <= 0L) -1L else (now - lastFrameCallbackAtMs) / 1000
 
     /**
      * **停更时的自救：换一次镜像表面**（2026-09-30 加，真机"零帧"事故）。
@@ -1508,8 +1689,10 @@ class CaptureService : Service() {
                 surfaceRetryGaveUp = true
                 MmLog.w(
                     TAG,
+                    // 2026-10-20：真机上"同进程重新授权"在这种零回调状态下只能撑 1~14 秒
+                    //（`mm-log-20261020` 00:11~00:31）⇒ 只重新授权没用，得换进程（退出重开 App）
                     "换镜像表面已试 $surfaceRetries 次仍没有新帧 ⇒ 这条投喂通路救不回来：" +
-                        "请重新授权采集（或重启 App 重建 MediaProjection）",
+                        "请重新授权采集（若仍零帧就退出重开 App 重建 MediaProjection）",
                 )
             }
             return
@@ -1517,11 +1700,67 @@ class CaptureService : Service() {
         if (nextSurfaceRetryAtMs != 0L && now < nextSurfaceRetryAtMs) return
         surfaceRetries++
         nextSurfaceRetryAtMs = now + SURFACE_RETRY_COOLDOWN_MS
-        retryMirrorSurface(now - last)
+        retryMirrorSurface("采集画面已停更 ${(now - last) / 1000} 秒")
+    }
+
+    /**
+     * **"帧在来、但送得慢"的自救**（2026-10-19，B；用户口径："别要求用户主动重新授权后等几秒再跑流程"）。
+     *
+     * ## 为什么它必须独立于 [checkSurfaceRetry]
+     *
+     * 那条只在**完全收不到帧 ≥60 秒**（或切回前台 12 秒）时才动；真机 2026-10-19 第一轮是
+     * "帧一直在来，但一轮结束还要等 1~2.8 秒才有下一帧" ⇒ 它**一次都不会触发**，
+     * 于是整整 21 秒都耗在第 3 步的三次判定上（第二轮同一流程 5.7 秒）。
+     *
+     * ## 判据来自 [FrameFeedHealth]，不是"回调次数"
+     *
+     * 回调与识别同线程：我们算 2.8 秒时回调根本进不来 ⇒ "回调少"分不出"平台慢"还是"我们慢"。
+     * 本函数只在**轮次刚结束（我们空闲）之后的下一帧也来得慢**时才动 —— 那一定是平台侧。
+     *
+     * ## 纪律（与停更自救同一套）
+     *
+     * - 共用 [SURFACE_RETRY_MAX] 配额（每次换表面要新建 18MB×2 缓冲，不能无限抽）；
+     * - 有冷却 [SLOW_FEED_HEAL_COOLDOWN_MS]；不在前台不抽（静止属正常，动了反而添乱）；
+     * - 每次都留痕，救没救回来由紧跟着的「帧供给体检」/「帧回调探针」两行说话。
+     */
+    private fun checkSlowFeed(now: Long) {
+        if (!feedHealth.isSlow(now)) {
+            slowFeedNoted = false
+            return
+        }
+        if (!ForegroundSignal.isForeground) return
+        if (lastNewFrameAtMs == 0L) return // 还没有基线（刚授权）⇒ 交给「首次投喂自检」
+        if (!slowFeedNoted) {
+            slowFeedNoted = true
+            MmLog.w(
+                TAG,
+                "帧供给不足：连续 ${feedHealth.slowHits()} 次「轮次结束后 ≥" +
+                    "${FrameFeedHealth.SLOW_GAP_MS}ms 才来下一帧」（最近一次快帧间隔 " +
+                    "${feedHealth.lastFastGapMs()}ms）⇒ 先换镜像表面自救，**不需要用户重新授权**",
+            )
+        }
+        if (surfaceRetries >= SURFACE_RETRY_MAX) {
+            if (!surfaceRetryGaveUp) {
+                surfaceRetryGaveUp = true
+                MmLog.w(
+                    TAG,
+                    "换镜像表面已试 $surfaceRetries 次仍「送得慢」⇒ 这条投喂通路的响应速度救不回来：" +
+                        "可重新授权采集，或把最贵的两条模板框小一些（模板面积 ∝ 每轮成本）",
+                )
+            }
+            return
+        }
+        if (lastSlowFeedHealAtMs != 0L && now - lastSlowFeedHealAtMs < SLOW_FEED_HEAL_COOLDOWN_MS) return
+        // 与停更自救共用同一份冷却，避免两条自救路径在 30 秒内各抽一次
+        if (nextSurfaceRetryAtMs != 0L && now < nextSurfaceRetryAtMs) return
+        lastSlowFeedHealAtMs = now
+        nextSurfaceRetryAtMs = now + SURFACE_RETRY_COOLDOWN_MS
+        surfaceRetries++
+        retryMirrorSurface("帧供给不足（轮次结束后 ${FrameFeedHealth.SLOW_GAP_MS}ms 内拿不到下一帧）")
     }
 
     /** 换一次镜像表面（同尺寸）：见 [checkSurfaceRetry] 的三条纪律。仅帧线程调用。 */
-    private fun retryMirrorSurface(ageMs: Long) {
+    private fun retryMirrorSurface(cause: String) {
         val display = virtualDisplay ?: return
         val old = imageReader ?: return
         val handler = frameHandler ?: return
@@ -1555,7 +1794,7 @@ class CaptureService : Service() {
         flatReplayWarned = false
         MmLog.w(
             TAG,
-            "采集画面已停更 ${ageMs / 1000} 秒 ⇒ **换一次镜像表面自救**（第 $surfaceRetries/$SURFACE_RETRY_MAX 次；" +
+            "$cause ⇒ **换一次镜像表面自救**（第 $surfaceRetries/$SURFACE_RETRY_MAX 次；" +
                 "同尺寸 ${width}x$height，绝不动几何）—— 有没有救回来，看紧跟着的「帧回调探针」",
         )
     }
@@ -1615,6 +1854,11 @@ class CaptureService : Service() {
                 TAG,
                 "「$reason」之后 ${(now - armed) / 1000} 秒没有新帧（最近一帧 ${ageMs / 1000} 秒前）" +
                     "⇒ **判定「画面采集已停」：停止一切点击**（手上那张画面是旧的，再点等于照着旧画面点）" +
+                    // ↓ 这一句是 2026-10-18 排障时最缺的那条事实（progress 第 449 条）：光说"最近一帧 7 秒前"
+                //   会让人以为是"点完画面就停了"，而真相是"**点下去之前**画面就已经静止那么久"
+                //   ⇒ 那一击落在**静态页**上（点开设置页这种页，平台按"静态不出帧"的正常行为一帧都不推）
+                //   ⇒ 这一击**本来就无法验证**，闸没有误判、也没有"照着旧画面点"。
+                    preClickStallNote(armed) +
                     "—— 不结束会话；画面一恢复就自动解除，若一直不更新请重新授权采集",
             )
             return
@@ -1627,6 +1871,35 @@ class CaptureService : Service() {
                 "—— **仅诊断、不结束会话**：选「共享一个应用」采集时我们的覆盖窗不在画面里，" +
                 "静态页不出新帧属正常；若之后画面一直不更新，请重新授权采集",
         )
+    }
+
+    /**
+     * "**点下去之前**画面就已经静止了多久"（2026-10-18，progress 第 449 条；只用于那行告警日志）。
+     *
+     * ## 为什么非要这一句
+     *
+     * 原来那行只说"「刚下发一击…」之后 3 秒没有新帧（最近一帧 7 秒前）" ⇒ 真机排障时被读成了
+     * "**点完**之后画面就停了"，于是怀疑到 resize / 镜像（实际那次 resize 一次都没执行）。
+     * 而真相是：**点下去之前**画面就已经静止了 3.6 秒 ⇒ 这一击**注定无法验证**。
+     *
+     * ⚠ **不要在这里断言"因为画面静止所以平台不投帧"**（2026-10-18 用户更正后作废）：
+     * 用户当场指出**大厅背景有动画 CG 在不断循环**，而同一段时间日志里 `onImageAvailable 回调 0 次`
+     * ⇒ **平台侧停投才是因，画面静止至多是并存现象**。所以这里只陈述后果
+     * （"这一击无法验证"），**不预判成因** —— 成因由[帧回调探针](logFrameProbeIfQuiet)那一行自己说话。
+     *
+     * 有了这一句，"闸误判了"与"这一击本来就验证不了"两种情形在日志里**一眼可分**。
+     *
+     * @param armedAt 这一击被下发的那一刻（[FrameExpectationSignal.armedAtMs]）
+     * @return 可直接接在告警里的说明；帧龄不可算时（还没收到过帧）返回空串
+     */
+    private fun preClickStallNote(armedAt: Long): String {
+        if (lastNewFrameAtMs <= 0L) return ""
+        val preMs = armedAt - lastNewFrameAtMs
+        if (preMs < 1_000L) {
+            return "｜**点下去之前画面正在刷新**（这一击本该能验证）"
+        }
+        return "｜⚠ **点下去之前画面就已经静止 ${preMs / 1000} 秒**" +
+            "⇒ 这一击**注定无法验证**（点下去之前就没有新画面可供确认），不是闸误判"
     }
 
     /**
@@ -1690,6 +1963,23 @@ class CaptureService : Service() {
         // **探针必须在所有提前 return 之前**（2026-09-30）：否则"回调来了但取不到 buffer"会不留痕，
         // 与"平台根本没投喂"在日志里长得一模一样（见 [frameCallbacks]）
         frameCallbacks++
+        // 「最后一次回调」的时刻（2026-10-18，progress 第 452 条）：探针里唯一能把"停更"钉成一个
+        // **时间点**的锚点（原来只能说"这一窗回调 0 次"，说不出从什么时候起没声了）。
+        // ⚠ 记的是**回调到达**，不是"帧被采纳"（那是 [lastNewFrameAtMs]，还要过节流）⇒
+        //   两者差距本身就是信息：回调一直在来而采纳不动 ⇒ 问题在我们这一侧。
+        lastFrameCallbackAtMs = SystemClock.elapsedRealtime()
+        // 帧供给体检（2026-10-19，B）：**必须在取帧之前**记这一笔 —— 取不到 buffer 的那次回调
+        // 同样证明"平台把帧送到了"，把它漏掉会把"我们自己队列卡住"误判成"平台没送"。
+        feedHealth.noteCallback(lastFrameCallbackAtMs)?.let { obs ->
+            if (obs.slow && obs.hits == FrameFeedHealth.SLOW_HITS_TO_JUDGE) {
+                MmLog.w(
+                    TAG,
+                    "帧供给体检：一轮结束后 **${obs.gapMs}ms** 才来下一帧（连续 ${obs.hits} 次 ≥ " +
+                        "${FrameFeedHealth.SLOW_GAP_MS}ms）⇒ 判「**平台送得慢**」" +
+                        "（不是我们算不完：算得慢时一轮结束后队列里本来就有帧在等，间隔会是几毫秒）",
+                )
+            }
+        }
         val reader = imageReader ?: return
         val image = try {
             reader.acquireLatestImage()
@@ -1715,6 +2005,9 @@ class CaptureService : Service() {
         // 真机数据：Java 堆 15 秒从 18MB 涨到 128MB（是留住了的增长，不是垃圾）⇒ 268MB 上限被打爆。
         // 在定位到那个"留住大数组"的地方之前，先把采集侧恢复成以前的写法做二分。
         framesReceived++
+        // 探针窗口自用的计数（2026-10-18）：**不读 [framesReceived]** —— 它是统计行"接收 N 帧"的同一个
+        // 变量、每 10 秒就被 [maybeLogStats] 清零，两个口径互相截断（见 [probeWindowStartAtMs]）。
+        probeFramesReceived++
         val now = SystemClock.elapsedRealtime()
         // 标定帧录制（T1-5b）：旁路于识别节流，每秒最多 1 帧；仅目标前台时保存
         CalibrationFramePool.maybeCapture(this, image, now, ForegroundSignal.isForeground)
@@ -1795,6 +2088,9 @@ class CaptureService : Service() {
             val now = SystemClock.elapsedRealtime()
             // 停更时的**自救**：换一次镜像表面（有上限 / 有冷却 / 每次都留痕，见 checkSurfaceRetry）
             checkSurfaceRetry(now)
+            // **帧供给不足**时的自救（2026-10-19，B）：画面在来、但每轮都要等 1~3 秒才等到下一帧 ——
+            // 这种状态既不触发"零帧"也不触发"停更"，过去没有任何人管（见 [FrameFeedHealth]）
+            checkSlowFeed(now)
             // 帧一直不来时，每 10 秒把"回调 / 取空"的探针写出来（正常工作时那一行由 maybeLogStats 负责）
             logFrameProbeIfQuiet(now)
             // 几何守卫（每秒一次）：帧几何与屏幕几何必须一致（见 geometryMismatchSinceMs）
@@ -1941,6 +2237,19 @@ class CaptureService : Service() {
         if (ClickDispatch.framesStalled) {
             ClickDispatch.setFramesStalled(false)
             MmLog.i(TAG, "画面采集已恢复（收到新帧）⇒ 解除「画面采集已停」的点击闸")
+            // **正在跑的那一步：预算从这里重新起算**（2026-10-01 真机缺陷修，见
+            // [PatrolFlow.rebaseStepBudget]）：停更期间照着"看不见"数出来的等待时间不算数 ——
+            // 否则"画面回来的那一轮"会拿累计的等待直接判超时中止（真机 `20:36:57.407`：
+            // 文案写"等了 36 秒"⇒ 中止，而期望的画面在 1 秒后就出现了 ✗）。
+            // ⚠ 必须放在**闸刚解除、本轮编排之前**：放晚了那一轮已经把中止算出来了。
+            if (PatrolSession.isActive) {
+                PatrolSession.rebaseStepBudget(nowMs)
+                MmLog.i(
+                    TAG,
+                    "画面恢复 ⇒ 第 ${PatrolSession.current?.step?.number} 步的预算重新起算" +
+                        "（停更期间那些等待不算数）",
+                )
+            }
         }
         // 新帧到了 ⇒ "停更自救"的计数归零（以后再停更可以从头再试，见 checkSurfaceRetry）
         if (surfaceRetries != 0) {
@@ -1999,7 +2308,7 @@ class CaptureService : Service() {
                 calibrationGeometryWarned = true
                 MmLog.w(
                     TAG,
-                    "采集帧 ${width}x$height 与标定产物 ${calibratedFrameWidth}x$calibratedFrameHeight 几何不一致 ⇒ " +
+                    "采集帧 ${width}x$height 与标定结果 ${calibratedFrameWidth}x$calibratedFrameHeight 几何不一致 ⇒ " +
                         "本轮起不判不点（T4-6 起不再做方向归一）；请在游戏前台（横屏）重新建立采集会话",
                 )
             }
@@ -2026,6 +2335,13 @@ class CaptureService : Service() {
 
         val result = recognitionLoop.process(gray, ForegroundSignal.isForeground)
         recordProcessingCost(SystemClock.elapsedRealtimeNanos() - startNs, grayNs)
+        // **"这个进程现在算得动吗"**（2026-10-19）：开跑前的预热闸读这里（见 `FrameReadiness`）。
+        // 放这里是因为**新帧与静止兜底两条路径都会经过** `processPixels` —— 重新授权后画面静止、
+        // 只有兜底轮在跑，正是最需要读数的那段时间（只看 NFR-01 那个 100 帧窗口根本等不到）。
+        FrameReadiness.noteRoundCost(
+            SystemClock.elapsedRealtime(),
+            (SystemClock.elapsedRealtimeNanos() - startNs) / 1_000_000.0,
+        )
         recordSignalCosts()
         cyclesRun++
         if (!result.frozen) {
@@ -2082,21 +2398,32 @@ class CaptureService : Service() {
         // 判据取 [PatrolFlow.State.isRunning]：**中止 / 暂停后自动回到两档自适应**（那时确实该省）。
         //
         // **弹窗闭环进行中使用最快的间隔**（2026-09-28 起用快档，2026-09-29 收到 120ms）：补枪要等
-        // "画面换了一幅"（`renderedFloorMs` = 350ms），而那个证据要到**下一轮**才可能被看到 ⇒
-        // 轮询间隔直接变成补枪延迟的一部分。真机实录（01:00 那段，已上"画面变了就认账"）：
+        // "画面换了一幅"（`renderedFloorMs`，**2026-10-02 由 350 收到 300ms**），而那个证据要到**下一轮**
+        // 才可能被看到 ⇒ 轮询间隔直接变成补枪延迟的一部分。真机实录（01:00 那段，已上"画面变了就认账"）：
         // ```
         // 01:00:09.559 第 1 枪
         // 01:00:10.103 (+0.54s) 画面已换了一幅（39.9%），但只比上一枪晚 223ms（< 350ms）⇒ 再等一拍
         // 01:00:10.391 (+0.83s) 第 2 枪    ← 这一拍就是轮询间隔
         // ```
+        // （上面那两条数字是 350ms 时代的实录，保留原样作对照；现在下限是 300ms。）
         // 停手（`gaveUp`）后不再需要它：那时我们已经不点了，让它回两档自适应省电。
         if (!result.frozen) {
             val patrolRunning = PatrolSession.current?.isRunning == true
             val closingPopup = !popupClose.gaveUp &&
                 (popupClose.attempt > 0 || popupClose.awaitingVerification)
+            // 2026-10-18（3-B）：待命期**只搜遮挡屏** ⇒ 认不出当前场景 ⇒ `state` 恒「未知」
+            // ⇒ `result.settled` 恒 false ⇒ 会掉回快档，**单核占用反升**（21% → 31%：
+            // 省下的 4 条信号全被多跑的轮次吃回来）。所以在这个口径下另判一条：
+            // "一轮什么都没搜到 / 什么都没出现" = 画面上确实没有挡屏的东西 = **确实稳定**。
+            // ⚠ 一旦有遮挡屏命中（弹窗 / 新手屏），`state` 就不再是 UNKNOWN ⇒ 自然回快档，闭环逻辑不变。
+            val standbyQuiet = !patrolRunning &&
+                patrolExpected?.standbyWatchOnly == true &&
+                result.state == UiState.UNKNOWN &&
+                result.searched.isNotEmpty()
+            val stable = result.settled || standbyQuiet
             val target = when {
                 closingPopup -> POPUP_INTERVAL_MS
-                result.settled && !patrolRunning -> STABLE_INTERVAL_MS
+                stable && !patrolRunning -> STABLE_INTERVAL_MS
                 else -> ACTIVE_INTERVAL_MS
             }
             if (target != lastAppliedIntervalMs) {
@@ -2105,7 +2432,9 @@ class CaptureService : Service() {
                     "节流间隔切换: ${lastAppliedIntervalMs}ms -> ${target}ms" +
                         when {
                             closingPopup -> "（弹窗闭环进行中：逐帧级轮询）"
-                            patrolRunning -> "（跑号进行中：恒用快档）"
+                            patrolRunning ->
+                                "（${PatrolSession.current?.range?.logLabel ?: "流程"}进行中：恒用快档）"
+                            standbyQuiet -> "（待命守护：一屏都没出现遮挡屏 = 确实稳定）"
                             result.settled -> "（确实稳定轮）"
                             else -> "（变化 / 过渡 / 未达预期轮）"
                         },
@@ -2181,6 +2510,9 @@ class CaptureService : Service() {
 
         // 节流基准回填到「本轮结束」（T1-13）：使间隔成为两轮之间的休息时间，不与单轮耗时叠加、也不退化。
         frameThrottle.markProcessedEnd(SystemClock.elapsedRealtime())
+        // 帧供给体检（2026-10-19，B）：**观测起点必须在这里** —— 此刻我们一定是空闲的，
+        // 下一帧什么时候到就只反映平台侧的速度（见 FrameFeedHealth 的类注释）。
+        feedHealth.noteRoundEnd(SystemClock.elapsedRealtime())
     }
 
 
@@ -2216,8 +2548,9 @@ class CaptureService : Service() {
         // 第 9 步的跨屏扫描状态：同样只在"正在这一步 + 画面确实是好友列表"时有效
         //（离开列表 / 点完拜访 / 换一步 ⇒ 复位；下次进列表重新从"当前这一屏"开始，再按口径回顶）
         if (current.step != PatrolFlow.Step.VISIT_FRIEND || state != UiState.FRIEND_LIST) {
-            friendScan.reset()
-            lastFriendScanNote = null
+            // 「当前屏没有」的连读确认计数要复位（见 [friendMissConfirm]）：否则上一轮攒够的次数会
+            // "继承"到下一轮 ⇒ 新的一轮只要读一次没有就直接进搜索链（护栏形同虚设）。
+            friendMissConfirm = 0
         }
         return when (current.step) {
             PatrolFlow.Step.PICK_SERVER -> serverPlanOf(gray, state)
@@ -2227,25 +2560,40 @@ class CaptureService : Service() {
     }
 
     /**
-     * **顺序轮换的游标推进**（2026-09-24）：第 5 步**真换成功**（选服 → 之后的步骤）时，
-     * 把"当前在哪个区服"记到盘上（`ServerRotation.saveCursor`）。
+     * **「下一个」游标的推进**（2026-09-24；2026-10-19 U8 放宽判据）：第 5 步**真换成功**
+     * （选服 → 之后的步骤）时，把"当前在哪个区服"记到盘上（`ServerRotation.saveCursor`）。
      *
      * 为什么在"通过"这一刻写、而不是在启动那一刻写：**成功才推进** —— 失败 / 中止时游标不动，
      * 用户重试仍指向同一个区服；启动时就写会让"没换成"被悄悄跳过去（表现是"有个号一直轮不到"）。
      *
+     * ⚠ **不看来路**（U8-8）：原来这里还有一道 `if (!PatrolSession.targetServerFromRotation) return`，
+     * 只有"轮换算出来的"才写；用户在菜单里**手选**一个区服换过去时不写 ⇒ 下次「下一个」仍从旧游标后面取，
+     * 与需求"手选 X 后「下一个」= X 的下一条"冲突。判据已收进纯逻辑 `ServerRotation.switchedTo`（有单测）。
+     * 参数层选固定区服**只是改草稿**、不会走到这里（没有真换过去 ⇒ 写了就是谎报）。
+     *
      * 写盘很小（一次覆盖写）且每次换号只发生一次，就地写，不另起线程（免得又给"谁在读盘"添乱）。
      */
     private fun commitServerRotationIfSwitched(before: PatrolFlow.Step, after: PatrolFlow.State?) {
-        if (before != PatrolFlow.Step.PICK_SERVER) return
-        if (after == null || after.step == PatrolFlow.Step.PICK_SERVER) return
-        if (!PatrolSession.targetServerFromRotation) return
         val name = PatrolSession.targetServer ?: return
+        if (!ServerRotation.switchedTo(
+                beforeStep = before.number,
+                afterStep = after?.step?.number,
+                targetServer = name,
+            )
+        ) {
+            return
+        }
+        val fromRotation = PatrolSession.targetServerFromRotation
         try {
             ServerRotation.saveCursor(this, name)
-            MmLog.i(TAG, "顺序轮换：已换到「$name」，游标已推进（下次「换一个」从这个的后面取）")
+            MmLog.i(
+                TAG,
+                "「下一个」：已换到「$name」（${if (fromRotation) "轮换算出来的" else "手动选择的"}）" +
+                    "，游标已推进（下次从这个的后面取）",
+            )
         } catch (e: Exception) {
             // 游标写不进去不影响本次换号（下一次会退回"从第一条开始"，并留一行日志说明）
-            MmLog.w(TAG, "顺序轮换：游标写盘失败（本次换号本身没受影响）：${e.message ?: e.javaClass.simpleName}")
+            MmLog.w(TAG, "「下一个」：游标写盘失败（本次换号本身没受影响）：${e.message ?: e.javaClass.simpleName}")
         }
     }
 
@@ -2288,11 +2636,11 @@ class CaptureService : Service() {
             ?: return PatrolRunner.NamePlan.Failed(
                 // 顺序轮换已在**启动前**解析成具体名字（`PatrolRequestConsumer.resolveNextServer`），
                 // 所以走到这里说明那份解析没成（清单空 / 读不了）——如实说清，不猜一个区服
-                "没指定要换到哪个区服（「顺序轮换」没能从服务器清单里算出下一个：清单是空的 / 读不了；" +
+                "没指定要换到哪个区服（「下一个」没能从服务器清单里算出来：清单是空的 / 读不了；" +
                     "详见 MM-Patrol 那一行日志）",
             )
-        val data = calibrationData ?: return PatrolRunner.NamePlan.Failed("没有标定产物")
-        val locator = anchorLocator ?: return PatrolRunner.NamePlan.Failed("产物里没有锚点")
+        val data = calibrationData ?: return PatrolRunner.NamePlan.Failed("没有标定结果")
+        val locator = anchorLocator ?: return PatrolRunner.NamePlan.Failed("标定结果里没有锚点")
         // ① 识别区域：「服务器列表区域」是**纵向**范围，两条列竖带是**横向**限制器（T4-9 口径）
         val areaId = data.anchorIdFor(UiState.SERVER_SELECT, PatrolAnchors.SERVER_LIST_AREA)
             ?: return PatrolRunner.NamePlan.Failed(
@@ -2468,10 +2816,10 @@ class CaptureService : Service() {
                 when (scanStep) {
                     ServerListScan.Step.Wait -> PatrolRunner.NamePlan.Waiting
                     ServerListScan.Step.ScrollTowardsTop ->
-                        scrollPlanOf(listArea, towardsTop = true, step = PatrolFlow.Step.PICK_SERVER)
+                        scrollPlanOf(listArea, towardsTop = true)
 
                     ServerListScan.Step.ScrollDown ->
-                        scrollPlanOf(listArea, towardsTop = false, step = PatrolFlow.Step.PICK_SERVER)
+                        scrollPlanOf(listArea, towardsTop = false)
                     is ServerListScan.Step.GiveUp -> PatrolRunner.NamePlan.Failed(
                         "${scanStep.reason}｜帧：${frameTag()}｜" + judged.detail + readNamesHint(candidates),
                     )
@@ -2490,17 +2838,14 @@ class CaptureService : Service() {
     private fun scrollPlanOf(
         listArea: PixelBounds,
         towardsTop: Boolean,
-        step: PatrolFlow.Step,
     ): PatrolRunner.NamePlan.Scroll {
-        // **第 9 步（好友列表）的滑动更短、更慢**（2026-10-01 真机实测，见 [FRIEND_SCROLL_EDGE_RATIO]）：
-        // 同样 546px 的手指位移，在好友列表里内容**走了一屏多**（日志实录"与上一屏重合 0/3 行（0%）"
-        // ⇒ 目标好友容易被整屏跳过）；而 300ms 太快还会被当甩动。
-        val friend = step == PatrolFlow.Step.VISIT_FRIEND
+        // （2026-10-01：原先这里按 `step` 分成"好友一套 / 区服一套"调参，好友那套已随"滑屏找人"删除 ——
+        //   现在只剩第 5 步「选服」在用。）
         val drag = NameLocating.scrollDragOf(
             listArea = listArea,
             towardsTop = towardsTop,
-            edgeRatio = if (friend) FRIEND_SCROLL_EDGE_RATIO else SCROLL_EDGE_RATIO,
-            durationMs = if (friend) FRIEND_SCROLL_DRAG_MS else SCROLL_DRAG_MS,
+            edgeRatio = SCROLL_EDGE_RATIO,
+            durationMs = SCROLL_DRAG_MS,
         )
         return PatrolRunner.NamePlan.Scroll(
             fromFrameX = drag.fromX,
@@ -2508,10 +2853,10 @@ class CaptureService : Service() {
             toFrameX = drag.toX,
             toFrameY = drag.toY,
             durationMs = drag.durationMs,
-            detail = when {
-                towardsTop -> "向上滚回列表顶部（手指向下划）"
-                friend -> "向下滚一段继续找（手指向上划）"
-                else -> "向下滚一屏继续找（手指向上划）"
+            detail = if (towardsTop) {
+                "向上滚回列表顶部（手指向下划）"
+            } else {
+                "向下滚一屏继续找（手指向上划）"
             },
         )
     }
@@ -2549,6 +2894,21 @@ class CaptureService : Service() {
 
     /** 第 9 步复眼连续被拦时的"同一句话只记一次"（同上，2026-10-01 刀 3）。 */
     private var lastFriendRowFireNote: String? = null
+
+    /**
+     * **「当前屏没有目标好友」被连读确认了几次**（2026-10-01 刀 4；仅帧线程访问）。
+     *
+     * 为什么需要它（真机实录 2026-10-01 21:58，用户报"列表里已经出现了，却还去点了底部搜索入口"）：
+     * 目标好友**就在当前屏里**，但首次读屏把行尾读残了 —— 日志原文
+     * `Boss~~喵(阿娜)`（少「雅」；同一帧 `永恒钻石` 也掉了 V）⇒ 按括号内全等判"当前屏没有" ⇒
+     * 白走一整条搜索链（3 次点击 + 写文字 + 等结果 ≈2 秒）；**1.8 秒后同一区域再读就读全了** ✓。
+     * ⇒ 现在按"**连读 [FriendSearch.MISS_CONFIRM_READS] 次都没有才进搜索链**"（与 `UiStateTracker`
+     * 的"连续 2 次命中才改判"同源：单帧结论不可采信）。
+     *
+     * ⚠ 只在**新读**（`reading.fresh`）时累计（代码位置在那道门之后）—— 复用来的候选可能来自 1 秒前
+     * 那张画面，拿它凑数等于把护栏架空。
+     */
+    private var friendMissConfirm = 0
 
     /**
      * **第 5 步的开火前复眼**（2026-09-30 用户口径"现在补复眼"；判据本体是纯逻辑
@@ -2708,7 +3068,7 @@ class CaptureService : Service() {
         val index = list.indexOfServerName(target)
         if (index < 0) {
             return RealmPickDecision.Result.Miss(
-                "服务器清单里没有「$target」这一条（「顺序轮换」算出来的名字与清单对不上）",
+                "服务器清单里没有「$target」这一条（「下一个」算出来的名字与清单对不上）",
             )
         }
         val entry = list.entries[index]
@@ -2739,8 +3099,8 @@ class CaptureService : Service() {
         if (state != UiState.FRIEND_LIST) return PatrolRunner.NamePlan.Waiting
         val target = PatrolSession.targetFriend
             ?: return PatrolRunner.NamePlan.Failed("没指定要拜访的好友名（预设里没配好友）")
-        val data = calibrationData ?: return PatrolRunner.NamePlan.Failed("没有标定产物")
-        val locator = anchorLocator ?: return PatrolRunner.NamePlan.Failed("产物里没有锚点")
+        val data = calibrationData ?: return PatrolRunner.NamePlan.Failed("没有标定结果")
+        val locator = anchorLocator ?: return PatrolRunner.NamePlan.Failed("标定结果里没有锚点")
         // 文字识别尚未通过真机精度验收时**不启用**（FR-04 硬性要求 2：不满足前置条件就停，不做"试试看"）
         if (!NameLocating.ENABLED) {
             return PatrolRunner.NamePlan.Failed("按名称定位尚未启用（文字识别未通过真机精度验收）")
@@ -2837,12 +3197,12 @@ class CaptureService : Service() {
                 return PatrolRunner.NamePlan.Waiting
             }
             lastFriendRowFireNote = null
-            friendScan.reset() // 动手：这一段跨屏扫描结束（下次进列表重新从"当前这一屏"开始）
-            friendSearch.reset() // 同一道理：这一轮（含可能走过的搜索链）整段结束
+            friendSearch.reset() // 动手：这一轮（含可能走过的搜索链）整段结束
+            friendMissConfirm = 0 // 命中即清零：下一轮重新从"第一读"开始算连读（见 [friendMissConfirm]）
             return PatrolRunner.NamePlan.Click(
                 frameX = icon.frameX,
                 frameY = icon.frameY,
-                detail = "「$target」在 y=${hit.centerY.toInt()}（当前屏就命中，未回顶），" +
+                detail = "「$target」在 y=${hit.centerY.toInt()}（当前屏就命中），" +
                     "图标在 (${icon.frameX.toInt()}, ${icon.frameY.toInt()})" +
                     recheck?.note.orEmpty(),
             )
@@ -2852,15 +3212,35 @@ class CaptureService : Service() {
         //    顺序见 [PatrolAnchors.FRIEND_SEARCH_ENTRY]：点「搜好友」→ 点「请输入好友昵称」→
         //    **原生写文字**（[TextInjector]：`ACTION_SET_TEXT`，不弹键盘）→ 点「搜索」
         //    ⇒ 结果页交给 ④ 的那套名称定位判（同名仍取最上面）。
-        //    ⚠ 三个锚点没标定、或写文字失败 ⇒ [FriendSearch.Phase.UNAVAILABLE] ⇒ **退回原来的滑屏找**
-        //      （不因缺锚点把整步卡死；这条也是"不回归"的保险）。
-        //    ⚠ **搜索之后不再滑屏**（用户口径）：搜索都找不到 ⇒ 如实停下。
+        //    ⚠ 三个锚点没标定、或写文字失败 ⇒ [FriendSearch.Phase.UNAVAILABLE] ⇒ **如实停下并说明**
+        //      （2026-10-01 用户口径：**"滑屏找人"这条路已删除** —— "常用好友置顶，当前屏找 + 搜索链已经够用"）。
+        //    ⚠ **搜索之后不再滑屏**（同一条口径）：搜索都找不到 ⇒ 如实停下。
         val rowKeys = NameLocating.friendRowKeysOf(candidates)
         if (friendSearch.phase == FriendSearch.Phase.IDLE) {
+            // **连读两次都没有才走搜索**（2026-10-01 刀 4，用户报"列表里已经出现了却还点了搜索入口"）：
+            // 单帧结论不可采信 —— 真机 21:58 那轮首次读屏把目标行读残（`Boss~~喵(阿娜)` 少个「雅」）⇒
+            // 白走一整条搜索链；1.8 秒后再读就读全了。判据是纯逻辑 [FriendSearch.missConfirmed]，
+            // 与 `UiStateTracker` 的"连续 2 次命中才改判"同源。⚠ 只统计**新读**（上面 `reading.fresh` 那道门之后）。
+            friendMissConfirm++
+            if (!FriendSearch.missConfirmed(friendMissConfirm)) {
+                MmLog.i(
+                    TAG,
+                    "第 9 步：这一读没看到「$target」（第 ${friendMissConfirm}/" +
+                        "${FriendSearch.MISS_CONFIRM_READS} 次）⇒ 先再看一帧、确认了才进搜索链" +
+                        "（单帧 OCR 偶发漏字 / 画面还在动，真机 2026-10-01 21:58 实录）",
+                )
+                return PatrolRunner.NamePlan.Waiting
+            }
             val started = friendSearch.start()
-            MmLog.i(TAG, "第 9 步：当前屏没有「$target」⇒ ${friendSearch.note()}")
+            MmLog.i(TAG, "第 9 步：连读 ${friendMissConfirm} 次都没有「$target」⇒ ${friendSearch.note()}")
             if (started == FriendSearch.Phase.UNAVAILABLE) {
-                MmLog.w(TAG, "第 9 步：搜索链走不了（三个搜索锚点没标定？）⇒ 退回滑屏找")
+                // 三个搜索锚点不齐 ⇒ **如实停下**（不再有滑屏这条退路，理由见本函数 ⑥ 那段说明）。
+                // 这是**配置问题**（标定产物里缺框）⇒ 说清"缺哪个、去哪儿补"比默默换个方式找更有用。
+                return PatrolRunner.NamePlan.Failed(
+                    "搜索式查找用不了：三个搜索锚点没标齐（「搜好友」/「搜索框」/「搜索按钮」）" +
+                        "｜按 2026-10-01 口径**不再滑屏找人** ⇒ 请到标定页把这 3 个框好" +
+                        "｜目标「$target」｜帧：${frameTag()}",
+                )
             }
         }
         // ①②④：该点哪个锚点就点它。
@@ -2905,9 +3285,28 @@ class CaptureService : Service() {
         }
         // ③：**原生写文字**；诊断原样进日志（真机第一轮就靠它判断"这条路通不通"）
         if (friendSearch.phase == FriendSearch.Phase.TYPE) {
+            // ⚠ **我们眼睛不在游戏上时，一个字节都不写**（2026-10-01 真机缺陷修）：`ACTION_SET_TEXT`
+            // 写的是**当前活动窗口**那棵树 —— 用户切出去的那一两秒里根节点是**桌面**
+            //（真机日志实证：`21:11:58.366 … 没找到可编辑控件（整棵树里没有 isEditable 节点）｜根节点包名=com.bbk.launcher2`）
+            // ⇒ 必然失败 ✗。这种时刻**不算搜索链的失败**，等下一轮（前台恢复 / 可疑解除）再写。
+            // 真机后果（用户报"**继续后没有继续搜索，而是进行了滑屏**"）：那一次失败把整条链降级成滑屏
+            // —— 那条"降级成滑屏"的退路**已于 2026-10-01 按用户口径删除**（见 ⑥），所以这条护栏更关键：
+            // 现在写失败会**如实停下**，而不再"换个方式继续找"。
+            if (!ForegroundSignal.isForeground || ClickDispatch.foregroundSuspect) {
+                if (lastFriendSearchWaitingNote != searchWaitForegroundNote) {
+                    lastFriendSearchWaitingNote = searchWaitForegroundNote
+                    MmLog.i(
+                        TAG,
+                        "第 9 步搜索链 ③ 暂缓写文字：$searchWaitForegroundNote" +
+                            "（不在前台时写入必然失败 —— 真机会写进桌面的节点树里）",
+                    )
+                }
+                return PatrolRunner.NamePlan.Waiting
+            }
+            lastFriendSearchWaitingNote = null
             val diag = textWriter.write(target)
             MmLog.i(TAG, "第 9 步搜索链 ③ 写「$target」：$diag")
-            friendSearch.onTextWritten(diag.contains("成功"))
+            friendSearch.onTextWritten(diag.contains("成功"), searchWriteMaxAttempts)
             return PatrolRunner.NamePlan.Waiting
         }
         // ③.5：**收输入法**（用户 2026-10-01 提示的那一步）——
@@ -2951,50 +3350,22 @@ class CaptureService : Service() {
             )
         }
 
-        // ⑥ **搜索链走不了** ⇒ 退回**跨屏扫描器**（原来的滑屏找；FR-04 硬性要求 #4）：
-        //    先回顶（除非已知自己在顶部）、再自上而下逐屏找；到底了就如实停下。
-        //    ⚠ **不在这里报 Failed**：那会走 `PatrolFlow.fail` 计重试，3 屏就把这一步耗成中止；
-        //    真正的"找不到"由 [ServerListScan] 在"滑动后画面不再动"或超上限时给出（与第 5 步同一口径）。
-        // **行键 → 纵坐标**一并交给扫描器：判"这次滑动动没动"不能只看行键重合度 ——
-        // 一次拖动不足一屏时共同行很多（看着像"没动"），而共同行的**位移**才是直接证据
-        // （2026-10-01 用户报："每次滑动的距离其实不够一屏，导致过早结束了，还是没有滑到顶"）。
-        val rowYs = NameLocating.friendRowYsOf(candidates)
-        // **刀 4：到顶记忆绑定当前登录服务器**（用户 2026-10-01 口径：不同小号的好友列表可能不同）——
-        // 换了账号就作废学到的"顶部那一屏"，否则会把中途某一屏误认成顶部、把上面的条目整段漏掉。
-        // ⚠ 「只拜访」时 `targetServer` 为 null（用户自己登的号，我们不知道是哪个）⇒ 本次不采信，老实回顶。
-        friendScan.noteScope(PatrolSession.targetServer)
-        // **换号流程（targetServer 非空）= 我们刚登录进这个号** ⇒ 按用户 2026-10-01 的观察
-        // （"每次重新登录服务器，好友列表都会回到顶部"），**进来这一屏就是列表顶部** ⇒ 不必再空滑那一下
-        // （省约 1.5~2s，也免得刚被 [noteScope] 清掉的记忆还没来得及重建）。「只拜访」不算：那是用户自己
-        // 登的号，列表停在哪儿由他决定 ⇒ 老实回顶。
-        friendScan.noteEntryAtTop(PatrolSession.targetServer != null)
-        val scanStep = friendScan.onMiss(rowKeys, SystemClock.elapsedRealtime(), rowYs)
-        // 走到这里一定是"**当前屏没命中**"（命中在 ④ 就点了，见那里的口径变更）⇒ 日志只写这一句
-        val scanNote = "目标不在这一屏；" + friendScan.lastDecisionNote
-        // 打日志的两种情形：① 有实质结论（回顶 / 往下 / 放弃）；② **卡在"等上一次滑动的回告"**
-        //（2026-10-01：那种卡死在日志里原本完全看不见 —— 用户报"根本没滑屏"时只能靠翻代码找。
-        //  `Wait` 的另外两种（稳定等待 / 等回告）里，稳定等待那条带着毫秒数、会逐轮变 ⇒ 不记它，免得刷屏）。
-        val noteChanged = scanNote != lastFriendScanNote
-        if (noteChanged && (scanStep !is ServerListScan.Step.Wait || friendScan.waitingForOutcome)) {
-            lastFriendScanNote = scanNote
-            MmLog.i(TAG, "第 9 步扫描: $scanNote｜帧：${frameTag()}")
-        }
-        return when (scanStep) {
-            ServerListScan.Step.Wait -> PatrolRunner.NamePlan.Waiting
-            ServerListScan.Step.ScrollTowardsTop ->
-                scrollPlanOf(listArea, towardsTop = true, step = PatrolFlow.Step.VISIT_FRIEND)
-
-            ServerListScan.Step.ScrollDown ->
-                scrollPlanOf(listArea, towardsTop = false, step = PatrolFlow.Step.VISIT_FRIEND)
-
-            // 如实停下并**把这一路读到的备注名摊出来**（2026-09-24 的老教训：只说"没找到"分不清是
-            // "真不在列表里"还是"备注名被读歪了"；有这串名字，用户一眼就能对上）
-            is ServerListScan.Step.GiveUp -> PatrolRunner.NamePlan.Failed(
-                "${scanStep.reason}｜本轮读到的行：" +
-                    rowKeys.take(NAME_HINT_LIMIT).joinToString("、").ifEmpty { "（一个都没读到）" } +
-                    "｜帧：${frameTag()}",
-            )
-        }
+        // ⑥ **搜索链走不了** ⇒ **如实停下**（2026-10-01 用户口径："常用好友置顶；当前屏找 + 搜索链已经够用，
+        //    去掉滑屏搜索的部分"）。原来这里会退回**跨屏扫描器**逐屏滑找（FR-04 硬性要求 #4 那套，
+        //    第 5 步「选服」仍在用它 —— 区服列表**没有**搜索功能，那套能力整体保留）。
+        //    ⚠ 旧理由"不在这里报 Failed，免得 `PatrolFlow.fail` 计重试把这一步耗成中止"**已作废**：
+        //    走到这里只剩两种情形，都是"配置 / 环境"而不是"运气"，多滑两屏救不了 ——
+        //      ① 三个搜索锚点没标定（连搜索面板都打不开）；
+        //      ② 写文字连试 [searchWriteMaxAttempts] 次都没进搜索框（面板开着、字就是进不去）。
+        //    ⇒ 如实摊给用户（去标定页补框 / 过一会儿重试）才是正解；**不猜位置、不滑屏**（红线 3）。
+        return PatrolRunner.NamePlan.Failed(
+            "搜索式查找这一轮没走通（${friendSearch.note()}）" +
+                "｜按 2026-10-01 口径**不再滑屏找人** ⇒ 若是「锚点没标定」请到标定页补齐那 3 个框，" +
+                "若是「写不进搜索框」可稍后重试" +
+                "｜目标「$target」｜本轮读到的行：" +
+                rowKeys.take(NAME_HINT_LIMIT).joinToString("、").ifEmpty { "（一个都没读到）" } +
+                "｜帧：${frameTag()}",
+        )
     }
 
     /**
@@ -3060,7 +3431,7 @@ class CaptureService : Service() {
             // 不自动重试（每次重载都要再吃一遍那几 MB）；用户在标定页**再写一次**就会重新触发。
             MmLog.w(
                 TAG,
-                "标定产物重载失败（${t.javaClass.simpleName}：${t.message}）⇒ **继续用当前这份产物**，" +
+                "标定结果重载失败（${t.javaClass.simpleName}：${t.message}）⇒ **继续用当前这份标定结果**，" +
                     "本次不再自动重试（再写一次标定即会重试）。若是内存不足：把过大的那一块" +
                     "（例如整屏 / 整个列表区域）重新框小些再写。",
             )
@@ -3085,7 +3456,7 @@ class CaptureService : Service() {
         val anchorCount = calibration?.signals?.count { it.role == SignalRole.ANCHOR } ?: 0
         MmLog.i(
             TAG,
-            "标定产物已重载（标定页刚写入，无需重开会话）：信号 ${calibration?.signals?.size ?: 0} 个" +
+            "标定结果已重载（标定页刚写入，无需重开会话）：信号 ${calibration?.signals?.size ?: 0} 个" +
                 "（其中锚点 $anchorCount 个）",
         )
         // 逐条列全：重载后日志里那份清单必须和"标定页刚写进去的"一致，否则排障会对不上
@@ -3161,7 +3532,8 @@ class CaptureService : Service() {
                     "待命期画面判定"
                 } else {
                     // 跑号期把"这一步在等哪一屏"一起打出来：认不出画面时这是唯一能对症的信息
-                    "跑号第 ${step.number} 步画面判定（期望「${PatrolScenes.expectedState(step)?.label ?: "无"}」）"
+                    "${PatrolSession.current?.range?.logLabel ?: "流程"}第 ${step.number} 步画面判定" +
+                        "（期望「${PatrolScenes.expectedState(step)?.label ?: "无"}」）"
                 }
                 // 「帧」这一项是本次新增（2026-09-24）：「帧流活着」≠「这一轮用的是新画面」——
                 // 判定基于旧画面时，看到的分数与结论全都是过期的（FR-01 补点事故只能靠它定性）
@@ -3246,12 +3618,40 @@ class CaptureService : Service() {
         outcome.note?.let {
             if (it != lastPatrolNote) {
                 lastPatrolNote = it
-                MmLog.i(TAG, "跑号: $it")
+                MmLog.i(TAG, "${current.range.logLabel}: $it")
             }
         }
         PatrolSession.note(outcome.note)
 
+        // **A（2026-10-19）：点击前不接受"又旧、而且帧供给已被判慢"的画面。**
+        //
+        // ⚠ 为什么必须带上 [feedHealth] 那道条件，而不是单看帧龄：**静态页一帧都不推是正常的**
+        // （`PatrolFlow` 里记着真机实录：用户在设置页，判定读到的是「兜底重放（8615ms 前）」而
+        // `settings_logout` 没命中 —— 那一屏根本不会再出新帧）。只看帧龄的话，第 3 步在设置页上
+        // **一次都点不出去**，会把"退出登录"整条链废掉。
+        // ⇒ 只有"画面确实在动、平台却送得慢"（[FrameFeedHealth.isSlow]）时，旧兜底帧才不许用作点击依据；
+        //    静止页面的旧帧照旧放行（与既有的"屏幕没变过"口径一致）。
+        val replayAgeMs = now - currentFrameAtMs
+        val staleReplay = currentFrameReplayed &&
+            replayAgeMs >= PATROL_REPLAY_MAX_AGE_MS &&
+            feedHealth.isSlow(now)
+        if (staleReplay && now - lastStaleReplayNoteAtMs >= STALE_REPLAY_NOTE_INTERVAL_MS) {
+            lastStaleReplayNoteAtMs = now
+            MmLog.w(
+                TAG,
+                "第 ${current.step.number} 步不动作：这一轮用的是**兜底重放的旧画面**（${replayAgeMs}ms 前拍到）" +
+                    "且帧供给已被判「平台送得慢」⇒ 等一张新帧再动（不点、也不下结论）",
+            )
+        }
+
         outcome.request?.let { request ->
+            // 前面那条闸（A）：这一枪**不发**，并把"已点过"标记撤回 —— 与点击被门禁拒绝走同一条退路
+            //（下一轮重新定位、重新提议；不消耗重试次数、不算失败，见 `PatrolFlow.withoutPendingAction`）。
+            // ⚠ 只有"步骤没变"时才撤回：万一这一轮同时还推进了步骤，撤回会让流程跳步。
+            if (staleReplay && outcome.state?.step == current.step) {
+                outcome.state?.let { PatrolSession.commit(PatrolFlow.withoutPendingAction(it), generation) }
+                return@let
+            }
             patrolSeq++
             lastPatrolNote = null
             lastAbortAnnounced = null
@@ -3265,7 +3665,7 @@ class CaptureService : Service() {
             )
             MmLog.i(
                 TAG,
-                "跑号判定: 第 ${current.step.number} 步点「${request.anchorName}」" +
+                "${current.range.logLabel}判定: 第 ${current.step.number} 步点「${request.anchorName}」" +
                     // 中文说法一并打出来（2026-10-01）：日志既要能 grep（英文契约名），也要能一眼读懂
                     "（${SignalNames.of(calibrationData, request.anchorName)}）" +
                     "(${request.frameX.toInt()}, ${request.frameY.toInt()})（运行帧坐标；真正下发的屏幕坐标见 " +
@@ -3285,7 +3685,7 @@ class CaptureService : Service() {
                 // `gateEligible = true`：这一击打在被采集的那个 App 身上 ⇒ 内容必然变了、出帧是必然的，
                 // 与采集模式无关 ⇒ 落空可以升级成硬闸 ✓（面板类期待不能，见 [FrameExpectationSignal]）
                 FrameExpectationSignal.arm(
-                    "刚下发一击（跑号第 ${current.step.number} 步）",
+                    "刚下发一击（${current.range.logLabel}第 ${current.step.number} 步）",
                     gateEligible = true,
                 )
             } else {
@@ -3309,7 +3709,7 @@ class CaptureService : Service() {
                     lastClickDenyDetail = verdict.detail
                     MmLog.w(
                         TAG,
-                        "跑号: 第 ${current.step.number} 步点击**被拒**（${verdict.detail}）⇒ " +
+                        "${current.range.logLabel}: 第 ${current.step.number} 步点击**被拒**（${verdict.detail}）⇒ " +
                             "已撤销「已点过」标记，下一轮重新定位、重新提议（不再白等一个步骤预算）",
                     )
                 }
@@ -3331,9 +3731,10 @@ class CaptureService : Service() {
                 gameForeground = !result.frozen,
                 state = result.state,
             )
-            // 这一次滑动属于**哪一步**的扫描状态：第 9 步（好友列表）与第 5 步（区服列表）各持一个实例
-            // （关键：被门禁拒时要撤回到**那一个**扫描器上，否则"没滑成"会被当成"滑了、画面没动"⇒ 误判到底）
-            val scan = if (current.step == PatrolFlow.Step.VISIT_FRIEND) friendScan else serverScan
+            // 这一次滑动属于**哪一个**扫描状态（2026-10-01 起只剩第 5 步「选服」一个 —— 第 9 步的
+            // 滑屏找人已按用户口径删除，见 [friendSearch] 上方那段说明）：
+            // 关键是被门禁拒时要撤回到**那一个**扫描器上，否则"没滑成"会被当成"滑了、画面没动"⇒ 误判到底。
+            val scan = serverScan
             if (verdict.allowed) {
                 PatrolSession.markClick(now)
                 scan.onScrollDispatched(now)
@@ -3342,7 +3743,7 @@ class CaptureService : Service() {
                 // 滑动同样是"屏幕必然变了" ⇒ 期待一帧新画面（见 [checkFrameExpectation]）；
                 // `gateEligible = true` 同理（滑的是被采集的那个 App 的列表）
                 FrameExpectationSignal.arm(
-                    "刚下发一次滑动（跑号第 ${current.step.number} 步）",
+                    "刚下发一次滑动（${current.range.logLabel}第 ${current.step.number} 步）",
                     gateEligible = true,
                 )
             } else {
@@ -3353,7 +3754,7 @@ class CaptureService : Service() {
             }
             MmLog.i(
                 TAG,
-                "跑号判定: 第 ${current.step.number} 步滑动「${swipe.anchorName}」" +
+                "${current.range.logLabel}判定: 第 ${current.step.number} 步滑动「${swipe.anchorName}」" +
                     "(${swipe.fromFrameX.toInt()}, ${swipe.fromFrameY.toInt()}) -> " +
                     "(${swipe.toFrameX.toInt()}, ${swipe.toFrameY.toInt()})" +
                     "（运行帧坐标；真正下发的屏幕坐标见 MM-Click 那一行）" +
@@ -3361,6 +3762,11 @@ class CaptureService : Service() {
             )
             if (verdict.allowed) useFastGear("刚下发滑动（第 ${current.step.number} 步滚列表）")
         }
+
+        // **这一条流程叫什么**（2026-10-03 用户定稿）：日志前缀带**具体流程名**（换号 / 拜访 / 换号+拜访）——
+        // 只写"流程"两个字分不出是哪一条（菜单上本来就有三种）。
+        // ⚠ 必须在 [PatrolSession.stop] **之前**取：结束后 `current` 就是 null ⇒ 会回落成通用名。
+        val flowTag = outcome.state?.range?.logLabel ?: "流程"
 
         // 跑到区间终点 = 本次执行结束（FR-04：跑完即结束，要再来一次由用户再点一次菜单）
         if (outcome.finished) {
@@ -3375,22 +3781,42 @@ class CaptureService : Service() {
             PatrolSession.stop()
             lastPatrolNote = null
             lastAbortAnnounced = null
-            MmLog.i(TAG, "跑号: 已完成（区间终点）")
+            MmLog.i(TAG, "$flowTag: 已完成（区间终点）")
+            // **震动反馈**（2026-10-20 用户口径"流程开始和结束时各一个"）：这里每轮只会进来一次
+            //（stop() 之后 `PatrolSession.current` 立刻为 null ⇒ 下一轮走 idle 提前返回）。
+            Haptics.flowEnded(this)
         } else if (outcome.failed) {
             // **同一句只记一次**（2026-09-20 修）：中止后流程停在 FAILED，但每轮还会走进来；
             // 不去重的后果是日志被同一行刷爆（真机一次测试 3445 行里大半是它），排障时把关键行冲掉。
             val reason = outcome.state?.reason
             if (reason != null && reason != lastAbortAnnounced) {
                 lastAbortAnnounced = reason
-                MmLog.w(TAG, "跑号: 已中止 —— $reason")
+                MmLog.w(TAG, "$flowTag: 已中止 —— $reason")
+                // 中止也走"结束"节奏（2026-10-20）：震动只报"这一轮结束了"，失败原因由顶部标签常驻显示。
+                // 去重判据与日志同一条（`lastAbortAnnounced`）⇒ 不会每轮都震。
+                Haptics.flowEnded(this)
             }
         } else if (outcome.state?.paused == true && !current.paused) {
             // **刚**进入暂停（切到后台 / 离开游戏）：回游戏时用户要立刻知道"得手动点继续"（FR-05），
             // 标签会常驻显示"已暂停"，展开菜单就能点「继续」
-            MmLog.i(TAG, "跑号: 已暂停 —— ${outcome.state.reason}")
+            MmLog.i(TAG, "$flowTag: 已暂停 —— ${outcome.state.reason}")
         }
         // 跑号相位（启动 / 继续 / 步骤推进 / 停止）一变就回快档（2026-09-20 手感修）
         syncPatrolGear()
+        // 流程收尾 ⇒ 起点探测窗口立刻没意义了（2026-10-18 用户口径「流程收尾就直接关掉」）。
+        //
+        // 为什么不等它自己 60s 到期：待命期只搜遮挡屏 4 条 vs 探测窗口期的 4~8 条，
+        // 流程跑完却还要按 8 条白搜到窗口到期，是**纯浪费**（真机实测白搜了 25 秒）。
+        //
+        // 覆盖 [outcome.failed]（中止）：中止后流程停在 FAILED、**不能再「继续」**，
+        // 用户只可能重新点菜单（那会重新开窗）⇒ 这里关掉不会让任何操作失效。
+        // ⚠ 暂停（[outcome.state]?.paused）**不关**：那是流程还在、只是等人回来，
+        //   而窗口开着与否对暂停期间的搜索集合没有影响（看的是 watching，不是窗口）。
+        if (outcome.finished || outcome.failed) {
+            if (StartProbeSignal.closeIfOpen()) {
+                MmLog.i(TAG, "起点探测窗口：$flowTag 已收尾 ⇒ 立即关闭（待命期搜索集合立刻回到遮挡屏 4 条）")
+            }
+        }
     }
 
     /**
@@ -3423,7 +3849,7 @@ class CaptureService : Service() {
         lastPatrolPhase = phase
         // 本会话第一次见到相位（previous == null）不刷一行：那一轮还没建立"档位"的概念
         if (previous == null || previous == phase) return
-        useFastGear("跑号相位变化（$previous → $phase）")
+        useFastGear("${s?.range?.logLabel ?: "流程"}相位变化（$previous → $phase）")
     }
 
     private fun anchorRegions(width: Int, height: Int): List<PixelBounds> {
@@ -3498,17 +3924,41 @@ class CaptureService : Service() {
         //（启动页的 `launch_switch` 与 `launch_login` 分别是第 4 / 6 步要的），2026-09-30 真机就是这样
         // 把换号卡在第 6 步（等满 30 秒中止，见 [AnchorLocator.locate] 的注释）。
         val locator = anchorLocator
-        val anchors = if (confirmed && locator != null) locator.locateFirstHit(gray, result.state) else emptyList()
+        // C′（2026-10-02）：**本轮确认在场的遮挡屏标志名**（`guardedOverlays` 各状态在产物里的标志
+        // 记录中本轮 `present` 的那些）—— 用来分辨"换了个新弹窗（控件也换）"，见 `PopupCloseController`。
+        // 口径与状态判定一致：标志只问"在不在"（`SignalStateMapping`），所以用 `present` 而不是 `matched`。
+        val overlayMarkerNames = calibrationData?.stateRules.orEmpty()
+            .filter { it.state in UiState.guardedOverlays }
+            .flatMap { it.signalNames }
+            .toSet()
+        val matchedOverlayMarkers = result.records.asSequence()
+            .filter { it.present && it.signalName in overlayMarkerNames }
+            .map { it.signalName }
+            .toSet()
+        // **优先定位"本轮在场的那一套"锚点**（C′）：一屏可以有多套样式（`activity_popup_e1` / `_e2`），
+        // 换了新弹窗时该用**新那套自己的**关闭控件 —— 配对靠产物里的现成不变量：同一元素的
+        // 标志与锚点**同名**（见 `AnchorLocator.locateFirstHit` 的 `preferredNames`）。
+        val anchors = if (confirmed && locator != null) {
+            locator.locateFirstHit(gray, result.state, preferredNames = matchedOverlayMarkers)
+        } else {
+            emptyList()
+        }
         // **"命中即停"的取证行**（2026-09-30，同一句话只记一次）：这次提速只体现在"少匹配了几条"上，
         // 而逐信号耗时统计**只覆盖标志**（锚点定位是另一条路径）⇒ 不记这一行，真机上没有任何地方
         // 看得出它生效了（用户问"到底省了没有"就只能靠猜）。
+        // ⚠ C′ 起这句话还要能读出"**为什么破例用了不是第一条的那条锚点**"（原来一律说"少匹配 N 条"，
+        // 换弹窗时那句话会自相矛盾 —— 明明扫了更多条）。
         if (anchors.isNotEmpty()) {
-            val declared = locator?.available(result.state)?.size ?: 0
-            val note = if (declared > 1) {
-                "锚点定位: 用「${anchors.first().name}」（本状态共 $declared 条，命中即停 ⇒ 少匹配 ${declared - 1} 条）"
-            } else {
-                "锚点定位: 用「${anchors.first().name}」" +
-                    "（${SignalNames.of(calibrationData, anchors.first().name)}）"
+            val declared = locator?.available(result.state).orEmpty()
+            val used = anchors.first().name
+            val note = when {
+                declared.firstOrNull() != used ->
+                    "锚点定位: 用「$used」（本轮在屏的标志里有它 ⇒ 按「标志与锚点同名」优先用它的关闭控件；" +
+                        "本状态共 ${declared.size} 条）"
+                declared.size > 1 ->
+                    "锚点定位: 用「$used」（本状态共 ${declared.size} 条，命中即停 ⇒ 少匹配 ${declared.size - 1} 条）"
+                else ->
+                    "锚点定位: 用「$used」（${SignalNames.of(calibrationData, used)}）"
             }
             if (note != lastAnchorNote) {
                 lastAnchorNote = note
@@ -3575,12 +4025,17 @@ class CaptureService : Service() {
                 // 或点击前就拍下的那一张；拿旧画面上的"弹窗仍在"去补枪 ⇒ 点到下层界面（真机点进了商城）
                 frameAtMs = currentFrameAtMs,
                 frameChangedPercent = change.percent,
+                // A2 局部证据：关闭控件那一小块变没变（分清"内容换了一幅"与"弹窗没了"）
+                anchorWindowChangedPercent = change.anchorPercent,
                 // **这一屏的身份**（2026-09-30 真机修）：换了它 = 新的一段 ⇒ 背靠背的两个遮挡屏
                 // （新手引导 → 新手大厅）各点一次；未确认时传 null（= 没有遮挡屏，走原来的复位路径）
                 overlayKey = overlay?.name,
+                // C′（2026-10-02）：本轮**确认在场**的遮挡屏标志名 —— 判"换了个新弹窗（控件也换）"
+                // 那两条证据（谁在屏、用的是哪条锚点）全靠它，见 `PopupCloseController.onRound`
+                matchedOverlayMarkers = matchedOverlayMarkers,
             ),
         )
-        logPopupVerification(outcome, change)
+        logPopupVerification(source, outcome, change)
         when (val step = outcome.step) {
             is PopupStep.Skip -> {
                 // 同一原因只记一次：遮挡屏长期在屏时"未标定锚点"这类原因会每轮成立，记全套等于刷屏
@@ -3624,6 +4079,9 @@ class CaptureService : Service() {
                         "${source.tag} 判定: 「${result.state.label}」已确认，关闭控件「${step.request.anchorName}」" +
                             "点击点 (${step.request.frameX.toInt()}, ${step.request.frameY.toInt()})" +
                             "（运行帧坐标；真正下发的屏幕坐标见 MM-Click 那一行），第 ${step.attempt} 次尝试" +
+                            // C′（2026-10-02）：判出"换了个新弹窗（控件也换）"时这里会多一句说明 ——
+                            // 否则真机上只看到锚点名换了一个，读不出是**判据生效**还是**标定被改了**
+                            step.note +
                             " → ${verdict.detail}（判定 ${step.request.decisionId}）" +
                             preFire.note +
                             frameChangeNote(change),
@@ -3634,7 +4092,19 @@ class CaptureService : Service() {
                         // 于是被复眼 / 门禁挡住时标签照旧写"正在关"，用户看到"显示了正在关弹窗却没关掉"）
                         PopupCloseSignal.clearBlocked()
                         // 记下"这一枪是在哪张画面上打出去的"：后面几轮要算"自上一枪以来画面变了多少"
-                        rememberClickSignature(frameBytes, frameWidth, frameHeight, frameStride)
+                        // （A2 起同时拍下**这一枪那个锚点窗口那一小块**：局部证据的比对面）
+                        rememberClickSignature(
+                            rgba = frameBytes,
+                            width = frameWidth,
+                            height = frameHeight,
+                            rowStride = frameStride,
+                            anchorBounds = anchorLocator?.windowInFrame(
+                                frameWidth = frameWidth,
+                                frameHeight = frameHeight,
+                                state = result.state,
+                                anchorName = step.request.anchorName,
+                            ),
+                        )
                         useFastGear("刚下发一击（${source.tag} 关遮挡屏）")
                         // 屏幕必然变了 ⇒ 期待一帧新画面（期待落空 ⇒ 闸掉后续点击，见 [checkFrameExpectation]）；
                         // `gateEligible = true` 同理（点的是游戏里的遮挡屏）
@@ -3809,9 +4279,44 @@ class CaptureService : Service() {
      */
     private var lastClickSignature: ByteArray? = null
 
-    /** 记下"这一枪打在哪张画面上"（只留一份：够算"自上一枪以来"）。 */
-    private fun rememberClickSignature(rgba: ByteArray, width: Int, height: Int, rowStride: Int) {
+    /**
+     * **A2 局部证据的两个伴生量**（2026-10-02）：这一枪那个锚点的**窗口矩形**（运行帧像素）
+     * 与它在那一小块上的签名。与 [lastClickSignature] 同时拍、同时清。
+     *
+     * 为什么需要：只靠整帧变化 % **分不开**"弹窗没了"与"弹窗还在、只是内容换了一幅"
+     * （真机 00:40：点完一枪 60.6% ⇒ 误停手 3 秒才复位，一次关弹窗 7.9 秒）。见
+     * `action/PopupCloseController.DEFAULT_ANCHOR_KEPT_PERCENT`。
+     */
+    private var lastClickAnchorBounds: PixelBounds? = null
+    private var lastClickAnchorSignature: ByteArray? = null
+
+    /**
+     * 记下"这一枪打在哪张画面上"（只留一份：够算"自上一枪以来"）。
+     *
+     * @param anchorBounds 这一枪那个锚点的**搜索窗口**（运行帧像素；`null` = 拿不到 ⇒ 局部证据不参与）
+     *   —— 与整帧签名**同一时刻、同一帧**拍，否则比出来的是两张画面上不同区域的差。
+     */
+    private fun rememberClickSignature(
+        rgba: ByteArray,
+        width: Int,
+        height: Int,
+        rowStride: Int,
+        anchorBounds: PixelBounds?,
+    ) {
         lastClickSignature = FrameSignature.sample(rgba, width, height, rowStride)
+        lastClickAnchorBounds = anchorBounds?.takeIf { it.x1 <= width && it.y1 <= height }
+        lastClickAnchorSignature = lastClickAnchorBounds?.let { bounds ->
+            FrameSignature.sampleRegion(
+                rgba = rgba,
+                width = width,
+                height = height,
+                rowStride = rowStride,
+                left = bounds.x0,
+                top = bounds.y0,
+                right = bounds.x1,
+                bottom = bounds.y1,
+            )
+        }
     }
 
     /**
@@ -3820,18 +4325,58 @@ class CaptureService : Service() {
      * @param percent 与上一枪那张画面的整帧变化（0..100）；`null` = **不可比**（还没开过枪 / 几何变了）
      * @param points 采样点数（0 = 没采样）
      */
-    private data class FrameChange(val percent: Double?, val points: Int)
+    private data class FrameChange(
+        val percent: Double?,
+        val points: Int,
+        /**
+         * **关闭控件锚点窗口那一小块**的变化（%，A2 局部证据）；`null` = 不可比（没基线 / 几何变了 / 不知道窗口）。
+         * 整帧回答"变了多少"、它回答"**我们关心的那个控件变没变**"。
+         */
+        val anchorPercent: Double? = null,
+    )
 
     /**
      * 与上一枪那张画面比：多少比例的采样点亮度差 ≥ [FrameSignature.PIXEL_DELTA]。
      *
      * 一轮只算一次（日志与 `PopupCloseController` 那道"同一张画面不重复点"的闸共用这个数）。
      * 没开过枪时直接返回（**不采样**）—— 平时这条测量不花任何代价。
+     *
+     * A2（2026-10-02）：同时算一遍**关闭控件锚点窗口那一小块**的变化（[FrameSignature.sampleRegion]）。
+     * 那一小块**采同样的步长、同样的矩形** ⇒ 两次签名等长可比；矩形拿不到 / 变了 ⇒ `null`（不可比 ≠ 没变）。
      */
     private fun frameChangeOf(rgba: ByteArray, width: Int, height: Int, rowStride: Int): FrameChange {
         val before = lastClickSignature ?: return FrameChange(null, 0)
         val after = FrameSignature.sample(rgba, width, height, rowStride)
-        return FrameChange(FrameSignature.changedPercent(before, after), before.size)
+        return FrameChange(
+            percent = FrameSignature.changedPercent(before, after),
+            points = before.size,
+            anchorPercent = anchorChangeOf(rgba, width, height, rowStride),
+        )
+    }
+
+    /**
+     * **关闭控件锚点窗口那一小块**自上一枪以来的变化（%，A2 局部证据）。拿不到就给 `null`。
+     *
+     * 为什么量这一小块（而不是继续看整帧）：用户口径 —— "阈值判断总是存在例外的情况"；
+     * 2026-09-29 撤销整帧比较时留下的口径是"**别再用整帧比较，改看『X 自己那一小块』**"。
+     * 详见 `action/PopupCloseController.DEFAULT_ANCHOR_KEPT_PERCENT` 与 `docs/progress.md` 第 421/422 条。
+     */
+    private fun anchorChangeOf(rgba: ByteArray, width: Int, height: Int, rowStride: Int): Double? {
+        val before = lastClickAnchorSignature ?: return null
+        val bounds = lastClickAnchorBounds ?: return null
+        // 几何变了 ⇒ 采样长度必然不同 ⇒ changedPercent 自己也会给 null；这里先挡一道，省掉一次采样
+        if (bounds.x1 > width || bounds.y1 > height) return null
+        val after = FrameSignature.sampleRegion(
+            rgba = rgba,
+            width = width,
+            height = height,
+            rowStride = rowStride,
+            left = bounds.x0,
+            top = bounds.y0,
+            right = bounds.x1,
+            bottom = bounds.y1,
+        )
+        return FrameSignature.changedPercent(before, after)
     }
 
     /**
@@ -3839,21 +4384,39 @@ class CaptureService : Service() {
      */
     private fun frameChangeNote(change: FrameChange): String {
         val percent = change.percent ?: return ""
-        return "｜自上一枪整帧变化 ${String.format(Locale.US, "%.1f", percent)}%（采样 ${change.points} 点）"
+        val anchorNote = change.anchorPercent?.let {
+            "｜关闭控件那一小块变化 ${String.format(Locale.US, "%.1f", it)}%"
+        }.orEmpty()
+        return "｜自上一枪整帧变化 ${String.format(Locale.US, "%.1f", percent)}%（采样 ${change.points} 点）" +
+            anchorNote
     }
 
-    /** FR-01 上一枪的验证结论（没有待验证的点击时不记）。 */
-    private fun logPopupVerification(outcome: PopupRoundOutcome, change: FrameChange) {
+    /**
+     * 上一枪的验证结论（没有待验证的点击时不记）。
+     *
+     * ⚠ **标签必须按实际来源打**（2026-10-03 用户验收时指出的小瑕疵）：三屏共用同一个闭环
+     * （活动弹窗 = FR-01；新手引导 / 新手大厅 = FR-02），而这里原来**写死成 `FR-01`** ⇒
+     * 跑 FR-02 的那几轮日志里，同一段会出现"FR-01 点击后仍命中弹窗"紧跟着"FR-02 不动作"，
+     * 两种来源标签同时出现 ⇒ 排障容易误读成"两套东西在同时动"。`ClickSource` 本来就带在输入里
+     * （审计要用），改一行即可。
+     */
+    private fun logPopupVerification(
+        source: ClickSource,
+        outcome: PopupRoundOutcome,
+        change: FrameChange,
+    ) {
         when (val verification = outcome.verification) {
             is PopupVerification.None -> Unit
 
             is PopupVerification.Closed -> {
                 MmLog.i(
                     TAG,
-                    "FR-01 弹窗已消失（本段共点击 ${verification.attempts} 次）",
+                    "${source.tag} 弹窗已消失（本段共点击 ${verification.attempts} 次）",
                 )
-                // 这一段结束了：扔掉基线，免得后续 FR-01 行拿着几分钟前的画面继续报"变化 X%"
+                // 这一段结束了：扔掉基线，免得后续这些行拿着几分钟前的画面继续报"变化 X%"
                 lastClickSignature = null
+        lastClickAnchorSignature = null
+        lastClickAnchorBounds = null
             }
 
             // 只作观测，**不是"失败"**：弹窗仍在既可能是没关掉，也可能是前一个关掉后冒出了新的那个
@@ -3861,7 +4424,7 @@ class CaptureService : Service() {
             // **但"同一张帧上不补点"**（2026-09-24 真机事故）：新帧没来就不再点，见 `PopupCloseController`。
             is PopupVerification.StillPresent -> MmLog.i(
                 TAG,
-                "FR-01 点击后仍命中弹窗（本段已点击 ${verification.attempts} 次）——" +
+                "${source.tag} 点击后仍命中弹窗（本段已点击 ${verification.attempts} 次）——" +
                     "可能没关掉、也可能是新弹窗；按上限继续，不做单次成败判定" +
                     "（本轮画面须晚于上一枪才补点，见 PopupCloseController）" +
                     frameChangeNote(change),
@@ -3877,6 +4440,18 @@ class CaptureService : Service() {
         val gray = grayTimingStats.record(grayNs / 1_000_000.0)
         val detect = detectTimingStats.record((totalNs - grayNs) / 1_000_000.0)
         val total = timingStats.record(totalNs / 1_000_000.0) ?: return
+        // M5-U6 诊断页：在写这条日志的同一个位置把读数 publish 出去 ⇒ 页面与日志永远同源
+        // （灰度 / 识别两段此刻也已满窗：与总耗时同窗推进，`record` 同时返回）
+        FrameCostSignal.update(
+            FrameCostSignal.Reading(
+                sampleCount = total.sampleCount,
+                totalP95Ms = total.p95DisplayMs,
+                grayP95Ms = gray?.p95DisplayMs ?: 0.0,
+                detectP95Ms = detect?.p95DisplayMs ?: 0.0,
+                avgMs = total.avgDisplayMs,
+                maxMs = total.maxDisplayMs,
+            ),
+        )
         MmLog.i(
             TAG,
             "单帧处理耗时统计: 连续 ${total.sampleCount} 帧，总 P95 ${total.p95DisplayMs}ms" +
@@ -3896,12 +4471,84 @@ class CaptureService : Service() {
         recognitionLoop.lastSignalCostMs.forEach { (name, costMs) ->
             val summary = signalCostStats.getOrPut(name) { FrameTimingStats() }.record(costMs)
                 ?: return@forEach
+            // **样式数（2026-10-03 N6-1 归因加，2026-10-18 更正口径）**：`SignalDetector.detectSignal`
+            // 对信号里**每个模板各跑一遍** `findPeaks`（`flatMap`）⇒ 这一行的耗时是**若干个模板之和**，
+            // 所以将来产物真出现"一条信号多个模板"时，这行耗时会是单模板的若干倍、而日志看不出来。
+            // ⚠ **当前产物恒为 1 个模板**：`CalibrationSignals` 装配时写死 `templates = listOf(template)`
+            // （`CalibrationSignals.kt:242`）⇒ 这段注记对本产物**恒不显示**，只是**未来护栏**。
+            // ⚠ 别再拿它解释耗时：2026-10-03 曾据此推断"活动弹窗 4 个样式 ⇒ 4 倍"，**该推断已证伪**
+            // （见 `docs/progress.md` 第 439 条）。真正的头号是 `scene_return_confirm_e1` 的模板面积。
+            val styles = calibrationData?.signals.orEmpty()
+                .firstOrNull { it.id == name }?.templates?.size ?: 0
+            val styleNote = if (styles > 1) {
+                "（**$styles 个样式，成本 ≈ $styles × 单模板**）"
+            } else {
+                ""
+            }
             MmLog.i(
                 TAG,
-                "信号耗时统计: $name 连续 ${summary.sampleCount} 次，P95 ${summary.p95DisplayMs}ms，" +
+                "信号耗时统计: $name$styleNote 连续 ${summary.sampleCount} 次，P95 ${summary.p95DisplayMs}ms，" +
                     "平均 ${summary.avgDisplayMs}ms，最大 ${summary.maxDisplayMs}ms",
             )
         }
+        recordSignalPhases()
+    }
+
+    /**
+     * **分段耗时统计**（2026-10-18 N6-1 真机侧）：把
+     * [com.example.mastermechanic.decision.RecognitionLoop.lastSignalPhaseMs] 按段名累加，
+     * 每 [PHASE_LOG_EVERY] 轮打一行占比。
+     *
+     * ## 为什么必须有它（这是 N6-4「采样提速」能不能做的**唯一前提**）
+     *
+     * 桌面探针已量出：单条标志里 **coarse（粗搜乘加）只占 43%**，固定开销（前缀和 / 精搜 / 去重 /
+     * 快照）占 57% ⇒ 采样再稀疏也动不了那 57% ⇒ **桌面天花板 ≈ 1.7 倍**。
+     * 而**真机的分段占比一直未知** —— 若真机上粗搜占比高得多（乘加算得慢、内存操作并不更慢），
+     * 采样提速的真机加速比会远大于 1.7 倍，N6-4 就从"收益不大"变成"核心手段"。
+     *
+     * ## 口径
+     * - 只统计**本轮真正做了匹配**的信号（复用掉的不算），与「信号耗时统计」同口径。
+     * - 「其余开销」= 单条总耗时之和 − 分段之和，即判定计算、合并抑制、逐条计时那部分；
+     *   它**同样吃不掉采样提速** ⇒ 报出来才能算出真实天花板，而不是拿"分段内占比"自我安慰。
+     * - 累加器在打印后清零 ⇒ 每行都是"最近 N 轮"的占比，不是全程累计。
+     */
+    private fun recordSignalPhases() {
+        val phases = recognitionLoop.lastSignalPhaseMs
+        if (phases.isEmpty()) return
+        signalPhaseRounds++
+        for ((name, bySignal) in phases) {
+            for ((phase, ms) in bySignal) {
+                signalPhaseTotalsMs[phase] = (signalPhaseTotalsMs[phase] ?: 0.0) + ms
+            }
+            recognitionLoop.lastSignalCostMs[name]?.let { whole ->
+                signalCostTotalMs[name] = (signalCostTotalMs[name] ?: 0.0) + whole
+            }
+        }
+        if (signalPhaseRounds < PHASE_LOG_EVERY) return
+
+        val rounds = signalPhaseRounds
+        val matchMs = signalPhaseTotalsMs.values.sum()
+        val costMs = signalCostTotalMs.values.sum()
+        signalPhaseTotalsMs.clear()
+        signalCostTotalMs.clear()
+        signalPhaseRounds = 0
+        if (matchMs <= 0.0) return
+
+        val outsideMs = (costMs - matchMs).coerceAtLeast(0.0)
+        val denominator = matchMs + outsideMs
+        val rows = LinkedHashMap(signalPhaseTotalsMs)
+        if (outsideMs > 0.0) rows[PHASE_KEY_OUTSIDE] = outsideMs
+        val share = rows.entries
+            .sortedByDescending { it.value }
+            .joinToString("｜") { (phase, ms) ->
+                "$phase ${"%.1f".format(ms / rounds)}ms（${100 * ms / denominator}%）"
+            }
+        MmLog.i(
+            TAG,
+            "分段耗时统计: 近 $rounds 轮（$denominator 分母＝匹配段 + 其余开销）｜$share" +
+                "｜$PHASE_KEY_OUTSIDE ＝ 判定/合并/计时，采样提速动不了" +
+                "（N6-1 真机侧；桌面口径 coarse 只占 43% ⇒ 天花板约 1.7 倍）",
+        )
     }
 
     private fun maybeLogStats(now: Long) {
@@ -4102,7 +4749,7 @@ class CaptureService : Service() {
          * **弹窗闭环期间的轮询间隔**（ms，2026-09-29 加，取 120）。
          *
          * 为什么比快档（[ACTIVE_INTERVAL_MS] = 200）还快：补枪延迟里**有一段就是轮询间隔本身** ——
-         * "画面换了一幅"的判据（`PopupCloseController.renderedFloorMs` = 350ms）要到**下一轮**才可能被看到，
+         * "画面换了一幅"的判据（`PopupCloseController.renderedFloorMs` = 300ms，2026-10-02 由 350 收到）要到**下一轮**才可能被看到，
          * 于是每枪多等一整拍。真机实录（01:00 那段，已上"画面变了就认账"那版）：
          * ```
          * 01:00:09.559 第 1 枪
@@ -4130,46 +4777,6 @@ class CaptureService : Service() {
         private const val SCROLL_DRAG_MS = 300L
 
         /**
-         * **好友列表**的滑动边距比（2026-10-01 真机实测后单独一套，取 **0.35**：0.35↔0.65 = 区域高的 30%）。
-         *
-         * ## ⚠ 这个数是"距离边缘多远"，**越小 = 手指行程越长**（行程 = 高 ×(1-2×ratio)）
-         *
-         * 演变（都记下来，免得再踩）：
-         * - **0.35**（配慢划 600ms）：由"同样 546px 手指位移、内容却走了一屏多"推出，怕**跳屏漏人**；
-         *   2026-10-01 用新加的**共同行位移**日志量出来：这一档**只走 79~539px**，而**一屏 ≈ 1119px**
-         *   ⇒ 一次拖动不足半屏（用户两次报："每次滑动的距离其实不够一屏"）；
-         * - **0.6**（同日试图放长 ✗）：**搞反了方向** —— 行程 = 高 ×(1-2×ratio)，>0.5 起止点交叉、
-         *   手势方向直接翻过来（真机实录：回顶那一枪变成 `(2551,853) -> (2551,631)` 手指**向上**划，
-         *   列表反而往下走，用户报"**好友列表根本没有往上移动**"）；
-         * - **0.25（本条）**：行程 = 半个区域高 ≈ 560px ⇒ 内容位移预期 ≈ 0.6~0.8 屏（第 5 步一直用的就是 0.25）。
-         * - ⚠ 目标是"**一次拖动 ≈ 一屏**"：既能少滑几下，又不会跳屏（每滑一下都会重读整屏）。
-         *   下轮看日志 `共同行位移 Npx`：偏小（<600）再往下调（0.2），偏大（>1200，有跳屏风险）就收（0.3~0.35）。
-         *   `NameLocating.scrollDragOf` 现在对 0.05~0.45 之外的值**当场报错**，不会再安静地反向划屏。
-         */
-        private const val FRIEND_SCROLL_EDGE_RATIO = 0.25
-
-        /**
-         * **好友列表**的拖动时长（ms，取 **700**；服务器列表是 [SCROLL_DRAG_MS] = 300）。
-         *
-         * 依据：真机实测 300ms 那一下在好友列表里明显带了惯性（滑完内容还在跑，日志里"两次读数一致"
-         * 常常要等两轮才成立）。慢划 ≈ 人用手慢慢翻一页，既不带甩动，也给游戏时间把这一屏画完。
-         * 2026-10-01 把 [FRIEND_SCROLL_EDGE_RATIO] 从 0.35 放长到 0.6 时，时长同时 600 → **700**：
-         * **手指走得更远时要再慢一点**，否则"又快又远"会变成甩动（甩动会让位移不可控、可能跳屏）。
-         */
-        private const val FRIEND_SCROLL_DRAG_MS = 700L
-
-        /**
-         * **好友列表**滑完等画面稳定的时长（ms，取 **1200**；服务器列表用 [ServerListScan.SETTLE_MS] = 800）。
-         *
-         * 依据（2026-10-01 实测）：点击门禁的"两次手势之间的间隔"是从**上一次手势结束**算起的
-         * （`ClickGate` 的 `lastFinishedMs` + 300ms），而好友的拖动时长是 600ms
-         * ⇒ 从"滑动下发"到"允许下一次手势"实际是 600 + 300 ≈ **900ms**。
-         * 800ms 会在**每一枪**都撞上「与上一次点击间隔不足」（真机日志实录过一次），
-         * 白等一轮；取 1200ms 既过了门禁，也给游戏时间把这一屏画完。
-         */
-        private const val FRIEND_SETTLE_MS = 1_200L
-
-        /**
          * 第 5 步**开火前复眼**那条窄带的半高（运行帧像素，取 **56**），见 [rowRecheckBand]。
          *
          * 依据：真机**行距** ≈90px（列表区域 1119px / 12 行）、一行文字自身的框高 ≈40px
@@ -4181,7 +4788,26 @@ class CaptureService : Service() {
 
 
         private const val STATS_WINDOW_MS = 10_000L
+
+        /**
+         * **探针自己的输出间隔**（2026-10-18，progress 第 452 条）。
+         *
+         * 取值与 [STATS_WINDOW_MS] 相同（10 秒）⇒ 停更时两行仍是一一对应的节奏，读起来不别扭；
+         * 但**它们是两个独立计时**（[probeWindowStartAtMs] vs [lastStatsAt]）⇒ 窗口相位不再互相干扰。
+         */
+        private const val PROBE_WINDOW_MS = 10_000L
         private const val MAX_IMAGES = 2
+
+        /**
+         * 分段耗时统计的输出间隔（2026-10-18 N6-1 真机侧）：每 N 轮输出一行占比。
+         *
+         * 取 100 与「信号耗时统计」的窗口一致 ⇒ 两行可以对照着看同一段时间。
+         * ⚠ 500ms 慢档下 100 轮 ≈ 50 秒；快档（200ms）≈ 20 秒 ⇒ 够跑完一轮换号+拜访。
+         */
+        private const val PHASE_LOG_EVERY = 100
+
+        /** 「其余开销」这个虚拟段名（不是 `TemplateMatcher.PHASE_*` 里的真段）。 */
+        private const val PHASE_KEY_OUTSIDE = "outside"
 
         /**
          * **resize 前至少要收到的帧数**（2026-09-24 真机三次复现后的缓解，见 [applyMirrorResize]）：
@@ -4205,6 +4831,30 @@ class CaptureService : Service() {
 
         /** 两次「换镜像表面」之间的冷却（ms）：换完要给合成器一点时间，别连着抽。 */
         private const val SURFACE_RETRY_COOLDOWN_MS = 30_000L
+
+        /**
+         * "帧供给不足"自救自己的冷却（ms，2026-10-19）。
+         *
+         * 比停更那条（30 秒）短：慢供给是**正在拖慢每一步**的状态，等 30 秒意味着一整轮流程都白跑；
+         * 10 秒够合成器接上新表面，又不会在两三个轮次里连着抽两次。
+         */
+        private const val SLOW_FEED_HEAL_COOLDOWN_MS = 10_000L
+
+        /**
+         * **兜底重放的帧最多旧多少还能作为点击依据**（ms，2026-10-19，A）。
+         *
+         * 取 1.5 秒的理由：
+         * - 兜底缓存每 [PIXEL_CACHE_INTERVAL_MS]（300ms）最多更新一次，静止页上"1 秒内的旧帧"是常态；
+         * - 真机第一轮出问题的那次判定读的是 **2781ms** 前的兜底帧 —— 1.5 秒能挡住它，又不至于把
+         *   正常的静止页误伤。
+         *
+         * ⚠ **单独这一条不构成拦截条件**：必须同时满足 [FrameFeedHealth.isSlow]（"画面在动、平台送得慢"）。
+         * 只看帧龄会把"设置页"这类**平台根本不产帧**的静态页整条卡死（见 `stepPatrol` 里的说明）。
+         */
+        private const val PATROL_REPLAY_MAX_AGE_MS = 1_500L
+
+        /** "旧兜底帧 ⇒ 这一枪不发"这句话的最小间隔（ms）：同一段慢里只留一行。 */
+        private const val STALE_REPLAY_NOTE_INTERVAL_MS = 3_000L
 
         /**
          * 连续"点击被拒"几次才把原因挂到菜单上（见 [CLICK_DENY_NOTE_STREAK] 的用法）。

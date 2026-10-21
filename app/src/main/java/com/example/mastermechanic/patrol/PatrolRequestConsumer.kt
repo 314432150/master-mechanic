@@ -1,7 +1,13 @@
 package com.example.mastermechanic.patrol
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
+import com.example.mastermechanic.action.Haptics
+import com.example.mastermechanic.capture.FrameFreshness
+import com.example.mastermechanic.capture.FrameReadiness
+import com.example.mastermechanic.capture.RoundCostWatch
 import com.example.mastermechanic.decision.UiStateSignal
 import com.example.mastermechanic.log.MmLog
 import com.example.mastermechanic.servers.ServerRotation
@@ -31,6 +37,32 @@ object PatrolRequestConsumer {
      */
     @Volatile
     private var appContext: Context? = null
+
+    /** 延后重试用的主线程 Handler（只在"等画面就绪"时用到，见 [awaitFirstFrame]）。 */
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
+    /** 正在等第一帧的起点时刻（0 = 没在等）。 */
+    @Volatile
+    private var waitingSinceMs = 0L
+
+    /** "等画面就绪"这句话是不是已经说过（同一段等待只留一行）。 */
+    @Volatile
+    private var waitNoteLogged = false
+
+    /** 正在等"算得动"的起点时刻（0 = 没在等，见 [awaitWarm]）。 */
+    @Volatile
+    private var warmWaitSinceMs = 0L
+
+    /** "识别预热中"这句话是不是已经说过（同一段等待只留一行）。 */
+    @Volatile
+    private var warmNoteLogged = false
+
+    /**
+     * 起始请求的代次（2026-10-19）：等画面期间用户可能按了「停止」/又点了别的流程 ——
+     * 那时**这一份待启动的请求必须作废**，否则 10 秒后它会凭空开跑（与 `PatrolSession.generation` 同一类保护）。
+     */
+    @Volatile
+    private var startToken = 0L
 
     /**
      * 消费方是否已就位（T4-5 真机修，2026-09-20）：**常驻守护服务没起 = 菜单请求没人接单**。
@@ -66,7 +98,11 @@ object PatrolRequestConsumer {
             PatrolRequestSignal.Kind.SWITCH_NEXT,
             PatrolRequestSignal.Kind.SWITCH_SERVER,
             PatrolRequestSignal.Kind.VISIT_ONLY,
-                -> start(request.kind, request.friendName, request.serverName)
+                -> {
+                // 新请求作废之前那份"还在等画面"的待启动（见 [startToken]）
+                startToken++
+                start(request.kind, request.friendName, request.serverName)
+            }
 
             PatrolRequestSignal.Kind.RESUME -> {
                 if (PatrolSession.resume(SystemClock.elapsedRealtime())) {
@@ -77,6 +113,12 @@ object PatrolRequestConsumer {
             }
 
             PatrolRequestSignal.Kind.STOP -> {
+                // 停止同样作废"还在等画面"的待启动
+                startToken++
+                waitingSinceMs = 0L
+                waitNoteLogged = false
+                warmWaitSinceMs = 0L
+                warmNoteLogged = false
                 val running = PatrolSession.current
                 PatrolSession.stop()
                 MmLog.i(
@@ -104,6 +146,13 @@ object PatrolRequestConsumer {
         targetServer: String? = null,
     ) {
         val range = PatrolStartGate.rangeFor(kind) ?: return
+        // **等本次会话的第一帧**（2026-10-19，C）：同进程重建会话时真机**经常一帧都收不到**
+        //（见 `CaptureService.attachMirror` 的说明），而识别结论还挂着上一场会话的「大厅」
+        // ⇒ 起点判定放行、流程照跑，前几步全在空画面上白等。这里先等一眼，**不要求用户记住"等几秒"**。
+        if (!awaitFirstFrame(kind, targetFriend, targetServer, startToken)) return
+        // **等这个进程"算得动"再开跑**（2026-10-19，2）：重新授权后的 1~2 分钟里，连灰度换算都慢 9 倍
+        //（见 `RoundCostWatch` 的真机表），这时开跑就是每步多花好几秒。判据来自采集侧每轮实测耗时。
+        if (!awaitWarm(kind, targetFriend, targetServer, startToken)) return
         // 顺序轮换：菜单没带区服名 ⇒ 现在把它解析成一个**具体**的区服名（第一步就要用到它）
         val rotation = targetServer == null && kind.usesServerRotation()
         val resolved = if (rotation) {
@@ -138,8 +187,8 @@ object PatrolRequestConsumer {
             // 带上时刻：每一步的时间预算从这里起算（PatrolFlow.STEP_TIMEOUT_MS）
             // 带上目标好友：第 9 步要在好友列表里按这个名字定位（2026-09-21）
             // 带上目标区服：第 5 步要在选服页里按这个名字定位（2026-09-24）；
-            // 顺序轮换时这里已经是**具体名字**，并记下"它是轮换算出来的"——
-            // 第 5 步真换成功后才推进游标（见 PatrolSession.targetServerFromRotation）
+            // 「下一个」时这里已经是**具体名字**，并记下"它是算出来的"——只用于日志；
+            // 游标推进**不看来路**（2026-10-19 U8）：任何真换到的区服都写，见 ServerRotation.switchedTo
             PatrolSession.start(
                 scene,
                 range,
@@ -162,6 +211,148 @@ object PatrolRequestConsumer {
             "起点 ${effective.label}（识别结论「${uiState.label}」，取最近命中）"
         }
         MmLog.i(TAG, "${kind.briefText}：从第 ${started.step.number} 步开始（$sceneNote）")
+        // **震动反馈**（2026-10-20 用户口径"流程开始和结束时各一个"）：放在"真的启动起来了"之后 ——
+        // 起点不成立那条提前 return 了，不该震（那说明什么都没开始）。结束那一下在
+        // `CaptureService.stepPatrol`（完成 / 中止各一次，节奏与这里不同，见 [Haptics]）。
+        appContext?.let { Haptics.flowStarted(it) }
+    }
+
+    /**
+     * **开跑前"等第一帧"**（2026-10-19，C；用户口径："别要求用户主动重新授权后等几秒再跑流程"）。
+     *
+     * ## 它挡的是哪一种启动
+     *
+     * `FrameFreshness.ageMs() == null` = **本次会话从建立起一帧都没收到过**。这时
+     * `UiStateSignal` 还挂着上一场会话的结论（真机：重新授权后仍报「大厅」）⇒ 起点判定放行，
+     * 流程照跑，而前几步全在空画面上等 —— 用户看到的是"点了没反应 / 卡半天"。
+     *
+     * ## 为什么**只等"从没收到帧"**，不等"帧旧"
+     *
+     * 帧龄大有两种完全不同的原因：① 会话刚建、通路还没热（该等）；② **静态页本来就不产帧**
+     * （`设置页` 就是，真机实录见 `PatrolFlow` 的注释：`兜底重放（8615ms 前）` 是正常现象）。
+     * ②上等下去**永远等不到**，只会让每次点击「拜访」都白等几秒 ⇒ 只认 ①。
+     *
+     * ## 纪律
+     *
+     * - 有上限 [FIRST_FRAME_WAIT_MS]（与 `FrameFreshness.FIRST_FEED_DEADLINE_MS` 同一档）：
+     *   到点照常尝试，起点判定会如实说明为什么没启动 —— 绝不无限挂着；
+     * - 每 [FIRST_FRAME_POLL_MS] 复查一次，帧一来立刻开跑（用户感觉不到延迟）；
+     * - 期间用户按「停止」/ 又点了别的流程 ⇒ [startToken] 变了，这一份待启动**作废**（不凭空开跑）。
+     *
+     * @return true = 可以继续（已就绪 / 超时放弃等待）；false = 已排好下一次复查，本次不启动
+     */
+    private fun awaitFirstFrame(
+        kind: PatrolRequestSignal.Kind,
+        targetFriend: String?,
+        targetServer: String?,
+        token: Long,
+    ): Boolean {
+        if (FrameFreshness.ageMs() != null) {
+            if (waitingSinceMs != 0L) {
+                waitingSinceMs = 0L
+                waitNoteLogged = false
+                MmLog.i(TAG, "${kind.briefText}：画面已就绪（本次会话收到画面了）⇒ 开始")
+            }
+            return true
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (waitingSinceMs == 0L) waitingSinceMs = now
+        val waited = now - waitingSinceMs
+        if (waited >= FIRST_FRAME_WAIT_MS) {
+            waitingSinceMs = 0L
+            waitNoteLogged = false
+            MmLog.w(
+                TAG,
+                "${kind.briefText}：等了 ${waited / 1000} 秒仍没收到本次会话的第一帧 ⇒ " +
+                    // 处置只有一种（2026-10-20 与 `floating_frame_starved_notice` / `run_frame_starved` 对齐）：
+                    // 2026-10-01 真机实证"同一次会话里重新授权照样零帧"⇒ 别把"重新授权"写进提示，那是白试一轮
+                    "照常尝试（起点判定会如实说明；若界面提示「没被投喂」，只重新授权通常没用，需菜单「退出」后重开 App）",
+            )
+            return true
+        }
+        if (!waitNoteLogged) {
+            waitNoteLogged = true
+            MmLog.i(
+                TAG,
+                "${kind.briefText}：本次会话还没收到任何画面 ⇒ 先等第一帧" +
+                    "（每 ${FIRST_FRAME_POLL_MS}ms 复查，最多 ${FIRST_FRAME_WAIT_MS / 1000} 秒，帧一到就开始）",
+            )
+        }
+        mainHandler.postDelayed({
+            if (token != startToken) return@postDelayed // 期间被停止 / 被新请求顶掉
+            start(kind, targetFriend, targetServer)
+        }, FIRST_FRAME_POLL_MS)
+        return false
+    }
+
+    /**
+     * **等这个进程"算得动"再开跑**（2026-10-19，用户口径："别要求用户自己等"）。
+     *
+     * ## 它挡的是哪一段
+     *
+     * 真机同一次进程运行里的对照（详见 `RoundCostWatch` 的类注释）：重新授权后的头一两分钟，
+     * 每轮识别 **≈2.8 秒**（灰度 P95 从 3.7ms 涨到 35.5ms，识别从 78ms 涨到 697ms ——
+     * 连最笨的灰度循环都慢 9 倍，说明是**进程拿不到 CPU**，不是算法/页面变复杂）。
+     * 这时开跑，第 3 步要 22 秒；等它落回 ≈82ms 再跑，同一步 6 秒。
+     *
+     * ## 判据与纪律
+     *
+     * - 判据是采集侧**每轮实测耗时的中位数**（[FrameReadiness]），不是"有没有帧"——
+     *   C 之前用"帧龄"是选错了指标：这段时间帧一直在来，只是我们算不动；
+     * - **没有证据就不拦**（[RoundCostWatch.Status.NO_DATA]：样本不足 / 已过期 ⇒ 直接放行）；
+     * - 最多等 [WARM_WAIT_MS]（60 秒），每秒复查；到点照常开跑并把真实读数写进日志 ——
+     *   宁可慢也不无限挂着（用户看得见原因）；
+     * - 期间「停止」/ 新请求 ⇒ [startToken] 变了，这份待启动作废。
+     *
+     * @return true = 可以继续；false = 已排好下一次复查，本次不启动
+     */
+    private fun awaitWarm(
+        kind: PatrolRequestSignal.Kind,
+        targetFriend: String?,
+        targetServer: String?,
+        token: Long,
+    ): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        val status = FrameReadiness.status(now)
+        if (status != RoundCostWatch.Status.WARMING) {
+            if (warmWaitSinceMs != 0L) {
+                val samples = FrameReadiness.sampleCount(now)
+                val typical = FrameReadiness.typicalMs(now)?.toInt()
+                warmWaitSinceMs = 0L
+                warmNoteLogged = false
+                MmLog.i(TAG, "${kind.briefText}：预热完成（最近 $samples 轮中位数 ${typical}ms）⇒ 开始")
+            }
+            return true
+        }
+        if (warmWaitSinceMs == 0L) warmWaitSinceMs = now
+        val waited = now - warmWaitSinceMs
+        val samples = FrameReadiness.sampleCount(now)
+        val typical = FrameReadiness.typicalMs(now)?.toInt()
+        if (waited >= WARM_WAIT_MS) {
+            warmWaitSinceMs = 0L
+            warmNoteLogged = false
+            MmLog.w(
+                TAG,
+                "${kind.briefText}：等了 ${waited / 1000} 秒仍然算得慢（最近 $samples 轮中位数 ${typical}ms，" +
+                    "门限 ${RoundCostWatch.WARM_TYPICAL_MS.toInt()}ms）⇒ 照常开始：" +
+                    "每一步会更慢，日志会写明原因（多半是重新授权后头一两分钟，或系统在抢占 CPU）",
+            )
+            return true
+        }
+        if (!warmNoteLogged) {
+            warmNoteLogged = true
+            MmLog.i(
+                TAG,
+                "${kind.briefText}：**识别预热中**（最近 $samples 轮中位数 ${typical}ms > " +
+                    "${RoundCostWatch.WARM_TYPICAL_MS.toInt()}ms，多出现在重新授权后的头一两分钟）⇒ " +
+                    "先等它降下来，最多 ${WARM_WAIT_MS / 1000} 秒，**不需要你操作**",
+            )
+        }
+        mainHandler.postDelayed({
+            if (token != startToken) return@postDelayed // 期间被停止 / 被新请求顶掉
+            start(kind, targetFriend, targetServer)
+        }, WARM_POLL_MS)
+        return false
     }
 
     /**
@@ -183,7 +374,7 @@ object PatrolRequestConsumer {
         when (resolution) {
             is ServerRotation.Resolution.Next -> MmLog.i(
                 TAG,
-                "${kind.briefText}：顺序轮换 → 本次换到「${resolution.serverName}」（${resolution.detail}）",
+                "${kind.briefText}：「下一个」→ 本次换到「${resolution.serverName}」（${resolution.detail}）",
             )
 
             ServerRotation.Resolution.EmptyList -> MmLog.w(
@@ -217,4 +408,27 @@ object PatrolRequestConsumer {
         PatrolRequestSignal.Kind.STOP,
             -> false
     }
+
+    /**
+     * "等第一帧"的上限（ms，2026-10-19）：**与 `FrameFreshness.FIRST_FEED_DEADLINE_MS` 同一个数**。
+     *
+     * 取同一个数不是巧合：那条判据 8 秒判"这次授权没被投喂"并让界面改说处置 ⇒ 这里等同样长，
+     * 两边的结论在时间上对得上（用户不会看到"界面说没被投喂、流程却说还在等"）。
+     */
+    private const val FIRST_FRAME_WAIT_MS = FrameFreshness.FIRST_FEED_DEADLINE_MS
+
+    /** 等第一帧时的复查间隔（ms）：帧一到就开跑，别让用户感觉到延迟。 */
+    private const val FIRST_FRAME_POLL_MS = 300L
+
+    /**
+     * "等算得动"的上限（ms，2026-10-19）：真机重新授权后的慢窗口长约 **60~90 秒**
+     *（23:47:13 建立会话 → 23:49:15 的读数才回到 82ms）。
+     *
+     * 取 60 秒：覆盖大部分窗口，又不会让"这台机器一直慢"的情况下无限挂着 ——
+     * 到点照跑，并把真实读数写进日志（用户看得见为什么慢）。
+     */
+    private const val WARM_WAIT_MS = 60_000L
+
+    /** 等"算得动"时的复查间隔（ms）：1 秒一次（与采集侧静止兜底轮同节奏，读数才有更新）。 */
+    private const val WARM_POLL_MS = 1_000L
 }

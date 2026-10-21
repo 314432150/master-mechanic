@@ -3,6 +3,7 @@ package com.example.mastermechanic.decision
 import com.example.mastermechanic.recognition.DetectionRecord
 import com.example.mastermechanic.recognition.GrayImage
 import com.example.mastermechanic.recognition.MatchParams
+import com.example.mastermechanic.recognition.MatchPhaseRecorder
 import com.example.mastermechanic.recognition.PixelBounds
 import com.example.mastermechanic.recognition.SignalDetector
 import com.example.mastermechanic.recognition.SignalSpec
@@ -149,6 +150,22 @@ class RecognitionLoop(
     var lastSignalCostMs: Map<String, Double> = emptyMap()
         private set
 
+    /**
+     * 本轮**分段**耗时（2026-10-18 N6-1 真机侧）：信号名 →（段名 → 毫秒）。
+     *
+     * 桌面探针已量出"coarse 占 78.7%"，但**真机的分段占比一直未知**（计划 `m6-nfr-hardening.md`
+     * 的 N6-1 标着「⏳ 真机侧待做」）。而这恰恰是判断"采样提速（N6-4）值不值得做"的**唯一前提**：
+     * 桌面固定开销占 57%、粗搜只占 43% ⇒ 天花板 ≈1.7 倍；真机若粗搜占比高得多，加速比会大得多。
+     *
+     * 沿用 [lastSignalCostMs] 的既有约定：**刻意不进 [RoundResult]**（耗时是测量结果而非判定结论，
+     * 进数据类会破坏「同一输入序列产生完全相同 RoundResult」的不变式）。
+     *
+     * **只含本轮真正做了匹配的信号**（复用掉的不算，它这轮确实没花时间），与 [lastSignalCostMs] 同口径。
+     * 冻结轮（游戏不前台）与空集合轮清空，避免读到上一轮的陈旧值。
+     */
+    var lastSignalPhaseMs: Map<String, Map<String, Double>> = emptyMap()
+        private set
+
     /** 当前界面状态（滞回结论）。 */
     val state: UiState get() = stateMachine.current
 
@@ -166,6 +183,7 @@ class RecognitionLoop(
         // 冻结轮不搜索：清空耗时样本与复用记录，避免调用方读到上一轮的陈旧值（T1-13b）
         if (!isForeground) {
             lastSignalCostMs = emptyMap()
+            lastSignalPhaseMs = emptyMap()
             lastReusedSignals = emptySet()
         }
         val records = if (isForeground) detectRound(gray, active) else emptyList()
@@ -210,6 +228,7 @@ class RecognitionLoop(
         val detector = this.detector ?: return emptyList()
         if (subset.isEmpty()) {
             lastSignalCostMs = emptyMap()
+            lastSignalPhaseMs = emptyMap()
             lastReusedSignals = emptySet()
             return emptyList()
         }
@@ -242,6 +261,13 @@ class RecognitionLoop(
         lastSignalCostMs = LinkedHashMap<String, Double>().apply {
             pending.forEach { item -> computed[item.signal.name]?.let { put(item.signal.name, it.costMs) } }
         }
+        lastSignalPhaseMs = LinkedHashMap<String, Map<String, Double>>().apply {
+            pending.forEach { item ->
+                computed[item.signal.name]?.let { matched ->
+                    if (matched.phases.isNotEmpty()) put(matched.name, matched.phases)
+                }
+            }
+        }
         // ④ 输出顺序恒等于信号声明顺序（复用与实算混在一起也一样）
         return active.map { signal ->
             (if (signal.name in reused) cachedRecords[signal.name] else computed[signal.name]?.record)
@@ -252,8 +278,19 @@ class RecognitionLoop(
     /** 待匹配的信号 + 它这一轮的窗口快照（快照 [PendingSignal.snapshot] 为空 = 窗口取不到，按实算处理）。 */
     private data class PendingSignal(val signal: SignalSpec, val snapshot: ByteArray?)
 
-    /** 单条信号的匹配结果 + 其**纯匹配耗时**（并行分支里在线程内计时，口径与串行一致）。 */
-    private data class MatchedSignal(val name: String, val costMs: Double, val record: DetectionRecord)
+    /**
+     * 单条信号的匹配结果 + 其**纯匹配耗时**（并行分支里在线程内计时，口径与串行一致）
+     * + **分段耗时**（2026-10-18 N6-1 真机侧；空 = 本轮没开分段计时）。
+     *
+     * [phases] 是**匹配段之和**（不含窗口快照拷贝与逐条计时本身）⇒ 与 [costMs] 的差值
+     * 就是"不在模板匹配内"的那部分（真机用来判断固定开销占比）。
+     */
+    private data class MatchedSignal(
+        val name: String,
+        val costMs: Double,
+        val record: DetectionRecord,
+        val phases: Map<String, Double> = emptyMap(),
+    )
 
     /** 匹配一撮信号：单条或串行时直接算；多条且开了并行时按声明顺序收集（见 [matchPool]）。 */
     private fun matchSignals(
@@ -283,10 +320,26 @@ class RecognitionLoop(
         return out
     }
 
+    /**
+     * 串行 / 并行**共用**的唯一匹配入口（2026-10-18：分段计时也挂在这里）。
+     *
+     * 每条信号**各自新建**一个 [MatchPhaseRecorder] ⇒ 并行分支里多个 worker 同时跑不会互相干扰，
+     * 无需加锁（代价是每条信号每轮多一个短命对象，可忽略）。
+     *
+     * ⚠ recorder 是在 [startedNs] **之后**建的，所以 [phases] 不含"进入本函数"的成本 ⇒
+     * [costMs] − Σ[phases] ≈ 逐条计时 + `detectSignal` 里判据计算 / 合并抑制的那点开销，
+     * 正是真机用来判"固定开销占比"的那个差值。
+     */
     private fun timedDetect(detector: SignalDetector, gray: GrayImage, signal: SignalSpec): MatchedSignal {
         val startedNs = System.nanoTime()
-        val record = detector.detectSignal(gray, signal)
-        return MatchedSignal(signal.name, (System.nanoTime() - startedNs) / 1_000_000.0, record)
+        val recorder = MatchPhaseRecorder()
+        val record = detector.detectSignal(gray, signal, recorder)
+        return MatchedSignal(
+            signal.name,
+            (System.nanoTime() - startedNs) / 1_000_000.0,
+            record,
+            recorder.totalsMs(),
+        )
     }
 
     /**
@@ -295,8 +348,11 @@ class RecognitionLoop(
      * 这是"窗口未变即复用"的判据（见 [reuseUnchangedWindows]）：比对的是**判定真正读到的那块像素**，
      * 不是整帧 —— 大厅里动画在别处动、我们窗口不动时同样能复用。
      * 窗口取不到（空窗口 / 越界）返回 null ⇒ 该信号按"没快照"处理，一律实算（不猜）。
+     *
+     * ⚠ 2026-10-03 从 `private` 放宽为 `internal`：**只为了让 N6-1 归因探针能量到这段真实拷贝的耗时**
+     *（它是"每条信号开销"里不在模板匹配内的部分）。行为零变化。
      */
-    private fun windowSnapshot(gray: GrayImage, signal: SignalSpec): ByteArray? {
+    internal fun windowSnapshot(gray: GrayImage, signal: SignalSpec): ByteArray? {
         val bounds = signal.window.pixelBounds(gray.width, gray.height)
         val width = bounds.x1 - bounds.x0
         val height = bounds.y1 - bounds.y0
@@ -313,16 +369,25 @@ class RecognitionLoop(
     companion object {
 
         /**
-         * 匹配并行度默认值（2026-09-24）：真机 8 核，**留出游戏与帧线程**，取 3。
+         * 匹配并行度默认值（2026-09-24 定 3；**2026-10-18 真机 census 后改 6**）。
          *
-         * 为什么是 3 而不是"核数 - 1"：
-         * - 手机同时还在跑游戏（它才是主角）；本项目对"不跟游戏抢资源"有明确要求；
-         * - 一轮里信号数量本来就不多（待命期 6~7 条，跑号期 1~2 条），3 个 worker 已能把
-         *   待命期那一轮（真机实测 180~380ms）压到约 1/2~1/3；
+         * 为什么是 6 而不是"核数 - 1"：
+         * - 手机同时还在跑游戏（它才是主角）；本项目对"不跟游戏抢资源"有明确要求 ⇒ **留 2 核**；
+         * - **定值依据（真机 50 次「本轮搜索集合变化」census + 逐信号耗时，`plans/m6-nfr-hardening.md` §1.3.1）**：
+         *   每轮只搜 **4~8 条**（众数 5~6），逐信号"平均"**51~67ms**，单帧 P95 **≈178ms**。
+         *   并行度 3 时 7~8 条那档要 **3 批**，而它占 **16%** 的轮次 ⇒ **P95（第 95 百分位）恰好落在
+         *   3 批那一档**（≈3×60ms）。并行度 6 时 8 条只要 **2 批**（≈120ms，进 N6-2 的 ≤140ms 验收线），
+         *   6 条及以下 **1 批**（≈60ms）。
+         * - **为什么不取 7 或 8**：每轮最多 8 条，7 和 6 的批次数完全相同（⌈8/6⌉ = ⌈8/7⌉ = 2）⇒
+         *   多占的核是白占；取 8 则一个核都不留给游戏。
          * - 定值而非按核数自适应，避免"同一产物在不同设备上跑出不同调度"这类难查差异
          *   （并行不改判定结果，但定值让排障时的耗时对照更可比）。
+         *
+         * ⚠ **待真机复核**（2026-10-18）：6 个 worker 是否让游戏掉帧/异常发烫，以及
+         * "单条 80~110ms 的底噪 = worker 之间抢 CPU/内存带"那条推断是否成立
+         * （坐实办法：并行度 1 vs 3 vs 6 的同帧逐信号耗时对照）。
          */
-        const val DEFAULT_MATCH_PARALLELISM = 3
+        const val DEFAULT_MATCH_PARALLELISM = 6
 
         /**
          * 「窗口未变即复用」默认开关（2026-09-24 第二刀）。

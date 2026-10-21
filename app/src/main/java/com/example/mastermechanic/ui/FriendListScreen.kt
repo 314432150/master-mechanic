@@ -29,6 +29,9 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -200,13 +203,16 @@ private data class FriendDeleteAsk(
     val hits: FriendReferences.Hits,
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FriendListRoute(resumeTick: Int, onBack: () -> Unit) {
+fun FriendListRoute(resumeTick: Int, addTick: Int = 0) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val density = LocalDensity.current.density
     val densityRef = LocalDensity.current
+    /** 「说明」弹层（M5-U4：与区服清单对齐 —— 长说明不再常驻，改为点「说明」看）。 */
+    var aboutOpen by remember { mutableStateOf(false) }
 
     var reloadTick by remember { mutableIntStateOf(0) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -417,12 +423,20 @@ fun FriendListRoute(resumeTick: Int, onBack: () -> Unit) {
         renameNotice = null
     }
 
+    // M5-U4：**「新增」搬进壳的标题栏**（与区服清单同一套：壳用 tick 通知，页面仍持私有编辑态）
+    LaunchedEffect(addTick) {
+        if (addTick > 0) {
+            editingIndex = null
+            editorOpen = true
+        }
+    }
+
     FriendListScreen(
         state = state,
         entries = dragPreview ?: loadedList?.entries.orEmpty(),
         message = message,
         snackbarHostState = snackbarHostState,
-        onBack = onBack,
+        onAbout = { aboutOpen = true },
         onAdd = {
             editingIndex = null
             editorOpen = true
@@ -598,6 +612,41 @@ fun FriendListRoute(resumeTick: Int, onBack: () -> Unit) {
             },
         )
     }
+    if (aboutOpen) {
+        FriendAboutSheet(onDismiss = { aboutOpen = false })
+    }
+}
+
+/**
+ * 「说明」弹层（好友清单，M5-U4）。
+ *
+ * 与区服清单**同一个版式**：底部弹层 + **一段一句、行首带标签、每句 ≤60 字**（用户口径："精简内容、
+ * 只留最核心的、重新排版"），顺序是"从最容易踩坑的排到最常见的"：
+ * 引用（改名会一起改）→ 判重 → 定位 → 名字格式 → 手势。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FriendAboutSheet(onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.friend_about),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            listOf(
+                R.string.friend_about_key,
+                R.string.friend_about_unique,
+                R.string.friend_about_locate,
+                R.string.friend_about_name,
+                R.string.friend_about_gestures,
+            ).forEach { line ->
+                Text(text = stringResource(line), style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
 }
 
 @Composable
@@ -606,7 +655,7 @@ private fun FriendListScreen(
     entries: List<FriendEntry>,
     message: String?,
     snackbarHostState: SnackbarHostState,
-    onBack: () -> Unit,
+    onAbout: () -> Unit,
     onAdd: () -> Unit,
     onEdit: (Int) -> Unit,
     onDelete: (Int) -> Unit,
@@ -631,43 +680,34 @@ private fun FriendListScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        // 与 `ServerListScreen` **同一套**：inset 一律交给壳（内层再吃一遍系统栏会多出一段空白
+        // —— 2026-10-02 用户："好友页顶部空白为什么没按服务器页一样改" ⇒ 原先这里漏加了 ✗）。
+        contentWindowInsets = WindowInsets(0.dp),
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(16.dp),
+                // 与区服清单**同一个数**（原先这里是全向 16dp ✗ ⇒ 比区服页多出 14dp 的顶部空白）：
+                // 横向 16、纵向 2 —— 壳的标题栏已经占了一条，页面再留就显出一段"什么都没写"的空白。
+                .padding(horizontal = 16.dp, vertical = 2.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(R.string.friend_list_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = onBack) {
-                    Text(stringResource(R.string.friend_back_to_auth))
-                }
-            }
-            Text(
-                text = stringResource(R.string.friend_list_subtitle),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            // M5-U4（ADR-009 决策五）：**标题与「返回」收进壳**（与区服清单一致）；
+            // 页内那行长副标题（`friend_list_subtitle`）也一并去掉 —— 它讲的东西搬进「说明」弹层，
+            // 首屏只留「好友（N 条） + 说明」一行（验收 V2）。
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     text = stringResource(R.string.friend_list_count, entries.size),
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f),
                 )
-                OutlinedButton(onClick = onAdd, modifier = Modifier.widthIn(min = 88.dp)) {
-                    Text(stringResource(R.string.friend_add))
+                // 「新增」已搬进壳的标题栏 ⇒ 这一行只留「条数 + 说明」（与区服清单同一个版式）
+                TextButton(onClick = onAbout) {
+                    Text(stringResource(R.string.friend_about))
                 }
             }
 
@@ -718,12 +758,9 @@ private fun FriendListScreen(
                             }
                         }
                     } else {
-                        // 手势的**发现性**全靠这一行常驻提示：没有可见按钮，不告诉用户就没人知道长按能删
-                        Text(
-                            text = stringResource(R.string.friend_list_hint),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        // ⚠ 手势提示那一行**已移除**（用户 2026-10-02："好友页好友标题下方的交互说明也移除，
+                        //    都说了两边交互一致"）—— 三个手势现在只在「说明」弹层里说
+                        //    （`friend_about_gestures`），与区服清单**同一个版式**。别再往这里加回来。
                         LazyColumn(
                             modifier = Modifier.weight(1f),
                             state = listState,

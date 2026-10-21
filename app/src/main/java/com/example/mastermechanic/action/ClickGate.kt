@@ -41,6 +41,10 @@ class ClickGate(private val spacingMs: Long = MIN_SPACING_MS) {
     fun decide(environment: ClickEnvironment, nowMs: Long): ClickVerdict = when {
         !environment.guardRunning -> ClickVerdict(false, ClickDenyReason.GUARD_NOT_RUNNING)
         !environment.gameForeground -> ClickVerdict(false, ClickDenyReason.NOT_FOREGROUND)
+        // **前台可疑**（2026-10-01）：复核看到"游戏窗口还在屏上，只是焦点被抢走" ⇒ 先不放行，
+        // 等下一次复核确认是不是真离开（见 `refreshForeground` 的两段式）。安全侧**不加延迟**：
+        // 可疑期间一枪都不打。排在 NOT_FOREGROUND 之后（真不在前台时那句话更准确）。
+        environment.foregroundSuspect -> ClickVerdict(false, ClickDenyReason.FOREGROUND_SUSPECT)
         // **画面采集已停 ⇒ 一格都不许点**（2026-09-29，紧跟前台之后、排在"状态未知"之前）：
         // 这时手上那张画面是旧的，而**状态本身也是从旧画面读出来的** —— 报"状态未知"会把人引偏，
         // 真正的原因是"眼睛停了"（真机：5 分钟没新帧，程序照着旧坐标点了一枪）。

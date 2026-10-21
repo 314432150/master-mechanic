@@ -46,6 +46,67 @@ class FloatingMenuTest {
         assertNull(resumed.reason)
     }
 
+    @Test
+    fun theReauthorizeRowOnlyAppearsWhenTheEyesAreBroken() {
+        // 2026-10-01 用户口径（M5 期间插入）：悬浮窗菜单里要有一条「一键重新授权采集」。
+        // 判据 = 三种"眼睛 / 会话已经出问题"的情形之一；**正常跑着时它是假的** ——
+        // 菜单每多一行面板就高一截，而面板长高会让正在点的行整体位移 ⇒ 误点相邻项。
+        assertFalse(
+            "一切正常 ⇒ 不加这一行（面板与从前一模一样）",
+            FloatingMenu.shouldOfferReauthorize(
+                captureActive = true,
+                frameStale = false,
+                frameStarved = false,
+            ),
+        )
+        assertTrue(
+            "采集会话没了（系统侧回收 / 用户从系统侧停掉）⇒ 重建采集是唯一出路",
+            FloatingMenu.shouldOfferReauthorize(
+                captureActive = false,
+                frameStale = false,
+                frameStarved = false,
+            ),
+        )
+        assertTrue(
+            "画面久未更新（60 秒没有新帧）：识别读的是重放的旧帧 ⇒ 就地给一键入口",
+            FloatingMenu.shouldOfferReauthorize(
+                captureActive = true,
+                frameStale = true,
+                frameStarved = false,
+            ),
+        )
+        assertTrue(
+            "这次授权没被投喂（isStarved）：入口照给，原因行会建议换进程",
+            FloatingMenu.shouldOfferReauthorize(
+                captureActive = true,
+                frameStale = false,
+                frameStarved = true,
+            ),
+        )
+    }
+
+    // 2026-10-20：「重启 App」的判据（RecoveryAction）随该功能一起删除（用户要求），
+    // 根菜单回到只有「重新授权采集」一条修采集的入口（上面的 shouldOfferReauthorize 用例覆盖）。
+
+    // ---------------------------------------------------------------- 区服两列网格（U8）
+
+    @Test
+    fun theServerGridFillsRowMajorAndKeepsTheListOrder() {
+        // U8-1：第 k 格 = 清单第 k 条。网格**只决定怎么排**（先左后右、行优先），
+        // 不许重排 / 不许分两组 —— 一旦这里改过顺序，真机上"逐条对照清单页"就没法验收了。
+        assertEquals(
+            listOf(listOf(0, 1), listOf(2, 3), listOf(4)),
+            FloatingMenu.pickGridRows(5),
+        )
+        assertEquals(
+            "按行铺开后必须还是 0..n-1",
+            (0 until 5).toList(),
+            FloatingMenu.pickGridRows(5).flatten(),
+        )
+        assertTrue("没有格子就没有行", FloatingMenu.pickGridRows(0).isEmpty())
+        assertTrue("列数非法时返回空（不在 UI 线程抛）", FloatingMenu.pickGridRows(3, columns = 0).isEmpty())
+    }
+
     // ---------------------------------------------------------------- 层级
 
     @Test
