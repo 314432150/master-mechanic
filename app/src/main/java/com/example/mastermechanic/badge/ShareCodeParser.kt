@@ -1,61 +1,58 @@
 package com.example.mastermechanic.badge
 
 /**
- * 分享弹框 OCR 文本 → 立牌数据（temp/badge-share-1021，纯逻辑）。
+ * 复制分享弹框上**三块文字** → 立牌字段（temp/badge-share-1021，纯逻辑）。
  *
- * ## 背景（2026-10-21 用户拍板）
+ * ## 口径（2026-10-21 真机确认 + 用户拍板）
  *
- * 立牌数据**从弹框文本读**（OCR），不读剪贴板：Android 10+ 起后台应用读剪贴板被系统禁止
- * （无障碍服务也不例外），而分享弹框上 `【墨子顶级立牌1M09G2】价值877分` 是明文 ——
- * 弹框里那颗「复制分享码」按钮因此**也不用点**（少了误触，也不污染用户剪贴板）。
+ * 弹框上立牌信息**分三块**：分数 / 立牌名称 / 分享码 —— Slice 3 逐块文字识别，
+ * 每块文本喂给本对象对应的 parse。
  *
- * ## 口径
+ * 剪贴板里那种 `【墨子顶级立牌1M09G2】价值877分` **不考虑**：那是点「复制分享码」
+ * 才写进剪贴板的文本，而本流程不点那颗按钮（Android 10+ 后台也读不了剪贴板）。
  *
- * - 容错**只有**三层：全角 ASCII 归半角、去所有空白、字母转大写（分享码不分大小写）。
- *   除此之外**解析不出就返回 null**（红线 7「识别不可信按未识别」）——不猜截断、不补字段。
- * - 一段文本里必须**恰好一条** `【…】价值…分`：0 条 = 读错了画面；**多条 = 不可信**
- *   （分不清是哪张立牌的码），都按未识别处理。
- * - 分享码 = 括号内容里**最后一个汉字之后的字母数字串**（≥4 位，样例 `1M09G2` 为 6 位）；
- *   前面是立牌名（至少含一个汉字，样例 `墨子顶级立牌`）。码比 4 位短不像分享码 ⇒ 拒收。
- *   名里带拉丁字母也成立（如 `KPL限定立牌`：切点仍在**最后一个汉字**之后）。
+ * ## 取不出唯一值就是解析不出（红线 7）
+ *
+ * 容错只做归一化：全角 → 半角、**去所有空白**（空白一律当 OCR 噪声粘回 —— 码里的 `1M 09 G2`
+ * 要粘回 `1M09G2`）、字母转大写、剥掉连标签一起 OCR 进来的前缀（框圈得偏大时）。
+ * 多个候选值只在有**非空白分隔**时才判得出来（如 `10/10`）⇒ 这种情况按不可信 ⇒ null，
+ * 调用方停下报原因，不带残缺记录继续。「框串了两个码 / 两个分数」这种人为失误解析层不兜
+ * （块只该有一个值）—— 靠真机核对与立牌池展示层的人眼兜。
  */
 object ShareCodeParser {
 
-    /** 一份解析结果：立牌名 / 分享码 / 价值分数（字段口径见文件头）。 */
-    data class ParsedBadge(
-        val cardName: String,
-        val code: String,
-        val score: Int,
-    )
+    /** 块框得偏大、把标签一起 OCR 进来时，剥掉的开头标签（按长度降序试剥，防「名称」抢先）。 */
+    private val LEADING_LABELS = listOf("立牌名称", "名称", "分享码", "分数", "价值")
 
-    /** `【立牌名+分享码】价值<分数>分`；在归一化后的文本里**恰好一条**才算数。 */
-    private val BADGE_LINE = Regex("【([^【】]+)】价值(\\d+)分")
+    /** 数字串。 */
+    private val DIGIT_RUN = Regex("[0-9]+")
 
-    /** 括号内容 = 立牌名（以汉字收尾）+ 分享码（≥4 位字母数字）。 */
-    private val NAME_AND_CODE = Regex("^(.*[\\u4e00-\\u9fff])([A-Z0-9]{4,})$")
+    /** 字母数字串（归一化后字母全大写）。 */
+    private val ALNUM_RUN = Regex("[A-Z0-9]+")
 
-    /**
-     * 解析一段 OCR 文本（可能是整块弹框文本，允许夹带「复制分享」之类的无关行）。
-     * 解析不出 / 不可信 ⇒ null（调用方按未识别处理，**不带残缺记录继续**）。
-     */
-    fun parse(text: String): ParsedBadge? {
-        val body = normalize(text)
-        val matches = BADGE_LINE.findAll(body).toList()
-        if (matches.size != 1) return null
-        val badge = matches.single()
-        val inner = NAME_AND_CODE.matchEntire(badge.groupValues[1]) ?: return null
-        val score = badge.groupValues[2].toIntOrNull() ?: return null
-        return ParsedBadge(
-            cardName = inner.groupValues[1],
-            code = inner.groupValues[2],
-            score = score,
-        )
+    /** 分数块文本 → 分数；块里取不出**唯一**数字串 ⇒ null（多个 = 不可信）。 */
+    fun parseScore(text: String): Int? {
+        val runs = DIGIT_RUN.findAll(normalize(text)).map { it.value }.toList()
+        if (runs.size != 1) return null
+        return runs.single().toIntOrNull()
     }
 
-    /**
-     * 归一化：全角 ASCII → 半角、字母转大写、**去掉所有空白**。
-     * 全角空格（U+3000）一并当空白去掉；其余字符原样保留（立牌名是汉字，不做任何改写）。
-     */
+    /** 立牌名称块文本 → 立牌名：剥【】与空白，至少含一个汉字，非空。 */
+    fun parseName(text: String): String? {
+        val name = stripLeadingLabels(normalize(text)).removeSurrounding("【", "】").trim()
+        if (name.isEmpty()) return null
+        if (name.none { it in '\u4e00'..'\u9fff' }) return null
+        return name
+    }
+
+    /** 分享码块文本 → 分享码：**唯一**一串 ≥4 位字母数字（大写归一；标签是汉字，天然被隔开）。 */
+    fun parseCode(text: String): String? {
+        val runs = ALNUM_RUN.findAll(normalize(text)).filter { it.value.length >= 4 }.toList()
+        if (runs.size != 1) return null
+        return runs.single().value
+    }
+
+    /** 归一化：全角 ASCII → 半角、字母转大写、去掉所有空白（全角空格一并去）。 */
     private fun normalize(raw: String): String {
         val unified = buildString {
             for (ch in raw) {
@@ -67,5 +64,14 @@ object ShareCodeParser {
             }
         }
         return unified.uppercase()
+    }
+
+    /** 从开头剥标签（剥完还可能剩一个，循环到没有为止；标签后的分隔符一并削掉）。 */
+    private fun stripLeadingLabels(text: String): String {
+        var out = text
+        while (true) {
+            val label = LEADING_LABELS.firstOrNull { out.startsWith(it) } ?: return out
+            out = out.removePrefix(label).trimStart(':', '·', '-', '/', '.', ' ')
+        }
     }
 }
