@@ -92,6 +92,7 @@ import com.example.mastermechanic.patrol.RealmPickDecision
 import com.example.mastermechanic.patrol.ServerListScan
 import com.example.mastermechanic.patrol.SignalNames
 import com.example.mastermechanic.servers.ServerListStore
+import com.example.mastermechanic.decision.AnchorHit
 import com.example.mastermechanic.decision.AnchorLocator
 import com.example.mastermechanic.decision.RecognitionLoop
 import com.example.mastermechanic.recognition.SignalDetector
@@ -3554,8 +3555,20 @@ class CaptureService : Service() {
                 ?.let { BadgeScenes.watchStatesFor(it.step, result.state) }.orEmpty()
         }
         patrolExpected?.watch(watch)
+        // **只定位这一步要用的锚点**（2026-10-22 提速）：原来每轮把当前状态的可点锚点全量扫一遍，
+        // 活动中心 4 条 ≈272ms、获取立牌 3 条 ≈192ms、我的立牌 2 条 ≈181ms（护栏后），而一步只用一条。
+        // 换号段仍走全量（`PatrolRunner` 按名字取，一屏多条是常态，见 `AnchorLocator.locate` 的事故注释）。
         val anchors = if (!result.frozen && result.state != UiState.UNKNOWN) {
-            anchorLocator?.locate(gray, result.state).orEmpty()
+            val locator = anchorLocator
+            when {
+                locator == null -> emptyList()
+                task.phase == BadgeSession.Phase.SWITCH -> locator.locate(gray, result.state)
+                else -> {
+                    val step = task.collect?.step
+                    val need = step?.let { BadgeScenes.neededAnchors(it, result.state) }.orEmpty()
+                    if (need.isEmpty()) emptyList() else locator.locate(gray, result.state, need)
+                }
+            }
         } else {
             emptyList()
         }
@@ -3572,7 +3585,7 @@ class CaptureService : Service() {
         generation: Long,
         result: RoundResult,
         gray: GrayImage,
-        anchors: List<com.example.mastermechanic.decision.AnchorHit>,
+        anchors: List<AnchorHit>,
         now: Long,
     ) {
         val current = task.switch ?: return
@@ -3629,7 +3642,7 @@ class CaptureService : Service() {
         generation: Long,
         result: RoundResult,
         gray: GrayImage,
-        anchors: List<com.example.mastermechanic.decision.AnchorHit>,
+        anchors: List<AnchorHit>,
         now: Long,
     ) {
         val collect = task.collect ?: return
@@ -3646,8 +3659,8 @@ class CaptureService : Service() {
                 anchors = anchors,
                 nowMs = now,
                 lastClickAtMs = BadgeSession.lastClickAtMs,
-                claimPlan = claimPlanOf(gray, result.state, collect.step),
-                cardPlan = cardPlanOf(gray, result.state, collect.step),
+                claimPlan = claimPlanOf(anchors, result.state, collect.step),
+                cardPlan = cardPlanOf(anchors, result.state, collect.step),
                 reading = badgeReadingOf(gray, result.state, collect.step, server),
                 decisionId = "badge-${badgeSeq + 1}",
             ),
@@ -3744,15 +3757,17 @@ class CaptureService : Service() {
      * - ≥2 处 ⇒ **停下**（分不清哪一处是「登录游戏」那行）并说明怎么补标定（红线 3：不选"最像的"）。
      */
     private fun claimPlanOf(
-        gray: GrayImage,
+        anchors: List<AnchorHit>,
         state: UiState,
         step: BadgeFlow.Step,
     ): BadgeRunner.ClaimPlan {
         if (step != BadgeFlow.Step.CLAIM_TASK || state != UiState.BADGE_CLAIM) {
             return BadgeRunner.ClaimPlan.Waiting
         }
-        val locator = anchorLocator ?: return BadgeRunner.ClaimPlan.Failed("没有标定结果")
-        val hits = locator.locateAll(gray, UiState.BADGE_CLAIM, BadgeAnchors.BADGE_CLAIM)
+        if (anchorLocator == null) return BadgeRunner.ClaimPlan.Failed("没有标定结果")
+        // **复用本轮已定位的命中**（2026-10-22 提速）：`stepBadge` 已经按 `neededAnchors` 把
+        // 「领取」这条多实例锚点定位过（多命中语义并入 `locate`），这里再跑一次等于白烧 ≈64ms/轮。
+        val hits = anchors.filter { it.name == BadgeAnchors.BADGE_CLAIM }
         return when (hits.size) {
             0 -> BadgeRunner.ClaimPlan.AlreadyClaimed(
                 "「登录游戏」那行没找到可点的「领取」（多半已是「已领取」）",
@@ -3779,15 +3794,16 @@ class CaptureService : Service() {
      * 而不是被重复读一遍。
      */
     private fun cardPlanOf(
-        gray: GrayImage,
+        anchors: List<AnchorHit>,
         state: UiState,
         step: BadgeFlow.Step,
     ): BadgeRunner.CardPlan {
         if (step != BadgeFlow.Step.PICK_CARD || state != UiState.BADGE_MY) {
             return BadgeRunner.CardPlan.Waiting
         }
-        val locator = anchorLocator ?: return BadgeRunner.CardPlan.Failed("没有标定结果")
-        val hits = locator.locateAll(gray, UiState.BADGE_MY, BadgeAnchors.BADGE_SHARE)
+        if (anchorLocator == null) return BadgeRunner.CardPlan.Failed("没有标定结果")
+        // 同 [claimPlanOf]：复用本轮已定位的「分享」多命中（原先这里又跑了一遍 `locateAll`）。
+        val hits = anchors.filter { it.name == BadgeAnchors.BADGE_SHARE }
             .sortedBy { it.frameY }
         if (hits.isEmpty()) {
             return BadgeRunner.CardPlan.NoMore("没找到可点的「分享」（卡都读过了，或「分享」没标定）")

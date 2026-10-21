@@ -140,6 +140,59 @@ class BadgeScenesTest {
     }
 
     @Test
+    fun neededAnchorsAlwaysCoverWhatTheStepClicksAndVerifies() {
+        // 提速刀（2026-10-22）：采集层只定位这一步要用的锚点。
+        // 漏掉 `action.anchor` ⇒ 该点的一直点不到；漏掉 `expectAnchor` ⇒ 同屏验证永远不通过（会白等到超时）。
+        for (step in BadgeFlow.Step.entries) {
+            for (action in BadgeScenes.actions(step)) {
+                val need = BadgeScenes.neededAnchors(step, action.state)
+                assertTrue("$step 在 ${action.state} 上没把要点的「${action.anchor}」列进定位清单", action.anchor in need)
+                action.expectAnchor?.let {
+                    assertTrue("$step 没把验证用的「$it」列进定位清单", it in need)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun neededAnchorsForJudgmentStepsAreExactlyTheirCriteria() {
+        val branch = BadgeScenes.neededAnchors(BadgeFlow.Step.DECIDE_BRANCH, UiState.ACTIVITY_CENTER)
+        assertEquals(
+            setOf(
+                BadgeAnchors.BADGE_CLAIM_ENTRY,
+                BadgeAnchors.BADGE_SHARE_ENTRY,
+                BadgeAnchors.BADGE_EMPTY_SLOT,
+            ),
+            branch,
+        )
+        // 画面不是判定步所在的那一屏 ⇒ 一条都不定位（编排器本来也不会在那儿动手）
+        assertEquals(emptySet<String>(), BadgeScenes.neededAnchors(BadgeFlow.Step.DECIDE_BRANCH, UiState.HALL))
+
+        assertEquals(
+            setOf(BadgeAnchors.BADGE_SHARE),
+            BadgeScenes.neededAnchors(BadgeFlow.Step.PICK_CARD, UiState.BADGE_MY),
+        )
+        // 读取步只看 OCR 区域，不需要定位任何锚点（原先每轮白扫 2 条 ≈128ms）
+        assertEquals(emptySet<String>(), BadgeScenes.neededAnchors(BadgeFlow.Step.READ_CARD, UiState.BADGE_SHARE))
+        assertEquals(emptySet<String>(), BadgeScenes.neededAnchors(BadgeFlow.Step.READ_FIRST, UiState.BADGE_SHARE))
+    }
+
+    @Test
+    fun neededAnchorsStayWithoutTheOtherStatesOfTheSameStep() {
+        // CLAIM_FINISH 有两个动作（继续 / 关闭），但同一轮只可能站在一个画面上：
+        // 清单里不该出现另一条（那正是"白扫"的来源）。两条都要验证的是"点完回活动中心"，与锚点无关。
+        val need = BadgeScenes.neededAnchors(BadgeFlow.Step.CLAIM_FINISH, UiState.BADGE_CLAIM)
+        assertEquals(
+            setOf(BadgeAnchors.BADGE_CONTINUE, BadgeAnchors.BADGE_CLAIM_CLOSE),
+            need,
+        )
+        assertEquals(
+            setOf(BadgeAnchors.HALL_ACTIVITY),
+            BadgeScenes.neededAnchors(BadgeFlow.Step.ENTER_ACTIVITY, UiState.HALL),
+        )
+    }
+
+    @Test
     fun activityIsReadyOnlyWhenBothEntriesAreLocated() {
         assertFalse(BadgeScenes.activityReady(setOf(BadgeAnchors.BADGE_CLAIM_ENTRY)))
         assertFalse(BadgeScenes.activityReady(setOf(BadgeAnchors.BADGE_SHARE_ENTRY)))

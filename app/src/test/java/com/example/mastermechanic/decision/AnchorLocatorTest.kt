@@ -181,6 +181,56 @@ class AnchorLocatorTest {
     }
 
     @Test
+    fun onlyLocatesTheAnchorsTheStepAsksFor() {
+        // 提速刀（2026-10-22）：立牌每轮只定位**本步要用的**锚点（`BadgeScenes.neededAnchors`）。
+        // 这里钉住三件事：只搜传进来的；没传的确实**没被搜**（画面里明明有它）；空集 = 全量（旧行为不变）。
+        val (frame, template, _) =
+            scene(200, 150, blockX = 40, blockY = 50, blockWidth = 14, blockHeight = 11, seed = 631)
+        val locator = AnchorLocator(
+            mapOf(
+                UiState.ACTIVITY_CENTER to listOf(
+                    anchor("badge_claim_entry", template),
+                    anchor("badge_share_entry", template),
+                ),
+            ),
+            params,
+        )
+
+        assertEquals(
+            listOf("badge_claim_entry"),
+            locator.locate(frame, UiState.ACTIVITY_CENTER, setOf("badge_claim_entry")).map { it.name },
+        )
+        assertEquals(
+            "空集必须等价于全量（巡逻流程走的就是这条）",
+            listOf("badge_claim_entry", "badge_share_entry"),
+            locator.locate(frame, UiState.ACTIVITY_CENTER).map { it.name },
+        )
+        assertEquals(
+            "清单里没有的锚点一条都不搜",
+            emptyList<AnchorHit>(),
+            locator.locate(frame, UiState.ACTIVITY_CENTER, setOf("badge_empty_slot")),
+        )
+    }
+
+    @Test
+    fun multiHitAnchorsReturnEveryPositionInsideTheStepScopedLocate() {
+        // 「领取」「分享」是同模板多实例：按步定位时这些锚点仍要拿到**全部**命中
+        // （采集层据此按行文字 / 卡序消歧，红线 3；同一轮复用，不再单独跑 locateAll）。
+        val (frame, template, patch) =
+            scene(200, 150, blockX = 40, blockY = 50, blockWidth = 14, blockHeight = 11, seed = 641)
+        SyntheticImages.drawPattern(frame, 140, 50, 14, 11, patch)
+        val locator = AnchorLocator(
+            anchorsByState = mapOf(UiState.BADGE_CLAIM to listOf(anchor("badge_claim", template))),
+            params = params,
+            multiHitAnchors = setOf("badge_claim"),
+        )
+
+        val hits = locator.locate(frame, UiState.BADGE_CLAIM, setOf("badge_claim"))
+        assertEquals("多实例锚点要回两处（不能被当成位置歧义否决）", 2, hits.size)
+        assertEquals(setOf("badge_claim"), hits.map { it.name }.toSet())
+    }
+
+    @Test
     fun emptyLocatorIsExplicitAndLocatesNothing() {
         val frame = SyntheticImages.background(120, 90, seed = 451)
         val locator = AnchorLocator(emptyMap(), params)

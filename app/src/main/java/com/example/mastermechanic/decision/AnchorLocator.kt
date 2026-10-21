@@ -134,11 +134,33 @@ class AnchorLocator(
      *
      * ⇒ **只要一条**的流程请用 [locateFirstHit]（它单独实现，语义写在那边）。
      */
-    fun locate(gray: GrayImage, state: UiState): List<AnchorHit> {
-        val specs = specsByState[state].orEmpty()
+    fun locate(gray: GrayImage, state: UiState): List<AnchorHit> =
+        locate(gray, state, only = emptySet())
+
+    /**
+     * 只定位 [only] 里的锚点（**空集 = 全部**，与上一行重载等价）——临时需求提速（2026-10-22）。
+     *
+     * 为什么要这一刀：`stepBadge` 原先每轮把当前状态**全部**可点锚点定位一遍，而一步其实只用一条
+     * （`BadgeScenes.Action.anchor` 早就写明了）。真机成本（护栏后）：活动中心 4 条 ≈272ms、
+     * 获取立牌 3 条 ≈192ms、我的立牌 2 条 ≈181ms ⇒ 每轮白跑 1~3 条。
+     *
+     * ⚠ 巡逻流程（`stepPatrol`）**必须继续走不带 `only` 的重载**：它按名字取锚点，一屏多条是常态
+     * （见 [locate] 注释里的 2026-09-30 真机事故）。
+     *
+     * [multiHitAnchors] 里的锚点在这一轮**返回全部命中**（不按位置歧义否决）——立牌的「领取」「分享」
+     * 本来就同屏多处，`locateAll` 的语义并进来后，采集层同一轮只需定位一次，不必再单独跑一遍。
+     */
+    fun locate(gray: GrayImage, state: UiState, only: Set<String>): List<AnchorHit> {
+        val specs = specsByState[state].orEmpty().filter { only.isEmpty() || it.name in only }
         if (specs.isEmpty()) return emptyList()
         val detector = SignalDetector(specs, params)
-        return specs.mapNotNull { spec -> hitOf(spec, detector.detectSignal(gray, spec)) }
+        return specs.flatMap { spec ->
+            if (spec.name in multiHitAnchors) {
+                allHitsOf(spec, detector, gray)
+            } else {
+                listOfNotNull(hitOf(spec, detector.detectSignal(gray, spec)))
+            }
+        }
     }
 
     /**
@@ -259,8 +281,13 @@ class AnchorLocator(
     fun locateAll(gray: GrayImage, state: UiState, anchorName: String): List<AnchorHit> {
         if (anchorName !in multiHitAnchors) return emptyList()
         val spec = specsByState[state].orEmpty().firstOrNull { it.name == anchorName } ?: return emptyList()
+        return allHitsOf(spec, SignalDetector(listOf(spec), params), gray)
+    }
+
+    /** 多实例锚点的「全部命中」（[locateAll] 与带 `only` 的 [locate] 共用这一份映射）。 */
+    private fun allHitsOf(spec: SignalSpec, detector: SignalDetector, gray: GrayImage): List<AnchorHit> {
         val template = spec.templates.first()
-        return SignalDetector(listOf(spec), params).detectAllHits(gray, spec).map { peak ->
+        return detector.detectAllHits(gray, spec).map { peak ->
             val clickX = peak.x + template.width / 2.0
             val clickY = peak.y + template.height / 2.0
             AnchorHit(

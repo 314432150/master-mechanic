@@ -153,6 +153,36 @@ object BadgeScenes {
     fun isJudgmentStep(step: BadgeFlow.Step): Boolean = actions(step).isEmpty()
 
     /**
+     * 这一步在 [state] 上**需要定位哪几条锚点**（提速，2026-10-22）：只定位这些，别把整屏扫一遍。
+     *
+     * 为什么要这张表：采集层原先每轮把当前状态**全部**可点锚点都定位一遍，而一步其实只用一条。
+     * 单条成本护栏后约 60~120ms ⇒ 活动中心每轮白跑 3 条、获取立牌 2 条、我的立牌 1 条。
+     *
+     * 三条来源，**缺一条就出错**：
+     * 1. 本步动作的锚点（[Action.anchor]）；
+     * 2. 同屏验证用的 [Action.expectAnchor]（例：点「领取」之后要看「点击继续」是否出现）；
+     * 3. 判定步自己的判据（活动中心就绪的两个入口 + 空槽、选卡时的「分享」）。
+     *
+     * 返回**空集 = 这一步不需要定位**：读取步只看 OCR 区域；画面不是本步的动作画面时也不该动手
+     * （编排器本来就不会在那个画面上点）。
+     */
+    fun neededAnchors(step: BadgeFlow.Step, state: UiState): Set<String> {
+        val fromActions = actions(step)
+            .filter { it.state == state }
+            .flatMap { action -> listOfNotNull(action.anchor, action.expectAnchor) }
+        val fromJudgment = when {
+            step == BadgeFlow.Step.DECIDE_BRANCH && state == UiState.ACTIVITY_CENTER ->
+                readyAnchors + BadgeAnchors.BADGE_EMPTY_SLOT
+
+            step == BadgeFlow.Step.PICK_CARD && state == UiState.BADGE_MY ->
+                setOf(BadgeAnchors.BADGE_SHARE)
+
+            else -> emptySet()
+        }
+        return fromActions.toSet() + fromJudgment
+    }
+
+    /**
      * **每轮该搜哪些画面**（与 `PatrolScenes.watchStatesFor` 同一口径，含自愈阀）：
      * 有结论 ⇒ 当前屏 + 这一步的验证目标；认不出来 ⇒ 退回**整条立牌链**（[allStates]）。
      *
