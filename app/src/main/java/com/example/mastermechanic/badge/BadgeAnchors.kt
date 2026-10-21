@@ -70,17 +70,17 @@ object BadgeAnchors {
     const val BADGE_MY_CLOSE = "badge_my_close"
 
     /**
-     * 复制分享弹框 · 分享码文本区（**只圈区域**，不点）：分享码那一块。
+     * 分享立牌弹框 · 立牌分享码（**只圈区域**，不点）：分享码那一块。
      * 2026-10-21 真机确认：弹框上立牌信息**分三块**（分数 / 立牌名称 / 分享码），三块各圈一个区域
      * 送去文字识别（[ShareCodeParser] 逐块取值）。剪贴板里 `【…】价值…分` 那种整行格式是点
      * 「复制分享码」才有的文本 —— 不考虑（用户 2026-10-21 口径）。
      */
     const val BADGE_SHARE_TEXT_AREA = "badge_share_text_area"
 
-    /** 复制分享弹框 · 分数识别区域（**只圈区域**）：三块之一。 */
+    /** 分享立牌弹框 · 立牌分数（**只圈区域**）：三块之一。 */
     const val BADGE_SHARE_SCORE_AREA = "badge_share_score_area"
 
-    /** 复制分享弹框 · 立牌名称识别区域（**只圈区域**）：三块之一。 */
+    /** 分享立牌弹框 · 立牌名称（**只圈区域**）：三块之一。 */
     const val BADGE_SHARE_NAME_AREA = "badge_share_name_area"
 
     /**
@@ -159,9 +159,9 @@ object BadgeAnchors {
         )
 
         UiState.BADGE_SHARE -> listOf(
-            PatrolAnchors.Purpose("分数识别区域", BADGE_SHARE_SCORE_AREA),
-            PatrolAnchors.Purpose("立牌名称识别区域", BADGE_SHARE_NAME_AREA),
-            PatrolAnchors.Purpose("分享码文本区", BADGE_SHARE_TEXT_AREA),
+            PatrolAnchors.Purpose("立牌分数", BADGE_SHARE_SCORE_AREA),
+            PatrolAnchors.Purpose("立牌名称", BADGE_SHARE_NAME_AREA),
+            PatrolAnchors.Purpose("立牌分享码", BADGE_SHARE_TEXT_AREA),
             PatrolAnchors.Purpose("切换", BADGE_SWITCH),
             PatrolAnchors.Purpose("关闭", BADGE_SHARE_CLOSE),
         )

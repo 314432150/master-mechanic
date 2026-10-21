@@ -11271,3 +11271,21 @@
   （**重装已重置无障碍 / 采集授权，需重新授权**）。
 - **待真机核对**：下一轮跑到日志里看每步耗时（点击 → 状态变化的间隔）是否从 1.5~2.5s 落到 ~1–1.5s；
   重点确认「点击继续」的同屏验证仍能通过（它现在也在按步清单里）。
+
+### 2026-10-22（立牌文案改名：标定页 chip 与状态标签）
+
+用户口径，四处改名（**只改显示文案，锚点名 / 状态枚举值不动** ⇒ 已框的标定产物完全不受影响）：
+
+| 原 | 现 | 位置 |
+| --- | --- | --- |
+| 复制分享弹框 | **分享立牌弹框** | `UiState.BADGE_SHARE` 标签（标定页「归属状态」chip + 日志里的状态转移行） |
+| 分数识别区域 | **立牌分数** | `BadgeAnchors.purposesFor(BADGE_SHARE)` 用途 chip |
+| 立牌名称识别区域 | **立牌名称** | 同上 |
+| 分享码文本区 | **立牌分享码** | 同上 |
+
+**未改（用户没提，保持原样，要改说一声）**：`BadgeFlow.Step` 的日志标签「打开复制分享」/「关闭复制分享」、
+`BadgeAnchors.clickLabel(BADGE_SHARE_CLOSE)` 的「关闭复制分享弹框」，以及代码注释里的旧叫法
+（`ShareCodeParser` / `BadgeFlow` 头注释仍写"复制分享弹框"）。
+
+验证：`BadgeAnchorsTest` / `PatrolAnchorsTest` / `BadgeScenesTest` / `FloatingLabelTextTest` 全绿；
+`assembleDebug` 通过；`install -r` Success、`am start` 已拉起（**授权已重置，需重新授权**）。
