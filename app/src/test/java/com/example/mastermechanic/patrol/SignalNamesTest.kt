@@ -139,6 +139,62 @@ class SignalNamesTest {
     }
 
     @Test
+    fun renamedScreenLabelsAreStillRecognisedAsAutomaticText() {
+        // 2026-10-22 这一天改过两次名：活动中心 → 立牌活动（早）→ 活动中心（晚，两屏合并）。
+        // 产物里躺着的是**旧标签**的句子，不认成"程序写的"就永远改不掉
+        //（真机：立牌活动的「获取」标志一直写着「活动中心」的界面标志）
+        val history = SignalNames.autoNoteHistory(UiState.ACTIVITY_CENTER, listOf(SignalRole.MARKER), null)
+        assertTrue("新标签的界面标志", "「活动中心」的界面标志" in history)
+        assertTrue("新标签的锚点", "「活动中心」的锚点" in history)
+        assertTrue("早上的旧标签", "「立牌活动」的界面标志" in history)
+        assertTrue("拆两屏时的另一个旧标签", "「其他活动页」的界面标志" in history)
+        assertTrue("同上（短标签）", "「其他活动」的锚点" in history)
+    }
+
+    @Test
+    fun renamedScreenNotesAreCorrectedButHandWrittenNotesAreNot() {
+        var data = upsert(
+            null, "badge_claim_entry", UiState.ACTIVITY_CENTER, SignalRole.MARKER,
+            note = "「立牌活动」的界面标志",
+        )
+        data = upsert(
+            data, "badge_claim_entry", UiState.ACTIVITY_CENTER, SignalRole.ANCHOR,
+            purpose = "badge_claim_entry", note = "我自己写的",
+        )
+        val (updated, count) = CalibrationSignals.withDefaultNotes(
+            current = data,
+            defaultFor = { state, role, purpose -> SignalNames.defaultNoteFor(state, role, purpose) },
+            autoNoteHistory = { state, roles, purpose -> SignalNames.autoNoteHistory(state, roles, purpose) },
+        )
+
+        assertEquals(1, count)
+        assertEquals("「活动中心」的界面标志", updated.noteOf("badge_claim_entry", SignalRole.MARKER))
+        assertEquals("手写的不动", "我自己写的", updated.noteOf("badge_claim_entry", SignalRole.ANCHOR))
+    }
+
+    @Test
+    fun returnAnchorNoteSaysItsOwnPurposeNotTheMarkerSentence() {
+        // 真机 2026-10-22：返回按钮的锚点备注被写成了「其他活动」的界面标志（标志的句子串到了锚点上）。
+        // 锚点自己的文本是**用途**（返回）；标志那面照旧是"「活动中心」的界面标志"
+        var data = upsert(
+            null, "badge_activity_exit", UiState.ACTIVITY_CENTER, SignalRole.ANCHOR,
+            purpose = "badge_activity_exit", note = "「其他活动」的界面标志",
+        )
+        data = upsert(
+            data, "badge_activity_exit", UiState.ACTIVITY_CENTER, SignalRole.MARKER,
+            note = "「其他活动」的界面标志",
+        )
+        val (updated, _) = CalibrationSignals.withDefaultNotes(
+            current = data,
+            defaultFor = { state, role, purpose -> SignalNames.defaultNoteFor(state, role, purpose) },
+            autoNoteHistory = { state, roles, purpose -> SignalNames.autoNoteHistory(state, roles, purpose) },
+        )
+
+        assertEquals("返回", updated.noteOf("badge_activity_exit", SignalRole.ANCHOR))
+        assertEquals("「活动中心」的界面标志", updated.noteOf("badge_activity_exit", SignalRole.MARKER))
+    }
+
+    @Test
     fun upsertKeepsThePrecedenceHandTypedThenOldThenDefault() {
         // ① 手填的赢过一切
         val typed = upsert(

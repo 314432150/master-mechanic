@@ -234,7 +234,10 @@ object CalibrationSignals {
         //
         // [fallbackNote] 是写入端按"用途 / 界面"派生的**中文功能描述**（2026-10-01 用户口径）：有了它，
         // 标定清单行与悬浮窗提示都念得出"这是大厅的设置入口"，不必靠 `hall_settings` 这种英文 ID 猜。
-        val inheritedNote = current?.signals.orEmpty().firstOrNull { it.id == id }?.note.orEmpty()
+        // ⚠ 只继承**同一条记录**（ID + 角色）的备注（2026-10-22）：标志与锚点各说各的（2026-10-01 口径），
+        // 从同 ID 的另一面继承会把"「其他活动」的界面标志"写到它的锚点上（真机就是这样来的）。
+        val inheritedNote = current?.signals.orEmpty()
+            .firstOrNull { it.id == id && it.role == role }?.note.orEmpty()
         val signals = current?.signals.orEmpty().filterNot { it.id == id && it.role == role } +
             CalibrationData.SignalEntry(
                 id = id,
@@ -546,6 +549,8 @@ object CalibrationSignals {
     /** 记录名 → 归属状态（由状态规则反查，标志与锚点通用；产物中必有，缺失返回 null）。 */
     fun stateOf(data: CalibrationData, name: String): UiState? = data.stateOf(name)
 
+
+
     /** 参数文本 → 参数；任一非法返回 null（界面据此提示并拒绝写入）。 */
     fun parseParams(
         thresholdText: String,
@@ -566,6 +571,9 @@ object CalibrationSignals {
      * 由记录列表重建状态规则：以既有规则给出各记录的归属状态，[assigned] 覆盖刚写入的那条。
      * 规则顺序按记录首次出现顺序（确定性，产物文本可稳定复现）；
      * 同一状态下按**角色**分流：标志进 `signalNames`、锚点进 `anchorNames`（T2-3）。
+     *
+     * 一个元素（ID）的两面同属一屏：2026-10-22 晚把「立牌活动 / 其他活动」合并成一个「活动中心」后，
+     * "同 ID 的标志与锚点跨两屏"不再存在 ⇒ 归属仍按 ID 单值算（换状态就是整体搬走）。
      */
     private fun rebuildRules(
         signals: List<CalibrationData.SignalEntry>,

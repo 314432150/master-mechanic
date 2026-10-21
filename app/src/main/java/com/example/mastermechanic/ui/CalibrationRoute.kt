@@ -804,12 +804,15 @@ fun CalibrationRoute(
         // 点的是哪一行就显示哪条记录（2026-10-01 分两行显示后，两行的模板/窗口可能不一样）；
         // `viewingRole` 为 null（老路径）时沿用"标志优先"
         val shown = element?.firstOrNull { it.role == viewingRole } ?: marker ?: element?.first()
-        val differ = marker != null && anchor != null && (
-            marker.window != anchor.window ||
+        // 两面"本该是同一次框选"只比**模板**（2026-10-22）：锚点的搜索余量比标志大 16px/边
+        // （`SelectionWindow.ANCHOR_MARGIN_PX - MARKER_MARGIN_PX`），同一次框选写出来的两边
+        // **本来就差一圈** ⇒ 原来连窗口一起比，会对每个双角色元素误报。
+        val differ = marker != null && anchor != null &&
+            (
                 marker.templates.first().width != anchor.templates.first().width ||
-                marker.templates.first().height != anchor.templates.first().height ||
-                !marker.templates.first().pixels.contentEquals(anchor.templates.first().pixels)
-            )
+                    marker.templates.first().height != anchor.templates.first().height ||
+                    !marker.templates.first().pixels.contentEquals(anchor.templates.first().pixels)
+                )
         if (data != null && shown != null) {
             TemplateDetailDialog(
                 id = shown.id,

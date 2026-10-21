@@ -63,12 +63,12 @@ class BadgePoolViewTest {
     }
 
     @Test
-    fun rowShowsCardNameAndScoreButNotTheServerName() {
-        // 2026-10-22 用户口径：立牌池列表不显示服务器名，改为显示立牌名称 + 分数
+    fun rowShowsServerScoreAndCode() {
+        // 2026-10-22 第三次口径：行上是**区服名 · 分数 · 分享码**（立牌名不上屏，只在复制内容与读屏里）
         val rows = BadgePoolView.rows(BadgeData(records = unsorted), expanded = true)
         val top = rows.first()
-        assertEquals("立牌甲 · 877分", top.displayText)
-        assertEquals("服务器名不该出现在显示文字里", false, top.displayText.contains(top.serverName))
+        assertEquals("发条权杖 · 877分 · AAAA11", top.displayText)
+        assertEquals("立牌名不该出现在显示文字里", false, top.displayText.contains(top.cardName))
     }
 
     @Test

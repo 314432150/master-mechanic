@@ -331,6 +331,56 @@ class CalibrationCodecTest {
     }
 
     @Test
+    fun legacyStateNamesStillLoadButAreWrittenBackAsNewNames() {
+        // 2026-10-22 这一天改过两次名：ACTIVITY_CENTER → BADGE_ACTIVITY（早，按"立牌活动"拆两屏）
+        // → ACTIVITY_CENTER（晚，两屏合并回一个「活动中心」）。
+        // 真机上已标好的产物里可能存着其中任何一个旧名，用户口径是「不重标」⇒ 解析层认旧名，写出恒为新名。
+        val original = CalibrationData(
+            frameWidth = 800,
+            frameHeight = 600,
+            params = params,
+            signals = listOf(
+                CalibrationData.SignalEntry(
+                    "badge_activity_exit",
+                    SearchWindow(0.02, 0.02, 0.10, 0.08),
+                    listOf(template(602)),
+                ),
+                CalibrationData.SignalEntry(
+                    "badge_activity_exit",
+                    SearchWindow(0.02, 0.02, 0.10, 0.08),
+                    listOf(template(602)),
+                    SignalRole.ANCHOR,
+                    purpose = "返回",
+                ),
+            ),
+            stateRules = listOf(
+                CalibrationData.StateRule(
+                    UiState.ACTIVITY_CENTER,
+                    listOf("badge_activity_exit"),
+                    listOf("badge_activity_exit"),
+                ),
+            ),
+        )
+
+        val encoded = CalibrationCodec.encode(original)
+        for (legacy in listOf("BADGE_ACTIVITY", "ACTIVITY_OTHER", "BADGE_ACTIVITY_OTHER")) {
+            val legacyText = encoded
+                .replace("state=ACTIVITY_CENTER|", "state=$legacy|")
+                .replace("anchor=ACTIVITY_CENTER|", "anchor=$legacy|")
+            val decoded = CalibrationCodec.decode(legacyText)
+
+            assertEquals(listOf(UiState.ACTIVITY_CENTER), decoded.stateRules.map { it.state })
+            assertEquals(listOf("badge_activity_exit"), decoded.stateRules.single().signalNames)
+            assertEquals(listOf("badge_activity_exit"), decoded.stateRules.single().anchorNames)
+
+            // 旧名只"读得懂"，不再写出去：再存一次应是新名
+            val rewritten = CalibrationCodec.encode(decoded)
+            assertTrue(rewritten.contains("state=ACTIVITY_CENTER|"))
+            assertTrue("旧名不应再写出：$legacy", !rewritten.contains("state=$legacy|"))
+        }
+    }
+
+    @Test
     fun rejectsDuplicateDefinitionsAndBadWindow() {
         val good = CalibrationCodec.encode(sampleData())
         // v4 六段式：ID|角色|窗口|用途|归属好友|备注（后三段本篇为空 → 结尾三个空段）

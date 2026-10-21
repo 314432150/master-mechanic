@@ -756,12 +756,18 @@
     <string name="floating_menu_glyph_badge_pool">★</string>
     <string name="floating_menu_badge_pool">立牌池</string>
     <!-- 立牌收集流程的启动入口（temp/badge-share-1021，2026-10-21；活动结束随分支移除）：
-         根菜单行 = 启动动作（与「换号 + 拜访」同理），它的数据在「更多 → 立牌池」看。 -->
+         根菜单行 = 启动动作（与「换号 + 拜访」同理），它的数据在「更多 → 立牌池」看。
+         2026-10-22 用户口径改名：「换号取立牌」→「**搜集立牌**」——
+         这条流程是**一整轮抛号**（按清单把每个区服换一遍、各收一遍），名字要说出"收集"这件事；
+         「换号」只是手段，写进名字反而让人以为是"换一次号顺带取一张"。
+         同时它是 **4 字**，与一级项其余各行（换号 / 只拜访 / 换号拜访）同长 ⇒ 菜单宽度不变。 -->
     <string name="floating_menu_glyph_badge_collect">◆</string>
-    <string name="floating_menu_badge_collect">换号取立牌</string>
+    <string name="floating_menu_badge_collect">搜集立牌</string>
     <string name="badge_pool_title">立牌池</string>
     <string name="badge_pool_empty">今天还没有收集到立牌</string>
-    <string name="badge_pool_row_desc">复制 %1$s 的 %2$d 分立牌分享码</string>
+    <!-- 读屏播报（2026-10-22 第二次调整）：行上只显示「分数 · 分享码」，
+         立牌名与区服名看不到也听不到就分不清是哪张牌 ⇒ 播报里补全三样。 -->
+    <string name="badge_pool_row_desc">复制 %1$s 的 %2$d 分分享码 %3$s</string>
     <string name="badge_pool_copy">复制</string>
     <string name="badge_pool_expand">展开全部</string>
     <string name="badge_pool_collapse">收起</string>

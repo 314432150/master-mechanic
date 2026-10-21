@@ -110,7 +110,7 @@ object PatrolRequestConsumer {
                 start(request.kind, request.friendName, request.serverName)
             }
 
-            // **换号取立牌**（temp/badge-share-1021）：走自己的任务（换号段 + 立牌支线），
+            // **搜集立牌**（temp/badge-share-1021）：走自己的任务（换号段 + 立牌支线），
             // 不进 `PatrolSession`（两条流程互斥、各自的状态机不同）
             PatrolRequestSignal.Kind.BADGE_COLLECT -> {
                 startToken++
@@ -246,7 +246,7 @@ object PatrolRequestConsumer {
      */
     private fun startBadge() {
         val context = appContext ?: run {
-            MmLog.w(TAG, "换号取立牌：消费方还没拿到应用上下文 ⇒ 不启动")
+            MmLog.w(TAG, "搜集立牌：消费方还没拿到应用上下文 ⇒ 不启动")
             return
         }
         val uiState = UiStateSignal.status
@@ -258,7 +258,7 @@ object PatrolRequestConsumer {
         )
         if (blocked != null) {
             val hits = recentHits.joinToString("、") { it.label }.ifEmpty { "（一屏都没命中）" }
-            MmLog.w(TAG, "换号取立牌：$blocked（不启动）｜滞回结论「${uiState.label}」，最近命中：$hits")
+            MmLog.w(TAG, "搜集立牌：$blocked（不启动）｜滞回结论「${uiState.label}」，最近命中：$hits")
             return
         }
         val effective = PatrolStartGate.effectiveState(uiState, recentHits)
@@ -272,8 +272,8 @@ object PatrolRequestConsumer {
         // 这里在**换号之前**把缺口一次说清（换号会登出当前账号，代价比一次日志大得多）。
         val gaps = badgeCalibrationGaps(context)
         if (gaps.isNotEmpty()) {
-            MmLog.w(TAG, "换号取立牌：标定产物不够跑完这条支线，未启动 —— ${gaps.joinToString("；")}")
-            MmLog.w(TAG, "换号取立牌：请到标定页把上面缺的框补上（锚点删掉/没框 ⇒ 那一屏永远对不上）")
+            MmLog.w(TAG, "搜集立牌：标定产物不够跑完这条支线，未启动 —— ${gaps.joinToString("；")}")
+            MmLog.w(TAG, "搜集立牌：请到标定页把上面缺的框补上（锚点删掉/没框 ⇒ 那一屏永远对不上）")
             notifyBlocked(
                 context,
                 "标定缺 " + gaps.size + " 项：" + gaps.first() + "（去标定页补框）",
@@ -287,7 +287,7 @@ object PatrolRequestConsumer {
             return
         }
         if (PatrolSession.current != null) {
-            MmLog.i(TAG, "换号取立牌：先停掉正在跑的巡查流程（同一时刻只允许一条流程）")
+            MmLog.i(TAG, "搜集立牌：先停掉正在跑的巡查流程（同一时刻只允许一条流程）")
             PatrolSession.stop()
         }
         val result = BadgeTask.start(context, switch, now)
@@ -295,12 +295,12 @@ object PatrolRequestConsumer {
             notifyBlocked(context, result.reason.orEmpty())
             return
         }
-        MmLog.i(TAG, "换号取立牌：起点 ${effective.label}，从换号第 ${switch.step.number} 步开始")
+        MmLog.i(TAG, "搜集立牌：起点 ${effective.label}，从换号第 ${switch.step.number} 步开始")
         Haptics.flowStarted(context)
     }
 
     /**
-     * **被拦下时说一句给人听**（2026-10-22 用户报"点换号取立牌没有反应"）。
+     * **被拦下时说一句给人听**（2026-10-22 用户报"点搜集立牌没有反应"）。
      *
      * 原来所有"不启动"都只写日志（那行在 `files/logs/` 里，用户在游戏里根本看不到），
      * 于是"被拦下"和"点了没生效"在体感上完全一样。这里补一次**短提示**：
@@ -310,8 +310,8 @@ object PatrolRequestConsumer {
      * （读整屏时还要"让开"的那套问题一概没有）。
      */
     private fun notifyBlocked(context: Context, reason: String) {
-        val text = "换号取立牌未启动：$reason"
-        MmLog.w(TAG, "换号取立牌：$reason ⇒ 不启动")
+        val text = "搜集立牌未启动：$reason"
+        MmLog.w(TAG, "搜集立牌：$reason ⇒ 不启动")
         val show = Runnable {
             runCatching { Toast.makeText(context.applicationContext, text, Toast.LENGTH_LONG).show() }
         }

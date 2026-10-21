@@ -29,7 +29,7 @@ object BadgeFlow {
      * 同一屏会出现多次（复制分享弹框被进两次：已选立牌一次、每张卡一次）。
      */
     enum class Step(val number: Int, val label: String) {
-        /** 1 大厅点「活动入口」→ 立牌活动（可能先落到「其他活动」⇒ 返回重进）。 */
+        /** 1 大厅点「活动入口」→ 活动中心，并等「获取立牌」出现（等不到 ⇒ 返回重进）。 */
         ENTER_ACTIVITY(1, "进入立牌活动"),
 
         /**
@@ -123,6 +123,15 @@ object BadgeFlow {
          * 超过 [ENTRY_MAX_ATTEMPTS] 如实停下，让用户手动进一次。
          */
         val entryAttempts: Int = 0,
+        /**
+         * 第 1 步在「活动中心」上**开始等「获取立牌」的时刻**（0 = 还不在等）。
+         *
+         * 2026-10-22 两屏合并后，`活动中心` 标志（左上返回）只证明"进了活动窗口"——立牌活动与其他
+         * 活动页都成立。判"进错了"只能靠**等不到「获取立牌」**：从看到活动中心起算，
+         * 持续 [ACTIVITY_READY_TIMEOUT_MS] 仍不出现 ⇒ 点返回重进（次数上限同上）。
+         * 一旦就绪、或画面离开活动中心，就清零（下一次进入重新起算）。
+         */
+        val centerSinceMs: Long = 0L,
         val cardsRead: Int = 0,
         val outcome: Outcome = Outcome.RUNNING,
         val reason: String? = null,
@@ -154,10 +163,11 @@ object BadgeFlow {
     }
 
     /**
-     * 「进入立牌活动」的预算（ms）：含活动弹窗被 FR-01 关掉后重新点击 + 加载。
+     * 「进入立牌活动」的预算（ms）：含活动弹窗被 FR-01 关掉后重新点击 + 加载 + **等就绪**。
      *
      * 2026-10-22 从 30s 提到 45s：这一屏现在还多了一种"进的是别的活动页 ⇒ 点返回、再点活动"的
-     * 兜底（单次往返约 4 秒），最多 [ENTRY_MAX_ATTEMPTS] 次。次数上限自己会停，不靠超时兜底。
+     * 兜底（单次往返约 4 秒 + 等待 [ACTIVITY_READY_TIMEOUT_MS]），最多 [ENTRY_MAX_ATTEMPTS] 次。
+     * 次数上限自己会停，不靠超时兜底。
      */
     const val ENTER_ACTIVITY_TIMEOUT_MS = 45_000L
 
@@ -165,9 +175,26 @@ object BadgeFlow {
      * 第 1 步最多点几次「活动入口」（含第一次）。
      *
      * 用户观察（2026-10-22）：进错活动时"点返回 → 再点活动"**极大概率**第二次就进立牌活动，
-     * 但不是必然 ⇒ 3 次仍不成立就停下报原因（FR-T5），绝不无限重试。
+     * 但不是必然 ⇒ 到上限就停下报原因（FR-T5），绝不无限重试。
+     *
+     * 2026-10-22 晚从 3 提到 4：判"进错"改成了**等满 [ACTIVITY_READY_TIMEOUT_MS]**，
+     * 慢设备上动效偶尔超过它就白挨一次返回；多给一次机会，别让一个区服整条中止。
      */
-    const val ENTRY_MAX_ATTEMPTS = 3
+    const val ENTRY_MAX_ATTEMPTS = 4
+
+    /**
+     * 在「活动中心」等「获取立牌」出现的上限（ms）——等不到 ⇒ 认为进的是**别的活动页**。
+     *
+     * 取值依据：活动中心每日首次打开会播"自动提交立牌"动效，真机实测 3~8 秒才可交互；
+     * 锚点也要等动效结束才认得出。10 秒 = 实测上限 8 秒 + 2 秒余量。
+     *
+     * ⚠ 这是**上限不是固定等待**：正确的立牌活动在「获取立牌」一出现就继续，不额外等；
+     * 只有真进错页时才付满这 10 秒。**不能按轮数**：一轮随设备负载在 0.4~0.9 秒之间浮动。
+     *
+     * 也不能更短：判早了会把**正在播动效的正确页面**踢回大厅，白跑一个来回还消耗一次
+     * [ENTRY_MAX_ATTEMPTS]。宁可多等，不要误踢。
+     */
+    const val ACTIVITY_READY_TIMEOUT_MS = 10_000L
 
     /** 通用单步预算（ms）：点一下就切屏的动作，15s 是 7~15 倍余量（同 `PatrolFlow.STEP_TIMEOUT_MS` 的理由）。 */
     const val STEP_TIMEOUT_MS = 15_000L
@@ -183,8 +210,14 @@ object BadgeFlow {
      */
     const val EMPTY_SLOT_ABSENT_CONFIRM_ROUNDS = 2
 
-    /** 读取立牌信息的预算（ms）：三块 OCR 各约 0.2~0.5s，留出重读一次的余量。 */
-    const val OCR_STEP_TIMEOUT_MS = 10_000L
+    /**
+     * 读取立牌信息的预算（ms）。
+     *
+     * 2026-10-22 从 10s 提到 20s：分享码改成**两次读数一致才落盘**（见 `CodeConfirmation`），
+     * 一屏三块 OCR 实测约 1~3s ⇒ 两次确认就要 2~6s，再留一次不一致时的重读余量，
+     * 10s 会在"读得慢但完全正常"的机器上先超时。领取卡（CLAIM_TASK）共用这个预算，放宽无害。
+     */
+    const val OCR_STEP_TIMEOUT_MS = 20_000L
 
     /** 相邻点击最小间隔（红线 6；真正兜底在 `ClickGate`）。 */
     const val CLICK_GAP_MS = 300L
@@ -250,6 +283,7 @@ object BadgeFlow {
         stepEnteredAtMs = nowMs,
         emptySlotAbsentRounds = 0,
         entryAttempts = 0,
+        centerSinceMs = 0L,
         lastActionAtMs = 0L,
         stateAtLastAction = null,
         framesStalledSinceMs = 0L,

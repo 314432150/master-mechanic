@@ -38,6 +38,7 @@ class BadgeRunnerTest {
         claimPlan: BadgeRunner.ClaimPlan = BadgeRunner.ClaimPlan.Waiting,
         cardPlan: BadgeRunner.CardPlan = BadgeRunner.CardPlan.Waiting,
         reading: BadgeRunner.Reading = BadgeRunner.Reading.Waiting,
+        nowMs: Long = now,
     ) = BadgeRunner.RoundInput(
         foreground = foreground,
         framesStalled = framesStalled,
@@ -45,7 +46,7 @@ class BadgeRunnerTest {
         popupHit = popupHit,
         popupConfirmed = popupConfirmed,
         anchors = anchors,
-        nowMs = now,
+        nowMs = nowMs,
         lastClickAtMs = lastClickAtMs,
         claimPlan = claimPlan,
         cardPlan = cardPlan,
@@ -97,33 +98,52 @@ class BadgeRunnerTest {
     }
 
     @Test
-    fun wrongActivityPageClicksBackThenRetriesTheActivityEntry() {
-        // 2026-10-22 用户口径：点「活动」有时进的是**别的活动页**（没有「获取立牌」，只是同一窗口的另一个活动）。
-        // 那里认成「其他活动页」⇒ 点左上角返回退回大厅 ⇒ 再点「活动入口」，步骤不推进。
-        val onOther = state(BadgeFlow.Step.ENTER_ACTIVITY)
-        val back = BadgeRunner.onRound(
-            onOther,
+    fun centerWithoutBadgeContentWaitsThenClicksBack() {
+        // 2026-10-22 两屏合并后：活动中心的标志只有左上返回，**立牌活动与其他活动页都命中它**
+        // ⇒ "进错了"只能靠**等不到「获取立牌」**来判。没等满 `ACTIVITY_READY_TIMEOUT_MS` 一下都不点。
+        val entering = state(BadgeFlow.Step.ENTER_ACTIVITY, nowMs = now).copy(centerSinceMs = now)
+        val waiting = BadgeRunner.onRound(
+            entering,
             input(
-                UiState.ACTIVITY_OTHER,
-                step = BadgeFlow.Step.ENTER_ACTIVITY,
-                anchors = listOf(hit(BadgeAnchors.BADGE_ACTIVITY_EXIT, 200.0, 90.0)),
+                UiState.ACTIVITY_CENTER,
+                anchors = listOf(hit(BadgeAnchors.BADGE_ACTIVITY_EXIT)),
+                nowMs = now + 3_000,
             ),
         )
-        assertEquals("点返回，而不是乱点", BadgeAnchors.BADGE_ACTIVITY_EXIT, back.request?.anchorName)
+        assertNull("还没等满就点返回，会把正在播动效的正确页面踢回大厅", waiting.request)
+        assertEquals("起算时刻不被刷新", now, waiting.state?.centerSinceMs)
+
+        val back = BadgeRunner.onRound(
+            waiting.state!!,
+            input(
+                UiState.ACTIVITY_CENTER,
+                anchors = listOf(hit(BadgeAnchors.BADGE_ACTIVITY_EXIT, 200.0, 90.0)),
+                nowMs = now + BadgeFlow.ACTIVITY_READY_TIMEOUT_MS,
+            ),
+        )
+        assertEquals("等满了才点返回", BadgeAnchors.BADGE_ACTIVITY_EXIT, back.request?.anchorName)
         assertEquals("点完仍停在第 1 步", BadgeFlow.Step.ENTER_ACTIVITY, back.state?.step)
 
         // 返回的落点 = 大厅：这一击算"通过"，但**不算这一步完成**（restartStep）
         val afterBack = BadgeRunner.onRound(
-            back.state!!.copy(lastActionAtMs = now - 500, stateAtLastAction = UiState.ACTIVITY_OTHER),
-            input(UiState.HALL),
+            back.state!!.copy(
+                lastActionAtMs = now + BadgeFlow.ACTIVITY_READY_TIMEOUT_MS - 500,
+                stateAtLastAction = UiState.ACTIVITY_CENTER,
+            ),
+            input(UiState.HALL, nowMs = now + BadgeFlow.ACTIVITY_READY_TIMEOUT_MS),
         )
         assertEquals("退回大厅后不许直接进第 2 步", BadgeFlow.Step.ENTER_ACTIVITY, afterBack.state?.step)
         assertEquals("已动手标记要清掉，下一轮才能重新点活动入口", 0L, afterBack.state?.lastActionAtMs)
+        assertEquals("离开活动中心 ⇒ 等待起算清零", 0L, afterBack.state?.centerSinceMs)
 
         // 下一轮在大厅：重新点「活动入口」，并且计数 +1
         val retry = BadgeRunner.onRound(
             afterBack.state!!,
-            input(UiState.HALL, anchors = listOf(hit(BadgeAnchors.HALL_ACTIVITY))),
+            input(
+                UiState.HALL,
+                anchors = listOf(hit(BadgeAnchors.HALL_ACTIVITY)),
+                nowMs = now + BadgeFlow.ACTIVITY_READY_TIMEOUT_MS + 1_000,
+            ),
         )
         assertEquals(BadgeAnchors.HALL_ACTIVITY, retry.request?.anchorName)
         assertEquals(1, retry.state?.entryAttempts)
@@ -149,12 +169,23 @@ class BadgeRunnerTest {
 
     @Test
     fun reachingTheExpectedScreenAdvancesWithoutClicking() {
+        // 2026-10-22 两屏合并：到活动中心还不够，要**就绪**（两个入口都在）才算第 1 步通过。
+        // 就绪后一下都不点，直接进第 2 步，并把等待起算清零。
         val result = BadgeRunner.onRound(
-            state(BadgeFlow.Step.ENTER_ACTIVITY),
-            input(UiState.ACTIVITY_CENTER),
+            state(BadgeFlow.Step.ENTER_ACTIVITY, nowMs = now).copy(centerSinceMs = now),
+            input(
+                UiState.ACTIVITY_CENTER,
+                anchors = listOf(
+                    hit(BadgeAnchors.BADGE_ACTIVITY_EXIT),
+                    hit(BadgeAnchors.BADGE_CLAIM_ENTRY),
+                    hit(BadgeAnchors.BADGE_SHARE_ENTRY),
+                ),
+                nowMs = now + 4_000,
+            ),
         )
         assertNull("已经到活动中心 ⇒ 不该再点大厅入口", result.request)
         assertEquals(BadgeFlow.Step.DECIDE_BRANCH, result.state?.step)
+        assertEquals(0L, result.state?.centerSinceMs)
     }
 
     @Test

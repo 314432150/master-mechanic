@@ -31,6 +31,17 @@ object BadgeTask {
     fun queueOf(list: ServerList, collected: (String) -> Boolean): List<String> =
         list.entries.map { it.serverName }.filterNot(collected)
 
+    /**
+     * 真正开跑时用的队列：未收集的优先（**续跑**省时间）；**全都收集过 ⇒ 整轮重跑**。
+     *
+     * 为什么不直接拦（2026-10-22 用户口径："不应该阻止我重复搜集"）：收集完成标记的作用是
+     * "中途停了接着跑"，不是"今天只许跑一次"。用户再点一次菜单，就是明确要再收集一遍
+     * （牌可能被游戏刷新、或者想看新的分数），拦下来只会让人以为功能坏了。
+     * 重复收集不会污染数据：`BadgeStore.upsert` 按码/同牌合并，`markCollected` 幂等。
+     */
+    fun runQueueOf(list: ServerList, pending: List<String>): List<String> =
+        if (pending.isEmpty()) list.entries.map { it.serverName } else pending
+
     /** 启动结论：失败时 [reason] 是给人看的一句话（菜单/日志直接显示，不静默）。 */
     data class StartResult(val started: Boolean, val reason: String? = null)
 
@@ -52,12 +63,14 @@ object BadgeTask {
         } ?: return StartResult(false, "还没有服务器清单（先在配置页添加区服）")
 
         val recordsFile = BadgeStore.recordsFile(context)
-        val queue = queueOf(list) { BadgeStore.hasCollected(recordsFile, it, today) }
-        if (queue.isEmpty()) {
-            return StartResult(
-                false,
-                if (list.isEmpty) "服务器清单是空的（先在配置页添加区服）" else "今天所有区服都收集过了",
-            )
+        val pending = queueOf(list) { BadgeStore.hasCollected(recordsFile, it, today) }
+        if (list.isEmpty) {
+            return StartResult(false, "服务器清单是空的（先在配置页添加区服）")
+        }
+        // 全都收集过 ⇒ **照跑不误**（整轮重跑，2026-10-22 用户口径），只留一条日志说明为什么跑了全量
+        val queue = runQueueOf(list, pending)
+        if (pending.isEmpty()) {
+            MmLog.i(TAG, "今天全部区服都已收集 ⇒ 按整轮重跑（${queue.size} 个区服）")
         }
         if (switch == null) {
             return StartResult(false, "现在这个画面起步不了（要先回到大厅 / 农场 / 启动页）")

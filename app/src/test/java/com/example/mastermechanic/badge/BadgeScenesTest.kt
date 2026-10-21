@@ -80,9 +80,9 @@ class BadgeScenesTest {
 
     @Test
     fun watchStatesNarrowWhenStateIsKnownAndWidenWhenUnknown() {
-        // 第 1 步的三种落点都要搜：立牌活动 / 其他活动（点返回重进）/ 大厅
+        // 第 1 步的两种落点都要搜：活动中心（等就绪，等不到 ⇒ 点返回）/ 大厅
         val known = BadgeScenes.watchStatesFor(BadgeFlow.Step.ENTER_ACTIVITY, UiState.HALL)
-        assertEquals(setOf(UiState.HALL, UiState.ACTIVITY_CENTER, UiState.ACTIVITY_OTHER), known)
+        assertEquals(setOf(UiState.HALL, UiState.ACTIVITY_CENTER), known)
 
         val unknown = BadgeScenes.watchStatesFor(BadgeFlow.Step.ENTER_ACTIVITY, UiState.UNKNOWN)
         assertEquals(BadgeScenes.allStates, unknown)
@@ -191,6 +191,15 @@ class BadgeScenesTest {
             setOf(BadgeAnchors.HALL_ACTIVITY),
             BadgeScenes.neededAnchors(BadgeFlow.Step.ENTER_ACTIVITY, UiState.HALL),
         )
+    }
+
+    @Test
+    fun entryStepAtTheActivityCenterAsksForTheReadinessAnchors() {
+        // 2026-10-22 两屏合并：第 1 步要靠"等不到「获取立牌」"判进错页 ⇒ 这两条入口锚点必须每轮定位，
+        // 否则就绪判定永远为假、10 秒后必被踢回大厅（等于每进一次都多跑一个来回）
+        val need = BadgeScenes.neededAnchors(BadgeFlow.Step.ENTER_ACTIVITY, UiState.ACTIVITY_CENTER)
+        assertTrue(need.containsAll(BadgeScenes.readyAnchors))
+        assertTrue("点返回要用它", BadgeAnchors.BADGE_ACTIVITY_EXIT in need)
     }
 
     @Test

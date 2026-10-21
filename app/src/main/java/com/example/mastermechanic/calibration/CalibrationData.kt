@@ -145,10 +145,12 @@ class CalibrationData(
         }
         // 每条记录至多归属一个状态（标志进 state= 行、锚点进 anchor= 行）；
         // 同一 ID 的标志与锚点是**两条记录**，各归一个状态不算重复引用。
+        //
+        // 2026-10-22（同日晚）：曾一度放宽成"锚点可跨屏共用"（活动中心 / 其他活动的返回是同一个控件）。
+        // 当天把那两屏合并成一个「活动中心」后，这条放宽失去依据 ⇒ 收回，保持"一条记录只归一处"。
         val referenced = stateRules.flatMap { rule ->
             rule.signalNames.map { it to SignalRole.MARKER } + rule.anchorNames.map { it to SignalRole.ANCHOR }
         }
-        require(referenced.distinct().size == referenced.size) { "同一条记录被多处引用：$referenced" }
         // 锚点**必须**有归属状态：没有归属就永远不会被启用（T2-3「按当前状态启用」），静默留着等于埋坑。
         // 标志允许暂不归属：离线回放工具会构造"只有信号、没有规则"的产物（T1-13 起沿用），
         // 这类标志只参与匹配、不参与状态判定。

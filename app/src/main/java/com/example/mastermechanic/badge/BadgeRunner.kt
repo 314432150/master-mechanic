@@ -177,12 +177,96 @@ object BadgeRunner {
         }
 
         val anchorNames = input.anchors.mapTo(mutableSetOf()) { it.name }
-        return when (running.step) {
-            BadgeFlow.Step.DECIDE_BRANCH -> decideBranch(running, input, anchorNames)
-            BadgeFlow.Step.PICK_CARD -> pickCard(running, input)
-            BadgeFlow.Step.READ_FIRST, BadgeFlow.Step.READ_CARD -> read(running, input)
-            else -> clickStep(running, input, anchorNames)
+        // ③ 第 1 步的「就绪门」（2026-10-22 两屏合并）：离开活动中心就清零，重新进入重新起算
+        val prepared = if (running.step == BadgeFlow.Step.ENTER_ACTIVITY &&
+            input.state != UiState.ACTIVITY_CENTER &&
+            running.centerSinceMs > 0L
+        ) {
+            running.copy(centerSinceMs = 0L)
+        } else {
+            running
         }
+        if (prepared.step == BadgeFlow.Step.ENTER_ACTIVITY && input.state == UiState.ACTIVITY_CENTER) {
+            enterActivityGate(prepared, input, anchorNames)?.let { return it }
+        }
+        return when (prepared.step) {
+            BadgeFlow.Step.DECIDE_BRANCH -> decideBranch(prepared, input, anchorNames)
+            BadgeFlow.Step.PICK_CARD -> pickCard(prepared, input)
+            BadgeFlow.Step.READ_FIRST, BadgeFlow.Step.READ_CARD -> read(prepared, input)
+            else -> clickStep(prepared, input, anchorNames)
+        }
+    }
+
+    /**
+     * 第 1 步的**就绪门**（2026-10-22 两屏合并后新增）。
+     *
+     * 活动中心的标志只有左上返回 —— 立牌活动与"点活动进错的那一页"**都命中它**，
+     * 所以"进了活动中心"不再等于"进了立牌活动"。唯一可判的证据是**等不等得到「获取立牌」**：
+     *
+     * - 就绪 ⇒ 本步直接通过（不点任何东西），进第 2 步；
+     * - 未就绪、且离起算不足 [BadgeFlow.ACTIVITY_READY_TIMEOUT_MS] ⇒ 继续等（动效 3~8 秒，别急）；
+     * - 等满仍不出现 ⇒ 返回 null，交给 [clickStep] 点**已定位到的**左上返回（那一页是别的活动），
+     *   退回大厅后重新点「活动」，次数由 [BadgeFlow.ENTRY_MAX_ATTEMPTS] 兜住。
+     *
+     * ⚠ 日志只说**读数**（"等了 N 秒仍没看到「获取立牌」"），不说"判定为其他活动"——后者是推断。
+     */
+    private fun enterActivityGate(
+        state: BadgeFlow.State,
+        input: RoundInput,
+        anchorNames: Set<String>,
+    ): RoundResult? {
+        if (BadgeScenes.activityReady(anchorNames)) {
+            val next = BadgeFlow.advance(state, input.nowMs)
+            return RoundResult(
+                next,
+                note = "第 1 步：${UiState.ACTIVITY_CENTER.label}已就绪（「获取立牌」「分享立牌」都在）→ 第 2 步",
+            )
+        }
+        val since = if (state.centerSinceMs > 0L) state.centerSinceMs else input.nowMs
+        val waited = input.nowMs - since
+        val missing = BadgeScenes.readyAnchors.filterNot { it in anchorNames }
+            .joinToString("、") { input.anchorLabel(it) }
+        if (waited < BadgeFlow.ACTIVITY_READY_TIMEOUT_MS) {
+            return RoundResult(
+                state.copy(centerSinceMs = since),
+                note = "第 1 步：在「${UiState.ACTIVITY_CENTER.label}」等就绪（还差「$missing」；" +
+                    "已等 ${waited / 1000} 秒，最多 ${BadgeFlow.ACTIVITY_READY_TIMEOUT_MS / 1000} 秒）",
+            )
+        }
+
+        // 等满了：这一屏**不是**立牌活动 ⇒ 点左上返回，退回大厅重进。
+        //
+        // 为什么在这里自己判定、不交给 [clickStep]：那里 ④ 会把「已到活动中心」当成第 1 步通过
+        // （大厅那条动作的期望画面就是活动中心）⇒ 等满 10 秒后反而"通过"，永远走不到点返回。
+        // 这里仍走同一套约束：**锚点必须定位到**才点、点击间隔、记录"已动手"、按 [ACTION_RETRY_MS] 冷却重试。
+        val back = BadgeScenes.actions(BadgeFlow.Step.ENTER_ACTIVITY)
+            .firstOrNull { it.state == UiState.ACTIVITY_CENTER } ?: return null
+        val hit = input.anchors.firstOrNull { it.name == back.anchor }
+            ?: return RoundResult(
+                state,
+                note = "第 1 步：等了 ${waited / 1000} 秒仍没看到「$missing」，但锚点" +
+                    "「${input.anchorLabel(back.anchor)}」没定位到 ⇒ 不点，继续等",
+            )
+        val backPending = state.lastActionAtMs > 0 && state.stateAtLastAction == UiState.ACTIVITY_CENTER
+        if (backPending && input.nowMs - state.lastActionAtMs < ACTION_RETRY_MS) {
+            return RoundResult(state, note = "第 1 步：刚点过返回，等画面切回大厅")
+        }
+        if (input.nowMs - input.lastClickAtMs < BadgeFlow.CLICK_GAP_MS) {
+            return RoundResult(state, note = "点击间隔未满 ${BadgeFlow.CLICK_GAP_MS}ms，等下一轮")
+        }
+        return RoundResult(
+            BadgeFlow.acted(state, input.nowMs, input.state),
+            ClickRequest(
+                decisionId = input.decisionId,
+                source = ClickSource.BADGE_STEP,
+                anchorName = back.anchor,
+                frameX = hit.frameX,
+                frameY = hit.frameY,
+            ),
+            "第 1 步：在「${UiState.ACTIVITY_CENTER.label}」等了 ${waited / 1000} 秒仍没看到" +
+                "「$missing」⇒ 点「${input.anchorLabel(back.anchor)}」退回大厅，重新点「活动入口」" +
+                "（第 ${state.entryAttempts}/${BadgeFlow.ENTRY_MAX_ATTEMPTS} 次尝试没进到立牌活动）",
+        )
     }
 
     /**

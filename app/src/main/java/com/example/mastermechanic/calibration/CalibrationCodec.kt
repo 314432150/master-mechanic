@@ -36,6 +36,10 @@ import java.util.Locale
  *
  * 其余解析严格：格式标记不符 / 版本不受支持 / 字段非法 / 重复定义一律拒绝（IllegalArgumentException，
  * 消息带行号），不做静默兼容——产物格式漂移必须显式暴露，禁止按猜测继续（红线 3 同源口径）。
+ *
+ * **唯一的例外是状态名**（2026-10-22）：`state=` / `anchor=` 行存的是 `UiState` 枚举名，枚举改名后
+ * 旧产物会读不出来。用户口径是"不重标" ⇒ [LEGACY_STATE_NAMES] 认旧名，**只读兼容**（写出恒为新名），
+ * 且是**精确映射**而非模糊匹配，不违反上面这条。
  */
 object CalibrationCodec {
 
@@ -56,6 +60,24 @@ object CalibrationCodec {
 
     private const val SEP = "|"
     private const val LIST_SEP = ","
+
+    /**
+     * **旧状态名 → 现状态名**（2026-10-22 立牌活动两屏改名时加）。
+     *
+     * `state=` / `anchor=` 行按 `UiState` **枚举名**记录，枚举一旦改名，真机上已标好的产物就会
+     * 报「未知状态名」——用户口径是**不重标**（2026-10-22）。所以旧名只在**解析层**认，写出恒为新名
+     * （读到旧产物、再保存一次，文本里就换成新名了）。
+     *
+     * 这两个状态本身是临时需求（`docs/plans/temp-badge-share.md`），活动结束随状态一起删。
+     */
+    private val LEGACY_STATE_NAMES = mapOf(
+        // 2026-10-22 早：ACTIVITY_CENTER 改名为 BADGE_ACTIVITY（立牌活动）
+        "BADGE_ACTIVITY" to UiState.ACTIVITY_CENTER,
+        // 2026-10-22 晚：立牌活动 / 其他活动 两屏合并回一个「活动中心」⇒ 两个旧名都落回它。
+        // ⚠ 同一份产物里若两行都出现会撞成"状态重复定义"，报错里会写清是哪一行（不猜、不丢记录）。
+        "ACTIVITY_OTHER" to UiState.ACTIVITY_CENTER,
+        "BADGE_ACTIVITY_OTHER" to UiState.ACTIVITY_CENTER,
+    )
 
     /** 产物 → 文本（单例字段随后段记录，顺序固定，保证确定性）。 */
     fun encode(data: CalibrationData): String = buildString {
@@ -177,11 +199,7 @@ object CalibrationCodec {
                 }
                 "state" -> {
                     val (stateName, signalsText) = splitPair(value) ?: fail(index + 1, "state 行缺少分隔：$value")
-                    val state = try {
-                        UiState.valueOf(stateName)
-                    } catch (_: IllegalArgumentException) {
-                        fail(index + 1, "未知状态名：$stateName")
-                    }
+                    val state = parseStateName(stateName) ?: fail(index + 1, "未知状态名：$stateName")
                     if (markersByState.containsKey(state)) fail(index + 1, "状态重复定义：$stateName")
                     val names = signalsText.split(LIST_SEP)
                     try {
@@ -193,11 +211,7 @@ object CalibrationCodec {
                 }
                 "anchor" -> {
                     val (stateName, namesText) = splitPair(value) ?: fail(index + 1, "anchor 行缺少分隔：$value")
-                    val state = try {
-                        UiState.valueOf(stateName)
-                    } catch (_: IllegalArgumentException) {
-                        fail(index + 1, "未知状态名：$stateName")
-                    }
+                    val state = parseStateName(stateName) ?: fail(index + 1, "未知状态名：$stateName")
                     if (anchorsByState.containsKey(state)) fail(index + 1, "状态的锚点重复定义：$stateName")
                     val names = namesText.split(LIST_SEP)
                     try {
@@ -334,6 +348,14 @@ object CalibrationCodec {
             stateRules = rulesByState.values.toList(),
         )
     }
+
+    /**
+     * 解析 `state=` / `anchor=` 行里的状态名：**先认旧名**（[LEGACY_STATE_NAMES]），再按枚举名严格解析。
+     *
+     * 不认识的仍返回 null 交由调用方按行号报错（禁止猜测，红线 3 同源口径）。
+     */
+    private fun parseStateName(raw: String): UiState? =
+        LEGACY_STATE_NAMES[raw] ?: runCatching { UiState.valueOf(raw) }.getOrNull()
 
     private fun splitPair(value: String): Pair<String, String>? {
         val i = value.indexOf(SEP)

@@ -295,6 +295,28 @@ class ServerListScanTest {
     }
 
     @Test
+    fun missingOutcomesStopTheScanInsteadOfLoopingForever() {
+        // 2026-10-22 真机（"目标在第二屏，却一直向上滚、没有结束判定"）：立牌换号段的下发函数漏了回告
+        // ⇒ 每 5 秒超时撤回 + 重新提议同一件事，进度永远停在原地。
+        // 兜底自愈只准有几次；到点**如实停下**，把"滚动通路故障"报出来（而不是空转到步骤超时）。
+        val scan = newScan()
+        assertEquals(ServerListScan.Step.ScrollTowardsTop, scan.onMiss(rows(100), 1_000L))
+
+        var nowMs = 1_000L
+        var giveUp: ServerListScan.Step? = null
+        repeat(ServerListScan.MAX_MISSING_OUTCOMES) {
+            nowMs += ServerListScan.OUTCOME_PENDING_TIMEOUT_MS + settle
+            val step = scan.onMiss(rows(100), nowMs)
+            if (step is ServerListScan.Step.GiveUp) giveUp = step
+        }
+
+        assertTrue("必须有上限，不能一直撤回重提：$giveUp", giveUp is ServerListScan.Step.GiveUp)
+        val reason = (giveUp as ServerListScan.Step.GiveUp).reason
+        assertTrue("说清是回告没来：$reason", reason.contains("回告"))
+        assertTrue("说清不是找不到目标：$reason", reason.contains("不是找不到"))
+    }
+
+    @Test
     fun theTopIsRecognisedEvenWhenOcrNoiseLeavesOnlyFortyPercentOverlap() {
         // 2026-10-01 真机（用户报"好友列表滑到顶为什么重复滑了几次才停下"）：列表**早就在顶部**，
         // 连续 4 次读到的内容一模一样，可行键被 OCR 抖动拉低（`B东百万`/`-东百万`/`p东百万`、噪声行 `出8400`）

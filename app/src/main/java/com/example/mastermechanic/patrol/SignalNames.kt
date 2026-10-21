@@ -27,7 +27,7 @@ object SignalNames {
      * @param role 已知角色时传进来（同 ID 可能同时是标志与锚点）；null = 由产物自己判（取先声明的那条）
      */
     fun of(data: CalibrationData?, id: String, role: SignalRole? = null): String {
-        val note = data?.noteOf(id)?.trim().orEmpty()
+        val note = data?.noteOf(id, role)?.trim().orEmpty()
         if (note.isNotEmpty()) return note
         val state = data?.stateOf(id)
         if (state != null) {
@@ -104,11 +104,28 @@ object SignalNames {
      */
     fun autoNoteHistory(state: UiState, roles: Collection<SignalRole>, purpose: String?): Set<String> = buildSet {
         add(legacyDefaultNoteFor(state, roles, purpose))
-        add("「${state.label}」的界面标志")
-        add("「${state.label}」的锚点")
-        add("「${state.label}」的关闭控件")
+        // 现标签 + **旧标签**（改过名的屏）：旧标签写下的那句同样是程序自动写的，不认出来就永远改不掉
+        (listOf(state.label) + RENAMED_STATE_LABELS[state].orEmpty()).forEach { label ->
+            add("「$label」的界面标志")
+            add("「$label」的锚点")
+            add("「$label」的关闭控件")
+        }
         purpose?.let { p ->
             PatrolAnchors.purposesFor(state).firstOrNull { it.name == p }?.let { add(it.label) }
         }
     }
+
+    /**
+     * **改过名的界面**：旧标签 → 现在叫什么（2026-10-22 立牌活动两屏改名时加）。
+     *
+     * 为什么要它：备注是**落盘的文本**，界面改名不会改历史产物里的句子 ⇒ 旧标签那句既不是用户手写的、
+     * 也不在 [defaultNoteFor] 的新文本里，[autoNoteHistory] 若只认现标签就会把它当成"用户写的"永远跳过
+     * （真机 2026-10-22：立牌活动的「获取」标志一直写着「活动中心」的界面标志）。
+     *
+     * 只做**识别**用，绝不拿来写新文本；活动结束随临时需求（`docs/plans/temp-badge-share.md`）一起删。
+     */
+    private val RENAMED_STATE_LABELS: Map<UiState, List<String>> = mapOf(
+        // 活动中心 → 立牌活动（2026-10-22 早）→ 活动中心（当晚两屏合并，改回原名）
+        UiState.ACTIVITY_CENTER to listOf("立牌活动", "其他活动页", "其他活动"),
+    )
 }

@@ -762,8 +762,10 @@ class FloatingWindow(private val context: Context) {
                 onTrailing = { openSwitchVisitConfig() },
             ) { onVisitPreset() },
         )
-        // **「换号取立牌」**（临时需求 temp/badge-share-1021，2026-10-21；活动结束随分支移除）：
+        // **「搜集立牌」**（临时需求 temp/badge-share-1021，2026-10-21；活动结束随分支移除）：
         // 启动一条流程（换号段 + 立牌支线），所以放在启动类动作这一组；收集到的数据在「更多 → 立牌池」看。
+        // 名字 2026-10-22 由「换号取立牌」改来：这条流程是**一整轮抛号**（按清单逐个区服收一遍），
+        // 名字要说"收集"，不是"换一次号顺带取一张"。
         container.addView(
             menuRow(
                 context.getString(R.string.floating_menu_glyph_badge_collect),
@@ -1160,7 +1162,7 @@ class FloatingWindow(private val context: Context) {
     }
 
     /**
-     * 立牌池的一行：**立牌名称 + 分数**（2026-10-22 用户口径，不再显示服务器名），
+     * 立牌池的一行：**区服名 · 分数 · 分享码**（2026-10-22 用户口径；立牌名只进复制内容与读屏播报），
      * 行尾「复制」；整行点击 = 复制 [BadgePoolView.Row.copyText]（含名称 / 分数 / 分享码）。
      */
     private fun badgeRow(row: BadgePoolView.Row): LinearLayout = LinearLayout(context).apply {
@@ -1173,12 +1175,13 @@ class FloatingWindow(private val context: Context) {
             R.string.badge_pool_row_desc,
             row.cardName,
             row.score,
+            row.code,
         )
         isClickable = true
         setOnClickListener { copyBadgeCode(row) }
         addView(
             textView(12f, MENU_TEXT_COLOR).apply {
-                // 显示「立牌名称 · 分数」（服务器名不显示，2026-10-22 用户口径）
+                // 显示「区服名 · 分数 · 分享码」（2026-10-22 第三次口径：区服名回到行上，只立牌名不上屏）
                 text = row.displayText
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END

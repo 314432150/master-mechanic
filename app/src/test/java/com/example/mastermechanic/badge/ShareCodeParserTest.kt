@@ -83,4 +83,18 @@ class ShareCodeParserTest {
         // 注：空白分隔按 OCR 噪声粘回（"1M 09 G2" → "1M09G2"），所以"两个码被空白分开"
         // 在解析层判不出也不兜（块只该有一个值）—— 见 ShareCodeParser 文件头
     }
+
+    @Test
+    fun wellFormedCodeIsExactlySixUppercaseOrDigits() {
+        // 2026-10-22 加固：真机 27 个码里 25 个 6 位，另 2 个 5 位都是漏读（同牌另一读 6 位、剪贴板实测也 6 位）
+        assertEquals(true, ShareCodeParser.isWellFormedCode("1M09G2"))
+        assertEquals(true, ShareCodeParser.isWellFormedCode("QGG4ZS"))
+        // 漏读一位 ⇒ 不合格（真机 GG4Z9 就是这么来的）
+        assertEquals(false, ShareCodeParser.isWellFormedCode("GG4Z9"))
+        assertEquals(false, ShareCodeParser.isWellFormedCode("VEWKW"))
+        // 多出字符 / 含小写 / 含符号 ⇒ 不合格（normalize 之后不可能有小写，这里防的是直接喂值）
+        assertEquals(false, ShareCodeParser.isWellFormedCode("1M09G27"))
+        assertEquals(false, ShareCodeParser.isWellFormedCode("1m09g2"))
+        assertEquals(false, ShareCodeParser.isWellFormedCode("1M-9G2"))
+    }
 }

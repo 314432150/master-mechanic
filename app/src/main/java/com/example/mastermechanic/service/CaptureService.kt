@@ -42,6 +42,7 @@ import com.example.mastermechanic.badge.BadgeRunner
 import com.example.mastermechanic.badge.BadgeScenes
 import com.example.mastermechanic.badge.BadgeSession
 import com.example.mastermechanic.badge.BadgeTask
+import com.example.mastermechanic.badge.CodeConfirmation
 import com.example.mastermechanic.badge.ShareCodeParser
 import com.example.mastermechanic.patrol.FriendSearch
 import com.example.mastermechanic.patrol.TextInjectorLike
@@ -342,6 +343,14 @@ class CaptureService : Service() {
 
     /** 上一次读取立牌信息的结论（同一屏不重复读三块，省帧线程）。仅帧线程访问。 */
     private var badgeOcrResult: BadgeRunner.Reading = BadgeRunner.Reading.Waiting
+
+    /**
+     * 已经报过「结束」震动的那个代次（0 = 还没报过）。仅帧线程访问。
+     *
+     * 结束 / 中止的任务快照会一直挂在 `BadgeSession`（等用户点「停止」或再开一轮），帧线程每轮都会
+     * 走进 [stepBadge] ⇒ 靠代次去重，**每次任务只震一下**（见 [announceBadgeEndedOnce]）。
+     */
+    private var badgeEndAnnouncedGeneration = 0L
 
     /**
      * 连续"点击被拒"的轮数（2026-09-30 加）：成功下发一枪 / 换了一步就归零。
@@ -3534,6 +3543,20 @@ class CaptureService : Service() {
     private val badgeOcrMinIntervalMs = 1_200L
 
     /**
+     * **等第二次确认读数**时的最小间隔（ms，2026-10-22 加固）。
+     *
+     * 比常规的 1.2 秒短：这一下只是给同一张牌再取一个样本（同屏是静态的），不是等画面变化；
+     * 按常规间隔等，每张牌白多花一秒，14 个区服 × 2 张就是半分钟。
+     */
+    private val badgeConfirmIntervalMs = 600L
+
+    /** 分享码投票当前投的是哪一屏（画面 + 步骤）；换屏就清空重投。仅帧线程访问。 */
+    private var badgeCodeConfirmKey: String? = null
+
+    /** 分享码投票器：**两次读数一致才落盘**（2026-10-22，见 `CodeConfirmation`）。仅帧线程访问。 */
+    private val badgeCodeConfirm = CodeConfirmation()
+
+    /**
      * 立牌任务一步：与 [stepPatrol] 并列，**同一帧线程、同一个点击出口**（[ClickDispatch]）。
      *
      * 两个阶段（见 `BadgeSession.Phase`）：
@@ -3546,7 +3569,11 @@ class CaptureService : Service() {
         val task = BadgeSession.current ?: return
         // **中止 / 完成之后不再推进、不再写日志**（真机教训 2026-10-22：不拦就会一边刷"中止"
         // 一边把已经判死的步骤继续往下跑 —— 画面恰好到货时甚至能跑完整条链，语义全错）。
-        if (!task.isRunning) return
+        // 这里顺手收尾：整条任务跑完 / 中止时补一次「结束」震动（与「换号拜访」同一个节奏）。
+        if (!task.isRunning) {
+            announceBadgeEndedOnce()
+            return
+        }
         val watch = when (task.phase) {
             BadgeSession.Phase.SWITCH -> task.switch
                 ?.let { PatrolScenes.watchStatesFor(it.step, result.state) }.orEmpty()
@@ -3577,6 +3604,23 @@ class CaptureService : Service() {
             BadgeSession.Phase.SWITCH -> stepBadgeSwitch(task, generation, result, gray, anchors, now)
             BadgeSession.Phase.COLLECT -> stepBadgeCollect(task, generation, result, gray, anchors, now)
         }
+    }
+
+    /**
+     * 立牌任务的「结束」震动，**每次任务只震一下**（2026-10-22 用户口径：与「换号拜访」对齐，
+     * 开始和结束各一次）。开始那一下在 `PatrolRequestConsumer.startBadge`（真的启动起来了才震）。
+     *
+     * 为什么用代次去重而不是挂一次性标记：结束 / 中止的任务快照会**一直挂在** [BadgeSession]
+     * （等用户点「停止」或再开一轮），帧线程每轮都会走进 [stepBadge]；`BadgeSession.start/stop`
+     * 各递增一次代次 ⇒ 同一代次内只可能震一次，下一轮任务自然是新代次。
+     *
+     * 用户手点「停止」不震（与巡查同口径）：那一下本来就有按钮反馈，且"停止"不是流程自己走完。
+     */
+    private fun announceBadgeEndedOnce() {
+        val generation = BadgeSession.currentGeneration
+        if (badgeEndAnnouncedGeneration == generation) return
+        badgeEndAnnouncedGeneration = generation
+        Haptics.flowEnded(this)
     }
 
     /** 换号段：跑巡查的第 3~6 步，进度写进 [BadgeSession]；跑完交接给立牌支线。 */
@@ -3732,9 +3776,19 @@ class CaptureService : Service() {
         return verdict.allowed
     }
 
-    /** 立牌滑动（换号段第 5 步滚列表；与点击同一条门禁，红线 6）。 */
+    /**
+     * 立牌滑动（换号段第 5 步滚列表；与点击同一条门禁，红线 6）。
+     *
+     * ⚠ **每一条出口都必须回告 [serverScan]**（2026-10-22 真机 bug）：换号段走的是这条独立的下发函数，
+     * 原来只回告了巡查那条（`stepPatrol` 里的滑动分支）—— 结果扫描器永远停在"等回告"，每 5 秒超时撤回、
+     * 再提议同一件事：目标在第二屏时表现为"**一直向上滚、没有结束判定**"。
+     */
     private fun dispatchBadgeSwipe(swipe: SwipeRequest, result: RoundResult, now: Long) {
-        if (staleReplayAgeMs(now) != null) return
+        // 帧太旧 ⇒ 这一下不发。也要回告"被拒"，否则扫描器白等一个超时（见上）
+        if (staleReplayAgeMs(now) != null) {
+            reportSwipeOutcome(allowed = false, now = now)
+            return
+        }
         badgeSeq++
         refreshScreenSizeForClick()
         val verdict = ClickDispatch.submitSwipe(
@@ -3743,9 +3797,31 @@ class CaptureService : Service() {
             state = result.state,
         )
         MmLog.i(TAG, "立牌判定: 滑动（${swipe.anchorName}）→ ${verdict.detail}（判定 ${swipe.decisionId}）")
+        // 回告扫描器：**走唯一那个回告点**（见 [reportSwipeOutcome]）
+        reportSwipeOutcome(verdict.allowed, now)
         if (verdict.allowed) {
             BadgeSession.markClick(now)
             useFastGear("立牌刚下发滑动")
+        }
+    }
+
+    /**
+     * **滑动结果的唯一回告点**（2026-10-22，卡死 bug 之后抽出来）。
+     *
+     * `ServerListScan` 的契约是「提议一次滑动 ⇒ 必然收到一次 [ServerListScan.onScrollDispatched]
+     * 或 [ServerListScan.onScrollRejected]」。这条契约原来散落在**两处**下发代码里（巡查 / 立牌换号段），
+     * 立牌那处漏了 ⇒ 扫描器每 5 秒超时撤回、再提议同一件事，进度永远为零（真机"一直向上滚、没有结束判定"）。
+     *
+     * 现在两条流程都只调这里 ⇒ 将来再加第三条流程，回告也不会再被漏掉（漏了就会被
+     * `ServerListScan.MAX_MISSING_OUTCOMES` 如实报出来，而不是空转）。
+     */
+    private fun reportSwipeOutcome(allowed: Boolean, now: Long) {
+        if (allowed) {
+            serverScan.onScrollDispatched(now)
+            // 下一次"新读"要量一下这次滑动移动了多少（只记日志，见 serverPlanOf 里的位移测量）
+            serverScrollSinceRead = true
+        } else {
+            serverScan.onScrollRejected()
         }
     }
 
@@ -3831,8 +3907,12 @@ class CaptureService : Service() {
     /**
      * 复制分享弹框的**三块 OCR** → 一张立牌记录（FR-T1 / 红线 7）。
      *
-     * 逐块读（分数 / 立牌名 / 分享码），任一取不出唯一值 ⇒ [BadgeRunner.Reading.Failed]，
+     * 逐块读（分数 / 立牌名 / 分享码），分数或名称取不出唯一值 ⇒ [BadgeRunner.Reading.Failed]，
      * 由编排层停下报原因（不保存残缺记录）。同一屏 1.2 秒内复用上一次结果，避免每轮都读三块。
+     *
+     * **分享码多一道关**（2026-10-22）：交 [CodeConfirmation] 投票，**两次读数一致**才给
+     * [BadgeRunner.Reading.Ok]；还没够 ⇒ `Waiting` 下一轮再读一次；到上限仍不一致 ⇒ `Failed`
+     * 并列出各次读到的串（不落盘 —— 一次读数就信曾把 `QGG4ZS` 记成 `GG4Z9`）。
      */
     private fun badgeReadingOf(
         gray: GrayImage,
@@ -3847,7 +3927,14 @@ class CaptureService : Service() {
         if (server.isNullOrBlank()) return BadgeRunner.Reading.Failed("当前区服未知，不能记录立牌")
         val key = "${state.name}:${step.number}"
         val now = SystemClock.elapsedRealtime()
-        if (key == badgeOcrKey && now - badgeOcrAtMs < badgeOcrMinIntervalMs) return badgeOcrResult
+        // 换屏 ⇒ 分享码投票作废（投的是"这一张牌这一次弹框"的读数）
+        if (key != badgeCodeConfirmKey) {
+            badgeCodeConfirmKey = key
+            badgeCodeConfirm.reset()
+        }
+        // 正在等"第二次确认读数"时把间隔缩短（见 [badgeConfirmIntervalMs]）
+        val interval = if (badgeCodeConfirm.readCount > 0) badgeConfirmIntervalMs else badgeOcrMinIntervalMs
+        if (key == badgeOcrKey && now - badgeOcrAtMs < interval) return badgeOcrResult
 
         val locator = anchorLocator ?: return BadgeRunner.Reading.Failed("没有标定结果")
         val data = calibrationData ?: return BadgeRunner.Reading.Failed("没有标定结果")
@@ -3876,22 +3963,33 @@ class CaptureService : Service() {
             }
             val score = ShareCodeParser.parseScore(scoreText)
             val name = ShareCodeParser.parseName(nameText)
-            val code = ShareCodeParser.parseCode(codeText)
-            if (score == null || name == null || code == null) {
+            if (score == null || name == null) {
                 return@run BadgeRunner.Reading.Failed(
                     "立牌信息解析不出唯一值（分数「$scoreText」/ 名称「$nameText」/ 分享码「$codeText」）",
                 )
             }
-            BadgeRunner.Reading.Ok(
-                BadgeRecord(
-                    serverName = server,
-                    cardName = name,
-                    code = code,
-                    score = score,
-                    recordedOn = java.time.LocalDate.now(),
-                ),
-                "三块都读到唯一值",
-            )
+            // **分享码要两次读一致才落盘**（2026-10-22 加固）：一次读数就信会把
+            // `QGG4ZS` 记成 `GG4Z9`，池子里于是多出一张假牌。名称 / 分数用最新这次，
+            // 只把码交给投票器（名称的 OCR 噪声比码多，"名称也要一致"会把整条流程卡死）。
+            val vote = badgeCodeConfirm.offer(ShareCodeParser.parseCode(codeText))
+            when (vote) {
+                is CodeConfirmation.Verdict.Confirmed -> BadgeRunner.Reading.Ok(
+                    BadgeRecord(
+                        serverName = server,
+                        cardName = name,
+                        code = vote.code,
+                        score = score,
+                        recordedOn = java.time.LocalDate.now(),
+                    ),
+                    "分享码 ${vote.code}（${vote.reads} 次读数一致）",
+                )
+                is CodeConfirmation.Verdict.NeedMore -> BadgeRunner.Reading.Waiting
+                is CodeConfirmation.Verdict.Conflict -> BadgeRunner.Reading.Failed(
+                    "同一张牌的分享码读数不一致（" +
+                        vote.reads.joinToString(" / ") { it ?: "没解析出" } +
+                        "）—— 不落盘；请重跑这张牌（或检查「分享码」框是否框全 6 位）",
+                )
+            }
         }
         badgeOcrKey = key
         badgeOcrAtMs = now
@@ -4188,26 +4286,16 @@ class CaptureService : Service() {
                 gameForeground = !result.frozen,
                 state = result.state,
             )
-            // 这一次滑动属于**哪一个**扫描状态（2026-10-01 起只剩第 5 步「选服」一个 —— 第 9 步的
-            // 滑屏找人已按用户口径删除，见 [friendSearch] 上方那段说明）：
-            // 关键是被门禁拒时要撤回到**那一个**扫描器上，否则"没滑成"会被当成"滑了、画面没动"⇒ 误判到底。
-            val scan = serverScan
+            // 回告扫描器：**走唯一那个回告点**（见 [reportSwipeOutcome]）
+            reportSwipeOutcome(verdict.allowed, now)
             if (verdict.allowed) {
                 PatrolSession.markClick(now)
-                scan.onScrollDispatched(now)
-                // 下一次"新读"要量一下这次滑动移动了多少（只记日志，见 serverPlanOf 里的位移测量；仅第 5 步有）
-                if (current.step == PatrolFlow.Step.PICK_SERVER) serverScrollSinceRead = true
                 // 滑动同样是"屏幕必然变了" ⇒ 期待一帧新画面（见 [checkFrameExpectation]）；
                 // `gateEligible = true` 同理（滑的是被采集的那个 App 的列表）
                 FrameExpectationSignal.arm(
                     "刚下发一次滑动（${current.range.logLabel}第 ${current.step.number} 步）",
                     gateEligible = true,
                 )
-            } else {
-                // ⚠ **必须回告到"这一次滑动属于的那一个"扫描器**（2026-10-01 真机事故：这里原本写死
-                // `serverScan`，第 9 步被拒的那一下没撤回好友扫描器 ⇒ 它永远停在"等回告"⇒ 再也不提议
-                // 任何滑动，用户看到的是"**根本没滑屏**"）。
-                scan.onScrollRejected()
             }
             MmLog.i(
                 TAG,

@@ -47,14 +47,14 @@ object BadgeScenes {
      * 两者是**语义不同的两个控件**，选谁由"哪个存在"决定，与识别分数无关。
      */
     fun actions(step: BadgeFlow.Step): List<Action> = when (step) {
-        // 「活动」入口不一定进立牌活动（2026-10-22 用户口径）：进去的是上次看的别的活动页，
-        // 那里没有「获取立牌」⇒ 认不出「活动中心」。此时点**左上角返回**退回大厅，再重新点「活动」
-        // （用户实测"极大概率"第二次就进立牌活动）。返回按钮与活动中心那一个是**同一个**控件。
-        // 次数上限在 [BadgeFlow.ENTRY_MAX_ATTEMPTS]，超了如实停下（不无限重试）。
+        // 「活动」入口不一定进立牌活动（2026-10-22 用户口径）：进去的是上次看的别的活动页。
+        // 那一页**没有独立标志**（十几页各不相同）⇒ 只能靠"活动中心里等不到「获取立牌」"来判，
+        // 见 [BadgeRunner] 的就绪门（[BadgeFlow.ACTIVITY_READY_TIMEOUT_MS]）：超时才点**左上角返回**
+        // 退回大厅、重新点「活动」。次数上限 [BadgeFlow.ENTRY_MAX_ATTEMPTS]，超了如实停下（不无限重试）。
         BadgeFlow.Step.ENTER_ACTIVITY -> listOf(
             Action(UiState.HALL, BadgeAnchors.HALL_ACTIVITY, expect = UiState.ACTIVITY_CENTER),
             Action(
-                UiState.ACTIVITY_OTHER,
+                UiState.ACTIVITY_CENTER,
                 BadgeAnchors.BADGE_ACTIVITY_EXIT,
                 expect = UiState.HALL,
                 restartStep = true,
@@ -147,10 +147,8 @@ object BadgeScenes {
      * [DECIDE_BRANCH] 返回自身：它就站在活动中心，验证的是"还在这一屏、且动效结束"。
      */
     fun expectedStates(step: BadgeFlow.Step): Set<UiState> = when (step) {
-        // 第 1 步的三种落点都要立刻认得（否则每处都要白等 2~3 轮"认不出来的自愈"）：
-        // 立牌活动（成功）/ 其他活动（点返回重进）/ 大厅（返回之后）。
-        BadgeFlow.Step.ENTER_ACTIVITY ->
-            setOf(UiState.ACTIVITY_CENTER, UiState.ACTIVITY_OTHER, UiState.HALL)
+        // 第 1 步的两种落点都要立刻认得：活动中心（等就绪）/ 大厅（点「活动」之前或点返回之后）。
+        BadgeFlow.Step.ENTER_ACTIVITY -> setOf(UiState.ACTIVITY_CENTER, UiState.HALL)
         BadgeFlow.Step.DECIDE_BRANCH -> setOf(UiState.ACTIVITY_CENTER)
         BadgeFlow.Step.CLAIM_ENTRY -> setOf(UiState.BADGE_CLAIM)
         // 同屏验证：画面仍是获取立牌弹框，靠 expectAnchor 判通过（见 [Action.expectAnchor]）
@@ -192,6 +190,10 @@ object BadgeScenes {
             .filter { it.state == state }
             .flatMap { action -> listOfNotNull(action.anchor, action.expectAnchor) }
         val fromJudgment = when {
+            // 第 1 步在活动中心**先要判就绪**（等不到「获取立牌」就说明进的是别的活动页）⇒
+            // 两条入口锚点必须每轮定位，否则就绪判定永远为假、10 秒后必被踢回大厅。
+            step == BadgeFlow.Step.ENTER_ACTIVITY && state == UiState.ACTIVITY_CENTER -> readyAnchors
+
             step == BadgeFlow.Step.DECIDE_BRANCH && state == UiState.ACTIVITY_CENTER ->
                 readyAnchors + BadgeAnchors.BADGE_EMPTY_SLOT
 

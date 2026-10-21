@@ -151,10 +151,6 @@ object BadgeAnchors {
     fun purposesFor(state: UiState): List<PatrolAnchors.Purpose> = when (state) {
         UiState.HALL -> listOf(PatrolAnchors.Purpose("活动入口", HALL_ACTIVITY))
 
-        // 其他活动页（2026-10-22）：左上角返回，退回大厅后重新点「活动」。
-        // 与活动中心那一条是**同一个控件**（用户确认），所以复用同一个用途名 [BADGE_ACTIVITY_EXIT]。
-        UiState.ACTIVITY_OTHER -> listOf(PatrolAnchors.Purpose("返回", BADGE_ACTIVITY_EXIT))
-
         UiState.ACTIVITY_CENTER -> listOf(
             PatrolAnchors.Purpose("获取立牌入口", BADGE_CLAIM_ENTRY),
             PatrolAnchors.Purpose("分享立牌", BADGE_SHARE_ENTRY),
@@ -192,8 +188,6 @@ object BadgeAnchors {
      */
     val usageByState: Map<UiState, Set<String>> = mapOf(
         UiState.HALL to setOf(HALL_ACTIVITY),
-        // 其他活动页（2026-10-22）：只点左上角返回（与活动中心那一个是同一个控件）
-        UiState.ACTIVITY_OTHER to setOf(BADGE_ACTIVITY_EXIT),
         UiState.ACTIVITY_CENTER to setOf(
             BADGE_CLAIM_ENTRY,
             BADGE_SHARE_ENTRY,
