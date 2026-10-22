@@ -16,7 +16,7 @@ class PatrolAnchorsTest {
     // ---------------------------------------------------------------- 清单与命名
 
     @Test
-    fun theChecklistHasThirteenDistinctAnchors() {
+    fun theChecklistHasSixteenDistinctAnchors() {
         // 11 条点击链 − 2 条（两个农场的返回 / 好友入口合并成 1 条 ×2）
         // + 第 9 步的「拜访」图标（按名称定位后用）
         // + 第 9 步文字识别的**列表区域**（2026-09-21 按名称定位走 OCR）
@@ -51,9 +51,11 @@ class PatrolAnchorsTest {
     @Test
     fun everyAnchorOfTheChecklistIsUsedByTheCode() {
         // 「要标什么」与「代码点哪」必须是同一份事实：清单里的每条都要有出处 ——
-        // 出处有四条：步骤点击链（[PatrolAnchors.actions]）、**按名称定位**的辅助锚点
-        // （[PatrolAnchors.nameLocatingAnchors]，第 9 步的拜访图标走这条）、以及只圈区域不做点击的
-        // 两条（[PatrolAnchors.nameAreaAnchors] 粗区域 / [PatrolAnchors.nameColumnAnchors] 名称列）。
+        // 出处有五条：步骤点击链（[PatrolAnchors.actions]）、**按名称定位**的辅助锚点
+        // （[PatrolAnchors.nameLocatingAnchors]，第 9 步的拜访图标走这条）、只圈区域不做点击的
+        // 两条（[PatrolAnchors.nameAreaAnchors] 粗区域 / [PatrolAnchors.nameColumnAnchors] 名称列）、
+        // 以及第 9 步搜索式查找的三个控件（[PatrolAnchors.searchFlowAnchors]）。
+        // 注：服务器列表的两条列竖带**刻意不在清单里**（可选精化），所以这里也不收它们。
         for (need in PatrolAnchors.all) {
             val inActions = Step.entries.any { step ->
                 PatrolAnchors.actionFor(step, need.state)?.anchor == need.name

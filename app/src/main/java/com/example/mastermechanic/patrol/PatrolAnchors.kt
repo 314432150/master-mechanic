@@ -343,13 +343,16 @@ object PatrolAnchors {
     data class Need(val state: UiState, val name: String, val purpose: String)
 
     /**
-     * **需要标定的锚点全集**（12 条）——这份清单同时也是"标定侧现在缺什么"的答案。
+     * **需要标定的锚点全集**（16 条）——这份清单同时也是"标定侧现在缺什么"的答案。
      *
      * 刻意手写而不是从 [nameFor] 反推：它是**验收对象**（真机核对的清单），
      * 从实现反推就等于自己证明自己。
      *
-     * 第 12 条 `friend_visit`（2026-09-21）**不走步骤点击链**：第 9 步先按名字找到那一行、再点行尾图标，
+     * `friend_visit`（2026-09-21）**不走步骤点击链**：第 9 步先按名字找到那一行、再点行尾图标，
      * 由 [nameLocatingAnchors] 给出用处；但它**一样要标定**，所以照样在本清单里（否则"还缺什么"会漏）。
+     *
+     * **服务器列表的两条列竖带不在本清单里**（2026-09-24）：它们是「可选精化」，与老产物的兼容口径一致
+     * ——没框就退回「列表区域」，所以不催用户去框。锚点总数 = 16 + 2 = 18。
      */
     val all: List<Need> = listOf(
         Need(UiState.FARM, FARM_EXIT, "第 2 步：农场里的返回 / 退出"),
@@ -476,8 +479,9 @@ object PatrolAnchors {
     /**
      * **只圈区域、不当点击目标**的锚点用途全集（2026-09-22 真机修）：构造 `AnchorLocator` 时排除。
      *
-     * 它与 [nameLocatingAnchors] / [all] / [purposesFor] 是同一批契约名，取 [nameAreaAnchors]
-     * 与 [nameColumnAnchors] 的值即可。
+     * 它与 [nameLocatingAnchors] / [all] / [purposesFor] 是同一批契约名，取 [nameAreaAnchors]、
+     * [nameColumnAnchors]、[serverListColumnAnchors] 的值，再加 [BadgeAnchors.regionAnchors] 即可
+     * —— 新增一条区域锚点时**只改那几张表**，这里与测试会跟着自动对齐。
      * 单独给个带"后果"的名字，是因为**漏了它不是少点一下就完了**：这些锚点往往框得很大
      * （「列表区域」真机 431×511），一旦跟着做模板匹配，帧线程单轮停摆 20 秒以上 ——
      * 实测与算量见 [FRIEND_LIST_AREA] 与 `AnchorLocator` 的构造参数说明。
