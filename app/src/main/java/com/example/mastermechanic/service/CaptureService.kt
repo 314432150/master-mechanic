@@ -3648,7 +3648,7 @@ class CaptureService : Service() {
     ) {
         val current = task.switch ?: return
         val server = task.current ?: run {
-            BadgeSession.fail("当前区服未知（队列为空）")
+            BadgeSession.fail("当前区服未知（队列为空）", now)
             return
         }
         // **先确认"是不是已经在这个区服"**（2026-10-23 用户报障）：任务意外停止后重跑时，
@@ -3687,7 +3687,7 @@ class CaptureService : Service() {
             return
         }
         if (outcome.failed) {
-            BadgeSession.fail(outcome.state?.reason ?: "换号段中止")
+            BadgeSession.fail(outcome.state?.reason ?: "换号段中止", now)
             return
         }
         // 用**当前快照**而不是本轮开头那份：上面那次"昵称判定"可能已经把 `identityChecked` 置真，
@@ -3891,7 +3891,7 @@ class CaptureService : Service() {
             return
         }
         if (outcome.failed) {
-            BadgeSession.fail(outcome.state?.reason ?: "立牌流程中止")
+            BadgeSession.fail(outcome.state?.reason ?: "立牌流程中止", now)
             return
         }
         BadgeSession.commit(task.copy(collect = outcome.state), generation)

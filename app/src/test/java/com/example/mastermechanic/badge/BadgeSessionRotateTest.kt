@@ -1,6 +1,8 @@
 package com.example.mastermechanic.badge
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -39,5 +41,19 @@ class BadgeSessionRotateTest {
     @Test
     fun emptyQueueStaysEmpty() {
         assertEquals(emptyList<String>(), BadgeSession.rotateTo(emptyList(), "发条权杖"))
+    }
+
+    // ---------------------------------------------------------------- 结果话只留几秒（2026-10-23 用户口径）
+
+    @Test
+    fun finishedOutcomeLeavesTheLabelAfterAFewSeconds() {
+        val window = BadgeSession.OUTCOME_LABEL_MS
+        // 跑着 ⇒ 一直显示
+        assertTrue(BadgeSession.outcomeLabelVisible(isRunning = true, endedAtMs = 0L, nowMs = 10 * window))
+        // 刚结束 ⇒ 显示；过了窗口 ⇒ 不再显示（标签自己摘掉，不是被后来的东西覆盖）
+        assertTrue(BadgeSession.outcomeLabelVisible(isRunning = false, endedAtMs = 1_000L, nowMs = 1_000L + window - 1))
+        assertFalse(BadgeSession.outcomeLabelVisible(isRunning = false, endedAtMs = 1_000L, nowMs = 1_000L + window))
+        // 没记下结束时刻（老路径）⇒ 宁可显示，别把结果吞掉
+        assertTrue(BadgeSession.outcomeLabelVisible(isRunning = false, endedAtMs = 0L, nowMs = 10 * window))
     }
 }

@@ -12018,3 +12018,25 @@ BadgeSession.current?.switch`）。立牌**支线**（进活动 / 领取 / 我�
 
 **验证**：`FloatingLabelTextTest` 与 `PatrolStatusTest` 各新增 1 例（未判定 ⇒ 确认当前区服；判定后 ⇒ 退出登录；
 无立牌任务时行为不变）；`-PfastTests` 全绿；`assembleDebug` + `install -r` + `am start` 通过（再装机 ⇒ 授权需重给）。
+
+### 2026-10-23（已完成 / 已中止只留几秒；中止详情留在菜单里）
+
+**用户口径**：顶部标签的「已完成 / 已中止」**只显示几秒**（与换号那边一样，别一直挂着）；
+「已中止」的**步骤与原因**在悬浮窗（展开菜单）里保持可见。
+
+**改法**：
+
+- `BadgeSession` 记下结束时刻 `endedAtMs`（完成 / 中止两处都写，`start` / `stop` 清零），
+  并给出两个窗口：
+  - `displayTask(now)`：跑着照常显示；结束的只留 **`OUTCOME_LABEL_MS = 5s`** ⇒ 顶部标签到点自己摘掉；
+  - `menuTask(now)`：**中止的一直保留**（回看"停在第几步、为什么停"），完成 / 运行中同上；
+- `FloatingWindow`：
+  - `patrolForDisplay` 与标签取 badge 都改用 `displayTask` ⇒ 结束几秒后不再占标签；
+  - 菜单多一块 **`badgeStatusBlock`**（支线没有 `PatrolFlow.State`）：`立牌第 N 步 · 步骤名` +
+    `已中止：原因` / `收集完成`，中止那句用告警色；中止后在菜单里**一直留着**；
+  - `statusSignature` 把这块的内容也纳入 ⇒ 中止 / 完成那一刻菜单会跟着重画（此前不会）。
+
+**验证**：`BadgeSessionRotateTest` 新增 1 例（跑着 ⇒ 显示；刚结束 ⇒ 显示；过窗口 ⇒ 不显示；没记结束时刻 ⇒ 宁可显示）；
+`-PfastTests` 全绿；`assembleDebug` + `install -r` + `am start` 通过（再装机 ⇒ 授权需重给）。
+
+**未取证**：真机上"5 秒后标签消失"与"菜单里那块常驻"的实际观感（逻辑已钉住，肉眼一看即可）。

@@ -33,6 +33,15 @@ object BadgeSession {
      */
     const val IDENTITY_TEXT = "确认当前区服"
 
+    /**
+     * 「已完成 / 已中止」在**顶部标签**上还留多久（2026-10-23 用户口径："几秒就够，不要一直挂着"）。
+     *
+     * 与换号（巡查）那边 `PatrolResultSignal` 的 30 秒窗口同一个意思，只是这里按用户口径缩短：
+     * 立牌任务结束得快，顶着一句结果话挡视线没有收益。
+     * **菜单不受这个窗口限制**：中止后要能在展开菜单里回看"停在第几步、为什么停"。
+     */
+    const val OUTCOME_LABEL_MS = 5_000L
+
     private const val TAG = "MM-Badge"
 
     /** 任务阶段。 */
@@ -104,6 +113,13 @@ object BadgeSession {
     @Volatile
     private var state: Task? = null
 
+    /**
+     * 任务**结束**（完成 / 中止）的时刻（0 = 还没结束）：顶部标签据此只留 [OUTCOME_LABEL_MS] 几秒。
+     * 与 [state] 一起只在帧线程 / 主线程读，标量本身 `@Volatile` 够用。
+     */
+    @Volatile
+    private var endedAtMs = 0L
+
     /** 代次（开始 / 停止各递增一次，见 [commit]）。 */
     @Volatile
     private var generation: Long = 0L
@@ -148,6 +164,7 @@ object BadgeSession {
      */
     fun start(queue: List<String>, switch: PatrolFlow.State, nowMs: Long, fullRound: Boolean = false): Task {
         lastClickAtMs = 0L
+        endedAtMs = 0L
         cardsRead = emptySet()
         val task = Task(
             phase = Phase.SWITCH,
@@ -269,6 +286,7 @@ object BadgeSession {
                 outcome = Outcome.FINISHED,
             )
             state = next
+            endedAtMs = nowMs
             lastNote = "立牌收集完成：共 $done 个区服"
             MmLog.i(
                 TAG,
@@ -289,6 +307,7 @@ object BadgeSession {
                 reason = "换到「$target」前算不出起点的第几步（不在大厅？）",
             )
             state = next
+            endedAtMs = nowMs
             lastNote = next.reason
             return next
         }
@@ -314,14 +333,44 @@ object BadgeSession {
      * **已中止就直接返回**（真机教训 2026-10-22）：帧线程每轮都会读到同一个失败结论，
      * 不去重就会每秒刷好几条"中止"、并把已经中止的任务重新写一遍。
      */
-    fun fail(reason: String): Task? {
+    fun fail(reason: String, nowMs: Long = 0L): Task? {
         val task = state ?: return null
         if (!task.isRunning) return task
         val next = task.copy(outcome = Outcome.FAILED, reason = reason)
         state = next
+        endedAtMs = nowMs
         lastNote = "已中止：$reason"
         MmLog.w(TAG, "立牌任务中止：$reason")
         return next
+    }
+
+    /**
+     * **顶部标签**该不该还显示这个任务（2026-10-23 用户口径："已完成 / 已中止只显示几秒"）。
+     *
+     * 跑着 ⇒ 显示；跑完 ⇒ 只在 [OUTCOME_LABEL_MS] 内显示，之后当作"没有任务"（标签自己摘掉）。
+     * 与巡查的差别：那边用 `PatrolResultSignal` 的 30 秒窗口，这里按用户口径收到 5 秒。
+     */
+    fun displayTask(nowMs: Long): Task? {
+        val task = state ?: return null
+        return if (outcomeLabelVisible(task.isRunning, endedAtMs, nowMs)) task else null
+    }
+
+    /**
+     * 标签还该不该显示这次任务（纯逻辑，便于单测）：
+     * 跑着 ⇒ 是；已经结束 ⇒ 只有结束后 [OUTCOME_LABEL_MS] 内才是。
+     * [endedAtMs] ≤ 0（没记下结束时刻的旧路径）⇒ 照旧显示，宁可多说一句也不要把结果吞掉。
+     */
+    internal fun outcomeLabelVisible(isRunning: Boolean, endedAtMs: Long, nowMs: Long): Boolean =
+        isRunning || endedAtMs <= 0L || nowMs - endedAtMs < OUTCOME_LABEL_MS
+
+    /**
+     * **菜单**该不该还显示这个任务：中止后**一直保留**（用户要能回看"停在第几步、为什么停"），
+     * 其余口径与 [displayTask] 相同（跑着 / 刚完成的那几秒）。
+     */
+    fun menuTask(nowMs: Long): Task? {
+        val task = state ?: return null
+        if (task.failed) return task
+        return displayTask(nowMs)
     }
 
     /** 记下"点击已下发"（节流用，与 `PatrolSession.markClick` 同义）。 */
@@ -343,6 +392,7 @@ object BadgeSession {
     fun stop() {
         val was = state
         state = null
+        endedAtMs = 0L
         lastClickAtMs = 0L
         lastNote = null
         cardsRead = emptySet()

@@ -362,13 +362,17 @@ class FloatingWindow(private val context: Context) {
      * ⚠ 只给"显示 / 播报"用：**"能不能继续"与"用户点了停止、停在第几步"仍必须读 [PatrolSession.current]**
      * —— 那两处问的是"真在跑的那个流程"，快照答不了（也没有「继续」可点，"已完成"是终态）。
      */
-    private fun patrolForDisplay(): PatrolFlow.State? =
-        PatrolResultSignal.displayState(
+    private fun patrolForDisplay(): PatrolFlow.State? {
+        val now = SystemClock.elapsedRealtime()
+        return PatrolResultSignal.displayState(
             // 立牌任务的**换号段**用的就是 `PatrolFlow.State`（临时需求 temp/badge-share-1021）：
             // 把它接到同一处显示，进度行 / 标签 / 读屏播报一分钱不花就都有了。
-            PatrolSession.current ?: BadgeSession.current?.switch,
-            SystemClock.elapsedRealtime(),
+            // ⚠ 只取 [BadgeSession.displayTask]：跑完 / 中止之后**几秒就不再显示**（2026-10-23 用户口径，
+            // 与巡查的 30 秒窗口同一个意思）；中止的详情留在菜单里（见 [BadgeSession.menuTask]）。
+            PatrolSession.current ?: BadgeSession.displayTask(now)?.switch,
+            now,
         )
+    }
 
     /**
      * 状态签名：进度 + 状态行 + 能不能继续。
@@ -378,8 +382,11 @@ class FloatingWindow(private val context: Context) {
      */
     private fun statusSignature(): String {
         val state = patrolForDisplay()
+        // 立牌**支线**的进度 / 中止详情（没有 `PatrolFlow.State` 那一相）：进签名，菜单才会跟着重画
+        val badge = BadgeSession.menuTask(SystemClock.elapsedRealtime())
         return listOf(
             PatrolStatus.progressLine(state, BadgeSession.current).orEmpty(),
+            "badge=${badge?.let { "${it.phase}|${it.stepText}|${it.outcome}|${it.reason}" }.orEmpty()}",
             PatrolStatus.statusLine(state, PatrolSession.lastNote).orEmpty(),
             PatrolStatus.canResume(state).toString(),
             // **控制行在不在**（2026-10-01）：它只看"真在跑的那个流程"（见 `PatrolStatus.showsControlRow`），
@@ -683,6 +690,9 @@ class FloatingWindow(private val context: Context) {
         val patrol = patrolForDisplay()
         if (patrol != null) {
             container.addView(statusBlock(patrol))
+        } else {
+            // 立牌**支线**没有 `PatrolFlow.State` ⇒ 单独一块；中止后一直留着（用户口径）
+            BadgeSession.menuTask(SystemClock.elapsedRealtime())?.let { container.addView(badgeStatusBlock(it)) }
         }
         // **「关弹窗受阻 / 已停手」的原因**（2026-09-29、2026-09-30 用户口径："把原因也显示在悬浮窗菜单里"）。
         // 顶部标签只能写 12 个字（`关弹窗受阻` / `关弹窗已停手`），原因一直只落在日志里 ⇒ 玩家在游戏里
@@ -1690,7 +1700,26 @@ class FloatingWindow(private val context: Context) {
         val status = PatrolSession.deniedNote
             ?: PatrolStatus.statusLine(state, PatrolSession.lastNote)
             ?: context.getString(R.string.floating_menu_running)
-        val alerted = PatrolStatus.canResume(state)
+        return statusBlockOf(progress, status, alerted = PatrolStatus.canResume(state))
+    }
+
+    /**
+     * **收集立牌支线**的进度块（2026-10-23 用户口径）：支线没有 `PatrolFlow.State`，所以自己拼两行；
+     * 中止后**一直留在菜单里**（"停在第几步、为什么停"要能回看），顶部标签那边只留几秒。
+     */
+    private fun badgeStatusBlock(task: BadgeSession.Task): LinearLayout {
+        val step = task.collect?.step
+        val progress = if (step != null) "立牌第 ${step.number} 步 · ${step.label}" else task.stepText
+        val status = when {
+            task.failed -> "已中止：${task.reason ?: "原因未知"}"
+            task.finished -> "收集完成"
+            else -> context.getString(R.string.floating_menu_running)
+        }
+        return statusBlockOf(progress, status, alerted = task.failed)
+    }
+
+    /** 两行小字（进度 + 状态）+ 合成一个语义节点的公共实现（巡查 / 立牌共用）。 */
+    private fun statusBlockOf(progress: String, status: String, alerted: Boolean): LinearLayout {
         val progressView = statusRow(progress, STATUS_COLOR)
         val statusView = statusRow(status, if (alerted) REASON_COLOR else STATUS_COLOR)
         // 两行都只作为"上面那个语义节点的一部分"（不分别可聚焦）；中止 / 暂停那一句另有
@@ -2219,7 +2248,8 @@ class FloatingWindow(private val context: Context) {
         // **收集立牌的支线阶段**（2026-10-23 用户报障）：它没有 `PatrolFlow.State`，
         // 于是标签整段被判"待命"并摘掉（真机 01:30:28 实录）；跳过换号段后更是一句话都没有。
         // 这里把 badge 任务一起递进去，让支线步骤（进活动 / 领取 / 分享 / 返回）也能在顶部说一句。
-        val badge = BadgeSession.current
+        // ⚠ 用 `displayTask`：跑完之后「已完成 / 已中止」**只留几秒**（用户口径），不是一直挂着。
+        val badge = BadgeSession.displayTask(SystemClock.elapsedRealtime())
         val reading = currentReadingText()
         val closing = currentClosingPopupText()
         // **画面久未更新**（2026-09-30，L2）：60 秒没有新帧 ⇒ 「画面久未更新」那一档要占标签
