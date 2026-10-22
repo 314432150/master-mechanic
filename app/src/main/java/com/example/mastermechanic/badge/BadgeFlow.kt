@@ -133,6 +133,16 @@ object BadgeFlow {
          */
         val centerSinceMs: Long = 0L,
         val cardsRead: Int = 0,
+        /**
+         * 上一轮「选卡」**点完之后还剩几张没读**（0 = 这是最后一张，2026-10-23）。
+         *
+         * 为什么需要它：真机发现「复制分享」的 X 会**把「我的立牌」那层一起关掉** ⇒ 回到活动中心后
+         * 如果还有没读的卡，就必须**再进一次**「分享立牌 → 切换」才能读到下一张（原来一律当"只有 1 张"
+         * 直接返回大厅 ⇒ 3 张卡只收到 1 张）。
+         */
+        val cardsRemaining: Int = 0,
+        /** 本轮为了读多张卡，重新进了几次「分享立牌」（防止在异常画面上无限循环）。 */
+        val cardRounds: Int = 0,
         val outcome: Outcome = Outcome.RUNNING,
         val reason: String? = null,
         val paused: Boolean = false,
@@ -247,7 +257,9 @@ object BadgeFlow {
      * **受控跳转**（分支 / 卡片循环用）：
      * - [DECIDE_BRANCH] → 领取链或直接分享；
      * - [PICK_CARD] → 关闭我的立牌（没有未读卡了）；
-     * - [CLOSE_CARD] → 回到 [PICK_CARD]（还有卡）或 [EXIT_ACTIVITY]（X 连两层一起关掉，真机 2026-10-22）。
+     * - [CLOSE_CARD] → 回到 [PICK_CARD]（还有卡）或 [EXIT_ACTIVITY]（X 连两层一起关掉，真机 2026-10-22）；
+     *   **X 关了「我的立牌」但还有卡没读**（真机 2026-10-23：一个区服 3 张卡）⇒ 回 [SHARE_ENTRY]
+     *   再走一遍（活动中心 → 分享立牌 → 切换 → 选下一张）。
      *
      * 只允许从这三个判定 / 回环步跳，其余步骤调用会**原样返回**：跳转表写错时宁可停在原地等超时，
      * 也不许凭空跨过一步（红线 5：动作后未验证不得执行下一步）。

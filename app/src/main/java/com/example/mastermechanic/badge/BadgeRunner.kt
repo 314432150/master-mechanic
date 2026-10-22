@@ -27,6 +27,14 @@ object BadgeRunner {
     const val SETTLE_WAIT_MS = 2_000L
 
     /**
+     * 读完一张卡后，"再进一次分享立牌"最多重试几次（2026-10-23）。
+     *
+     * 「复制分享」的 X 会把「我的立牌」那层一起关掉 ⇒ 多张卡必须回到活动中心重新进。
+     * 正常最多 4~5 张卡；给到 12 是留余量，同时防止在异常画面（比如卡列表一直刷新）上无限打转。
+     */
+    const val MAX_CARD_ROUNDS = 12
+
+    /**
      * "击后仍停在动手前那一屏"时，允许重发的冷却（ms）。
      *
      * 真机教训（2026-10-22）：点活动入口后画面从「大厅」变成「未知」并一直未知，口径 A 又不允许补点
@@ -361,7 +369,7 @@ object BadgeRunner {
             is BadgeRunner.CardPlan.Failed -> fail(state, input, plan.reason)
 
             is BadgeRunner.CardPlan.NoMore -> {
-                val next = BadgeFlow.advanceTo(state, BadgeFlow.Step.CLOSE_MY, input.nowMs)
+                val next = BadgeFlow.advanceTo(state.copy(cardsRemaining = 0), BadgeFlow.Step.CLOSE_MY, input.nowMs)
                 RoundResult(
                     next,
                     note = "第 ${state.step.number} 步：${plan.detail} ⇒ 关闭「我的立牌」",
@@ -372,7 +380,8 @@ object BadgeRunner {
                 if (input.nowMs - input.lastClickAtMs < BadgeFlow.CLICK_GAP_MS) {
                     return RoundResult(state, note = "点击间隔未满 ${BadgeFlow.CLICK_GAP_MS}ms，等下一轮")
                 }
-                val next = BadgeFlow.advance(state, input.nowMs)
+                // 记住"点完这张还剩几张"：关闭时若 X 把「我的立牌」一起关了，要靠它决定要不要再进一次
+                val next = BadgeFlow.advance(state.copy(cardsRemaining = plan.remaining), input.nowMs)
                 RoundResult(
                     BadgeFlow.acted(next, input.nowMs, input.state),
                     ClickRequest(
@@ -459,8 +468,24 @@ object BadgeRunner {
             // 若那个 X 把「我的立牌」那层也一起关掉（只有 1 张卡时实测如此）⇒ 已回活动中心，直接准备返回大厅。
             if (state.step == BadgeFlow.Step.CLOSE_CARD) {
                 if (input.state == UiState.ACTIVITY_CENTER) {
-                    next = BadgeFlow.advanceTo(state, BadgeFlow.Step.EXIT_ACTIVITY, input.nowMs)
-                    jump = "（关闭 X 连「我的立牌」一起关了 ⇒ 跳过关闭弹框）"
+                    // 真机 2026-10-23：X 把「我的立牌」一起关了，但那个区服其实有 **3 张卡** ——
+                    // 只要还有没读的卡，就必须从活动中心**再进一次**（分享立牌 → 切换 → 选下一张），
+                    // 否则一律当"只有 1 张"直接返回大厅（用户报"三个立牌只收到一个"）。
+                    // 上限 [MAX_CARD_ROUNDS] 防在异常画面上来回打转。
+                    if (state.cardsRemaining > 0 && state.cardRounds < MAX_CARD_ROUNDS) {
+                        next = BadgeFlow.advanceTo(
+                            state.copy(cardRounds = state.cardRounds + 1),
+                            BadgeFlow.Step.SHARE_ENTRY,
+                            input.nowMs,
+                        )
+                        jump = "（X 把「我的立牌」一起关了，但还有 ${state.cardsRemaining} 张没读 ⇒ 回活动中心再进一次分享）"
+                    } else if (state.cardsRemaining > 0) {
+                        next = BadgeFlow.advanceTo(state, BadgeFlow.Step.EXIT_ACTIVITY, input.nowMs)
+                        jump = "（已经重进 ${state.cardRounds} 次还有卡没读到 ⇒ 不再重试，返回大厅）"
+                    } else {
+                        next = BadgeFlow.advanceTo(state, BadgeFlow.Step.EXIT_ACTIVITY, input.nowMs)
+                        jump = "（关闭 X 连「我的立牌」一起关了 ⇒ 跳过关闭弹框）"
+                    }
                 } else {
                     next = BadgeFlow.advanceTo(state, BadgeFlow.Step.PICK_CARD, input.nowMs)
                     jump = "（回「我的立牌」看还有没有未读卡）"
