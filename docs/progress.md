@@ -12260,3 +12260,18 @@ BadgeSession.current?.switch`）。立牌**支线**（进活动 / 领取 / 我�
 - 统计的是**当日全部记录**，不是 top 3 那三行。
 
 **验证**：`BadgePoolViewTest` 新增 2 例（数量/最高分取全量；空池无最高分）；`-PfastTests` 全绿、已装机。
+
+### 2026-10-23（决定换 OCR 引擎：任务卡与依赖评估落档，未动代码）
+
+用户拍板：**上 PaddleOCR**（不再纠缠 ML Kit 的 9/6 误读）。本次只写文档，不动代码、不切分支。
+
+- 新计划 **`docs/plans/m6-ocr-engine.md`**：背景实证（999→666、两次一致、区域/二值化都无效）、
+  **先决门槛**（Python 版跑 3168×1440 原图，`999` 必须读对 + 其余 16 张分数 + 好友/服务器两屏 + 耗时）、
+  依赖候选表（ncnn/PP-OCRv4、MNN、onnxruntime、ML Kit 拉丁、Tesseract）、接入点与**必须保住的契约**
+  （`NameReader` 接口不变、`NameCandidate` 坐标必须反算回原帧、`MlKitNameReader` 留作回退、
+  帧线程单次 ≤1s）、实施步骤与验收清单；
+- 在 `m6-nfr-hardening.md` §2 加了交叉引用：**体积预算只有 ≈8.5MB**（16.48MB → NFR-03 的 25MB），
+  而 PP-OCR 模型 + ncnn ≈13MB ⇒ 需在"放宽包体"与"只替换分数这一格"之间取舍（待用户拍板）；
+- 分支口径：**`stage/m6`**（`main` 拉），不放 `temp/badge-share-1021`（活动结束整支删除）；集成**新开会话**做。
+
+**未做**：离线验证（需要 Python 环境与真机原图，另开会话执行）；任何依赖改动。
