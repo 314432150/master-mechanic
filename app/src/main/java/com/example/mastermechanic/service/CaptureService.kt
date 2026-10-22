@@ -3550,10 +3550,12 @@ class CaptureService : Service() {
      */
     private val badgeConfirmIntervalMs = 600L
 
-    /** 分享码投票当前投的是哪一屏（画面 + 步骤）；换屏就清空重投。仅帧线程访问。 */
-    private var badgeCodeConfirmKey: String? = null
-
-    /** 分享码投票器：**两次读数一致才落盘**（2026-10-22，见 `CodeConfirmation`）。仅帧线程访问。 */
+    /**
+     * 分享码投票器：**两次读数一致才落盘**（2026-10-22，见 `CodeConfirmation`）。
+     *
+     * 投票作用域由 `badgeReadingOf` 每次传进来（任务代次 + 区服 + 步骤 + 卡片位置），
+     * 作用域一变它自己清空 —— 所以这里不需要另存"当前投的是哪一屏"。仅帧线程访问。
+     */
     private val badgeCodeConfirm = CodeConfirmation()
 
     /**
@@ -3705,13 +3707,16 @@ class CaptureService : Service() {
                 lastClickAtMs = BadgeSession.lastClickAtMs,
                 claimPlan = claimPlanOf(anchors, result.state, collect.step),
                 cardPlan = cardPlanOf(anchors, result.state, collect.step),
-                reading = badgeReadingOf(gray, result.state, collect.step, server),
+                reading = badgeReadingOf(gray, result.state, collect.step, server, generation),
                 decisionId = "badge-${badgeSeq + 1}",
             ),
         )
         // 读到一张立牌：**先落盘再推进**（写盘失败只告警，不丢掉已读到的东西）
         outcome.record?.let { record ->
             BadgeTask.saveRecord(this, record)
+            // 这张牌已经定案 ⇒ 投票读数不再有用（作用域本会在换牌时变，这里再显式清一次，
+            // 免得"同一张卡被重读"时把上一轮的读数当成这一轮的证据）
+            badgeCodeConfirm.reset()
             pendingCardKey?.let { key ->
                 BadgeSession.markCardRead(key)
                 pendingCardKey = null
@@ -3919,6 +3924,7 @@ class CaptureService : Service() {
         state: UiState,
         step: BadgeFlow.Step,
         server: String?,
+        generation: Long,
     ): BadgeRunner.Reading {
         if (step != BadgeFlow.Step.READ_FIRST && step != BadgeFlow.Step.READ_CARD) {
             return BadgeRunner.Reading.Waiting
@@ -3927,11 +3933,11 @@ class CaptureService : Service() {
         if (server.isNullOrBlank()) return BadgeRunner.Reading.Failed("当前区服未知，不能记录立牌")
         val key = "${state.name}:${step.number}"
         val now = SystemClock.elapsedRealtime()
-        // 换屏 ⇒ 分享码投票作废（投的是"这一张牌这一次弹框"的读数）
-        if (key != badgeCodeConfirmKey) {
-            badgeCodeConfirmKey = key
-            badgeCodeConfirm.reset()
-        }
+        // 投票作用域 = **这一次任务 + 这个区服 + 这一步 + 这一张牌**（2026-10-23 真机 bug）：
+        // 原来只用「画面 + 步骤号」，而「我的立牌」里两张牌都走同一个步骤号、任务重启后键也不变
+        // ⇒ 上一张牌的读数被带进下一张，日志出现"读数不一致（16RGRB / 16RGRB / Y9P4CZ）"，
+        // 前两个其实是前一张牌的读数（`badgeCodeConfirm` 自己也会在作用域变化时清空）。
+        val voteScope = "$generation|${server.orEmpty()}|${step.number}|${pendingCardKey ?: "first"}"
         // 正在等"第二次确认读数"时把间隔缩短（见 [badgeConfirmIntervalMs]）
         val interval = if (badgeCodeConfirm.readCount > 0) badgeConfirmIntervalMs else badgeOcrMinIntervalMs
         if (key == badgeOcrKey && now - badgeOcrAtMs < interval) return badgeOcrResult
@@ -3971,7 +3977,7 @@ class CaptureService : Service() {
             // **分享码要两次读一致才落盘**（2026-10-22 加固）：一次读数就信会把
             // `QGG4ZS` 记成 `GG4Z9`，池子里于是多出一张假牌。名称 / 分数用最新这次，
             // 只把码交给投票器（名称的 OCR 噪声比码多，"名称也要一致"会把整条流程卡死）。
-            val vote = badgeCodeConfirm.offer(ShareCodeParser.parseCode(codeText))
+            val vote = badgeCodeConfirm.offer(voteScope, ShareCodeParser.parseCode(codeText))
             when (vote) {
                 is CodeConfirmation.Verdict.Confirmed -> BadgeRunner.Reading.Ok(
                     BadgeRecord(
@@ -3981,13 +3987,21 @@ class CaptureService : Service() {
                         score = score,
                         recordedOn = java.time.LocalDate.now(),
                     ),
-                    "分享码 ${vote.code}（${vote.reads} 次读数一致）",
+                    // 位数只当**警告**（2026-10-23）：`HDXQM` 连读 6 次都是 5 位，说明这张牌稳定的读数
+                    // 就是 5 位（多半是识别区域少框了半位）。以前拿"不是 6 位"当不合格 ⇒ 永远确认不了，
+                    // 整轮任务被打死；现在照收，只在日志里说清，池子里看得见，用户自己比对。
+                    if (ShareCodeParser.isWellFormedCode(vote.code)) {
+                        "分享码 ${vote.code}（${vote.reads} 次读数一致）"
+                    } else {
+                        "分享码 ${vote.code}（${vote.reads} 次读数一致，⚠ 只有 ${vote.code.length} 位、" +
+                            "可能是识别区域少框了一位）"
+                    },
                 )
                 is CodeConfirmation.Verdict.NeedMore -> BadgeRunner.Reading.Waiting
                 is CodeConfirmation.Verdict.Conflict -> BadgeRunner.Reading.Failed(
                     "同一张牌的分享码读数不一致（" +
                         vote.reads.joinToString(" / ") { it ?: "没解析出" } +
-                        "）—— 不落盘；请重跑这张牌（或检查「分享码」框是否框全 6 位）",
+                        "）—— 不落盘；请重跑这张牌（或把「分享码」识别区域框得再紧一点）",
                 )
             }
         }

@@ -48,9 +48,7 @@ object BadgeStore {
         return BadgeData(
             // 读侧也合并（2026-10-22）：盘上已经存在的重复条目要**当场看不见**，
             // 不能指望"下次写入时才会被冲掉"——用户打开立牌池就是现在。
-            records = mergeSameCard(
-                data.records.filter { it.recordedOn == today }.filterNot { dropMalformed(it) },
-            ),
+            records = mergeSameCard(data.records.filter { it.recordedOn == today }),
             collected = data.collected.filter { it.on == today },
         )
     }
@@ -91,26 +89,6 @@ object BadgeStore {
         val next = current.copy(records = records)
         save(file, next)
         return next
-    }
-
-    /**
-     * 这条记录该不该从池子里**藏起来**：分享码不是合格格式 ⇒ 藏（并留日志）。
-     *
-     * 为什么在读侧拦（2026-10-22 真机）：新规则上线前写进去的旧码里有 `VEWKW` / `WNR6V` 这种 5 位读法
-     * （漏读一位），它们对用户毫无用处——拿去游戏里提交必然失败。采集侧已经不会产出这种码了
-     * （[CodeConfirmation]），但盘上的旧数据得当场看不见，不能等它被重跑覆盖。
-     *
-     * 边界：若游戏日后改了码长，这里会把"其实有效"的码一并藏掉 —— 那时采集侧本来也会先停下报
-     * "分享码读数不一致 / 没读全"，再由人重新框选，不会静默出错数据。
-     */
-    private fun dropMalformed(record: BadgeRecord): Boolean {
-        if (ShareCodeParser.isWellFormedCode(record.code)) return false
-        MmLog.i(
-            TAG,
-            "立牌池：隐藏不合格的分享码「${record.serverName}/${record.cardName}/" +
-                "${record.code}（${record.code.length} 位）」—— 不是 6 位，等于没读全，重跑该区服会覆盖",
-        )
-        return true
     }
 
     /**

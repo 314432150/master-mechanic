@@ -86,7 +86,8 @@ class ShareCodeParserTest {
 
     @Test
     fun wellFormedCodeIsExactlySixUppercaseOrDigits() {
-        // 2026-10-22 加固：真机 27 个码里 25 个 6 位，另 2 个 5 位都是漏读（同牌另一读 6 位、剪贴板实测也 6 位）
+        // 6 位是常见长度（真机 27 个码里 25 个），但**只用来写警告**：稳定读成 5 位的牌照收
+        // （2026-10-23 真机：HDXQM 连读 6 次都是 5 位，卡"必须 6 位"会把整轮任务打死）
         assertEquals(true, ShareCodeParser.isWellFormedCode("1M09G2"))
         assertEquals(true, ShareCodeParser.isWellFormedCode("QGG4ZS"))
         // 漏读一位 ⇒ 不合格（真机 GG4Z9 就是这么来的）
