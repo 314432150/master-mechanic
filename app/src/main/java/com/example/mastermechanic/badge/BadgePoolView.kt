@@ -43,6 +43,18 @@ object BadgePoolView {
         val copyText: String get() = "【$cardName$code】价值${score}分"
     }
 
+    /**
+     * 池子顶部的统计（2026-10-23 用户口径）：**总数 + 最高分**。
+     *
+     * 为什么放在纯逻辑里：数字错了比不显示更糟（用户拿它对"今天收了多少张"），
+     * 所以"数哪些、取哪个分"必须能逐条断言。空池子 ⇒ [maxScore] 为 null（界面换成"还没有"那句）。
+     */
+    data class Summary(val total: Int, val maxScore: Int?)
+
+    /** 统计当日（[BadgeData] 已是"按今天过滤过"的）记录数与最高分。 */
+    fun summary(data: BadgeData): Summary =
+        Summary(total = data.records.size, maxScore = data.records.maxOfOrNull { it.score })
+
     /** 分数倒序（同分按区服名、再按分享码升序 —— 纯粹为了确定性）。 */
     fun byScoreDesc(records: List<BadgeRecord>): List<BadgeRecord> =
         records.sortedWith(

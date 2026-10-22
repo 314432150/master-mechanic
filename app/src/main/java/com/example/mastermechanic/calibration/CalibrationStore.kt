@@ -86,7 +86,24 @@ object CalibrationStore {
      *   调用方给 `PatrolAnchors.nonLocatableAnchors`。**必填、故意不给默认值**：给了默认值，
      *   漏传就会静默退回"隐式收缩"，而屏上没有任何地方看得出这件事。
      */
-    fun loadForRuntime(context: Context, exemptFromShrink: Set<String>): CalibrationData? {
+    fun loadForRuntime(
+        context: Context,
+        exemptFromShrink: Set<String>,
+        /**
+         * **窗口也不要收紧**的锚点用途（2026-10-23 加；与 [exemptFromShrink] 是两件事）。
+         *
+         * 为什么要单开一个参数：`exemptFromShrink` 同时被用来把"只圈区域"的模板换成缩略图
+         * （[CalibrationSignals.shrinkRegionTemplates]）与"该重框哪一条"的排名 —— 把多实例锚点
+         * 塞进那个集合会把它们的**模板也缩成缩略图**，那就彻底匹配不了了。
+         *
+         * 这里要救的是另一类 bug：**同模板多实例**的锚点（立牌的「分享」「领取」）窗口一旦被收紧成
+         * "模板 + 固定余量"，搜索范围就只装得下**一个实例** —— 真机实录：`badge_share` 原始窗口
+         * 723×406（够两张卡），收紧后 208×165 ⇒ `locateAll` 永远只返回 1 处（日志「第 1/1 张」），
+         * 「我的立牌」里剩下的卡全被漏掉（用户 2026-10-23 报"999 分的立牌没进池"）。
+         * 调用方给 `BadgeAnchors.multiInstanceAnchors`。
+         */
+        keepSearchWindow: Set<String> = emptySet(),
+    ): CalibrationData? {
         val raw = load(context) ?: return null
         // **一次性瘦身**（2026-09-29）：把"只圈区域"锚点的**整块模板换成缩略图**。
         // 它们不参与匹配，整块存只是把产物撑大 —— 真机实录产物 5.4MB ⇒ 重载解码 OOM ⇒ 帧线程崩
@@ -102,7 +119,8 @@ object CalibrationStore {
                     "整块存只会让产物过大（曾把帧线程读崩）",
             )
         }
-        val runtime = slimmed.tightenedWindows(exemptFromShrink)
+        // 窗口：只圈区域的 + **多实例锚点**都不收紧（后者要装得下同屏多处命中，见 [keepSearchWindow]）
+        val runtime = slimmed.tightenedWindows(exemptFromShrink + keepSearchWindow)
         logWindowShrink(slimmed, runtime)
         // ⚠ 传 **slimmed**（收窄**前**）而不是 runtime —— 2026-10-18 真机发现：传 runtime 会让
         // 前两段榜单恒空（所有 ops 已被 8M 成本护栏压到 20M 门槛之下）⇒ "该重框哪一条"永不出现。

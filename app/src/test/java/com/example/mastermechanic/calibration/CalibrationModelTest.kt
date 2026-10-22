@@ -355,6 +355,39 @@ class CalibrationModelTest {
     }
 
     @Test
+    fun multiInstanceAnchorsKeepTheirWholeSearchWindow() {
+        // 2026-10-23 真机（用户报"999 分的立牌没进立牌池"）：`badge_share` 原始窗口 723×406（够两张卡），
+        // 运行时被收紧成 208×165 ⇒ `locateAll` 永远只返回 1 处（日志「第 1/1 张」），「我的立牌」里
+        // 其余的卡全被漏掉。⇒ 多实例锚点必须**整窗保留**。
+        val wide = SearchWindow(0.40, 0.63, 0.47, 0.75)
+        val share = CalibrationData.SignalEntry(
+            "badge_share",
+            wide,
+            listOf(template(1)),
+            SignalRole.ANCHOR,
+            purpose = com.example.mastermechanic.badge.BadgeAnchors.BADGE_SHARE,
+        )
+        val product = data(
+            signals = listOf(share),
+            rules = listOf(
+                CalibrationData.StateRule(
+                    UiState.BADGE_MY,
+                    signalNames = emptyList(),
+                    anchorNames = listOf("badge_share"),
+                ),
+            ),
+            frameWidth = 1440,
+            frameHeight = 3168,
+        )
+
+        val runtime = product
+            .tightenedWindows(setOf(com.example.mastermechanic.badge.BadgeAnchors.BADGE_SHARE))
+            .signals.single()
+
+        assertSame("多实例锚点整窗保留（窗口太小就只装得下一处命中）", share, runtime)
+    }
+
+    @Test
     fun allowsMarkerWithoutRuleForOfflineReplay() {
         // 离线回放工具构造"只有信号、没有规则"的产物（T1-13 起沿用）：标志允许暂不归属
         val product = data(rules = emptyList())

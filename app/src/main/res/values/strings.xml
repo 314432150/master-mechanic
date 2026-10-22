@@ -765,6 +765,8 @@
     <string name="floating_menu_badge_collect">收集立牌</string>
     <string name="badge_pool_title">立牌池</string>
     <string name="badge_pool_empty">今天还没有收集到立牌</string>
+    <!-- 池子顶部的统计行（2026-10-23 用户口径）：总数 + 最高分。总分不显示（用户只要这两项） -->
+    <string name="badge_pool_summary">共 %1$d 张 · 最高 %2$d 分</string>
     <!-- 读屏播报（2026-10-22 第二次调整）：行上只显示「分数 · 分享码」，
          立牌名与区服名看不到也听不到就分不清是哪张牌 ⇒ 播报里补全三样。 -->
     <string name="badge_pool_row_desc">复制 %1$s 的 %2$d 分分享码 %3$s</string>

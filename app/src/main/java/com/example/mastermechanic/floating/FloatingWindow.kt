@@ -1147,6 +1147,17 @@ class FloatingWindow(private val context: Context) {
             container.addView(noteRow(context.getString(R.string.badge_pool_empty)))
             return
         }
+        // 统计行（2026-10-23 用户口径）：总数 + 最高分，就在标题下面一行小字
+        val summary = BadgePoolView.summary(data)
+        container.addView(
+            noteRow(
+                context.getString(
+                    R.string.badge_pool_summary,
+                    summary.total,
+                    summary.maxScore ?: 0,
+                ),
+            ),
+        )
         val rows = BadgePoolView.rows(data, menuState.badgeExpanded)
         container.addView(
             boundedScroll(

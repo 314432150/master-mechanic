@@ -786,8 +786,14 @@ class CaptureService : Service() {
         frameThrottle = FrameThrottle(ACTIVE_INTERVAL_MS)
         val calibration = try {
             // 运行时入口：**含窗口收紧**（界面侧读的是原始值，见 CalibrationStore.loadForRuntime 的说明）；
-            // 例外：「只圈区域」的锚点（列表区域 / 好友名称列）**不收紧**——用户框多大就用多大
-            CalibrationStore.loadForRuntime(this, PatrolAnchors.nonLocatableAnchors)
+            // 例外 ①：「只圈区域」的锚点（列表区域 / 好友名称列）不收紧，用户框多大就用多大；
+            // 例外 ②：**同模板多实例**锚点（立牌「分享」「领取」）也不收紧 —— 收紧后窗口只装得下
+            // 一个实例，`locateAll` 永远只返回 1 处（2026-10-23 真机：漏读「我的立牌」里的卡）
+            CalibrationStore.loadForRuntime(
+                this,
+                PatrolAnchors.nonLocatableAnchors,
+                BadgeAnchors.multiInstanceAnchors,
+            )
         } catch (t: IllegalArgumentException) {
             MmLog.w(TAG, "标定产物加载失败，回退未标定运行：${t.message}")
             null
@@ -3492,7 +3498,12 @@ class CaptureService : Service() {
         lastFrameBytesAtMs = 0L
         lastPixelCacheAtMs = 0L
         val calibration = try {
-            CalibrationStore.loadForRuntime(this, PatrolAnchors.nonLocatableAnchors)
+            // 与首次加载同一口径：只圈区域 + 多实例锚点都不收紧窗口（见 loadForRuntime 的参数说明）
+            CalibrationStore.loadForRuntime(
+                this,
+                PatrolAnchors.nonLocatableAnchors,
+                BadgeAnchors.multiInstanceAnchors,
+            )
         } catch (t: IllegalArgumentException) {
             MmLog.w(TAG, "标定产物重载失败，继续用当前配置：${t.message}")
             return

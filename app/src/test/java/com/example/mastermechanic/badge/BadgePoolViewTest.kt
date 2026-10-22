@@ -88,4 +88,19 @@ class BadgePoolViewTest {
         assertFalse(BadgePoolView.showExpandToggle(3))
         assertTrue(BadgePoolView.showExpandToggle(4))
     }
+
+    @Test
+    fun summaryCountsAllRecordsAndTakesTheTopScore() {
+        // 顶部统计（2026-10-23 用户口径）：总数 + 最高分；**统计的是全部记录**，不是 top 3 那三行
+        val summary = BadgePoolView.summary(BadgeData(records = unsorted, collected = emptyList()))
+        assertEquals(4, summary.total)
+        assertEquals(877, summary.maxScore)
+    }
+
+    @Test
+    fun emptyPoolHasNoTopScore() {
+        val summary = BadgePoolView.summary(BadgeData())
+        assertEquals(0, summary.total)
+        assertEquals(null, summary.maxScore)
+    }
 }
