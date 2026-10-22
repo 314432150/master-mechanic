@@ -54,6 +54,13 @@ object BadgeSession {
         /** 已经收完的区服数（日志 / 展示用）。 */
         val done: Int = 0,
         /**
+         * 这一轮的队列是不是**整轮重跑**（今天全都收过 ⇒ 用户又点了一次，见 `BadgeTask.runQueueOf`）。
+         *
+         * 2026-10-23 用它决定"人已经在某个区服时，从它开始跑"合不合法：只有整轮重跑才敢把队列
+         * **轮换**到当前区服（集合不变、只换起点）；有未收集的区服时轮换会漏掉排在前面的那些。
+         */
+        val fullRound: Boolean = false,
+        /**
          * 「是不是已经在该区服」**判过了**（2026-10-23）。
          *
          * 一次任务只判一次：判完（无论结论）就置真，免得帧线程每轮都去 OCR 昵称。
@@ -123,7 +130,7 @@ object BadgeSession {
      * @param queue 本次要跑的区服名（**已按清单顺序、已剔除今日收集过的**，见 [BadgeTask]）
      * @param switch 换号段的起始进度（`PatrolFlow.start(scene, SWITCH_ONLY)`）
      */
-    fun start(queue: List<String>, switch: PatrolFlow.State, nowMs: Long): Task {
+    fun start(queue: List<String>, switch: PatrolFlow.State, nowMs: Long, fullRound: Boolean = false): Task {
         lastClickAtMs = 0L
         cardsRead = emptySet()
         val task = Task(
@@ -131,6 +138,7 @@ object BadgeSession {
             switch = switch,
             queue = queue,
             current = queue.firstOrNull(),
+            fullRound = fullRound,
         )
         // 先写 state 再递增代次（帧线程"先读代次、后读 state"，同 `PatrolSession.start`）
         state = task
@@ -168,6 +176,47 @@ object BadgeSession {
         lastNote = note ?: "「${task.current}」：进入立牌活动"
         MmLog.i(TAG, note ?: "「${task.current}」：换号段完成（已在大厅）⇒ 开始收立牌")
         return next
+    }
+
+    /**
+     * **人已经在某个区服**时就从这个区服接着跑（2026-10-23 用户报障）。
+     *
+     * 场景：整轮重跑（今天全都收过）中途停止后重新发起 —— 队列本来永远从清单第一个开始，
+     * 于是明明人在第 2 个区服，也要退出去重登到第 1 个。
+     *
+     * 这里做的是**顺序轮换**（集合不变、只换起点）：`[A,B,C]` + 人在 B ⇒ `[B,C,A]`，
+     * 既不丢任何一个区服，也不必为了"从第一个开始"白重登一次。
+     * 只在整轮重跑时用（见 [Task.fullRound]）：有未收集的区服时轮换会把排在前面的漏掉。
+     */
+    fun continueFrom(server: String, nowMs: Long): Task? {
+        val task = state ?: return null
+        if (!task.isRunning) return task
+        val rotated = rotateTo(task.queue, server)
+        val next = task.copy(
+            phase = Phase.COLLECT,
+            switch = null,
+            collect = BadgeFlow.start(nowMs),
+            queue = rotated,
+            current = rotated.firstOrNull() ?: server,
+            identityChecked = true,
+        )
+        state = next
+        lastNote = "「$server」：从这里接着收"
+        MmLog.i(
+            TAG,
+            "已在该区服「$server」⇒ 队列从它开始（整轮重跑，顺序轮换）：${rotated.joinToString("、")}",
+        )
+        return next
+    }
+
+    /**
+     * 把 [server] 转到队列首位（纯逻辑，便于单测）。
+     *
+     * 不在队列里 / 本来就在首位 ⇒ **原样返回**（不猜、不动别人的顺序）。
+     */
+    internal fun rotateTo(queue: List<String>, server: String): List<String> {
+        val index = queue.indexOf(server)
+        return if (index <= 0) queue else queue.drop(index) + queue.take(index)
     }
 
     /**

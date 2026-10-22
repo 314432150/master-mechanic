@@ -80,7 +80,8 @@ object BadgeTask {
             MmLog.i(TAG, "立牌任务已在跑 ⇒ 本次请求忽略")
             return StartResult(false, "立牌收集已经在跑了")
         }
-        BadgeSession.start(queue, switch, nowMs)
+        // `fullRound` 由队列规划给出：整轮重跑时才允许"人在哪个区服就从哪里开始"（见 `continueFrom`）
+        BadgeSession.start(queue, switch, nowMs, fullRound = pending.isEmpty())
         MmLog.i(
             TAG,
             "立牌任务：清单 ${list.size} 个区服，今天要跑 ${queue.size} 个（跳过 ${list.size - queue.size} 个已收集）",

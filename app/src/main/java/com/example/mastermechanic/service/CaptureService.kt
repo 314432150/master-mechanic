@@ -3808,6 +3808,16 @@ class CaptureService : Service() {
                 return IdentityCheck.HOLD
             }
             is CurrentServer.Verdict.Elsewhere -> {
+                // **整轮重跑时，人已经在某个区服 ⇒ 从它开始接着跑**（2026-10-23 用户报障）：
+                // 收完第 1 个、在第 2 个停下再点一次，原来永远从清单第一个重来（还要重登一次）。
+                // 队列轮换（集合不变）⇒ 既不丢区服，也不用为了"从第一个开始"白折腾。
+                val here = verdict.current
+                val index = if (here == null) -1 else task.queue.indexOf(here)
+                if (task.fullRound && index > 0) {
+                    BadgeSession.continueFrom(here!!, now)
+                    logBadgeNote(BadgeSession.lastNote)
+                    return IdentityCheck.HOLD
+                }
                 BadgeSession.markIdentityChecked(now)
                 // 读数像是某个角色名**前半截**时给一句可执行的建议：多半是「游戏昵称」的右边界
                 // 切到了最后一个字（真机 2026-10-23 读到 `卧龙山蓝`，真值 `卧龙山蓝莓`）。
