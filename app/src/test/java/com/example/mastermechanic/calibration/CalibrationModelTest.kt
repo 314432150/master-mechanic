@@ -356,33 +356,24 @@ class CalibrationModelTest {
     }
 
     @Test
-    fun searchWindowCanBeNarrowedToARegionAnchor() {
-        // 2026-10-23：「分享区域」把多实例「分享」的搜索范围收窄到这一块（与好友拜访的
-        // 「列表区域」同一套粗→精）。空交集必须返回 null —— 夹成零宽窗口等于把"没对上"伪装成"空列"。
-        val window = SearchWindow(0.0, 0.0, 1.0, 1.0)
-        val narrowed = requireNotNull(
-            window.narrowedTo(PixelBounds(100, 50, 300, 150), imageWidth = 1000, imageHeight = 500),
+    fun regionAnchorReplacesTheSearchWindow() {
+        // 2026-10-23：区域锚点（分享区域）**取代**多实例锚点的搜索窗口。
+        // ⚠ 不能写成"求交"：求交结果仍是锚点自己的小窗（222×178），真机第一次实现就栽在这里
+        //（区域框成 1637×102，交集只剩 208×129 ⇒ 日志依旧 `第 1/1 张`）。
+        val wide = requireNotNull(
+            SearchWindow.ofPixelBounds(PixelBounds(767, 940, 2404, 1042), 3168, 1440),
         )
-        assertEquals(PixelBounds(100, 50, 300, 150), narrowed.pixelBounds(1000, 500))
+        assertEquals(PixelBounds(767, 940, 2404, 1042), wide.pixelBounds(3168, 1440))
 
-        // 部分重叠 ⇒ 取交集
-        val partial = requireNotNull(
-            SearchWindow(0.5, 0.5, 0.9, 0.9).narrowedTo(
-                PixelBounds(600, 300, 800, 500),
-                imageWidth = 1000,
-                imageHeight = 500,
-            ),
+        // 越界裁到帧内
+        val clipped = requireNotNull(
+            SearchWindow.ofPixelBounds(PixelBounds(-50, 900, 4000, 1500), 3168, 1440),
         )
-        assertEquals(PixelBounds(600, 300, 800, 450), partial.pixelBounds(1000, 500))
+        assertEquals(PixelBounds(0, 900, 3168, 1440), clipped.pixelBounds(3168, 1440))
 
-        // 完全不相交 ⇒ null（调用方据此"这条本轮不产出命中"）
-        assertNull(
-            SearchWindow(0.0, 0.0, 0.2, 0.2).narrowedTo(
-                PixelBounds(500, 300, 800, 500),
-                imageWidth = 1000,
-                imageHeight = 500,
-            ),
-        )
+        // 没有面积 ⇒ null（调用方据此"这条本轮不产出命中"）
+        assertNull(SearchWindow.ofPixelBounds(PixelBounds(500, 500, 500, 900), 3168, 1440))
+        assertNull(SearchWindow.ofPixelBounds(PixelBounds(100, 100, 300, 100), 3168, 1440))
     }
 
     @Test

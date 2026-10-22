@@ -36,6 +36,61 @@ object BadgeStore {
     fun load(context: Context, today: LocalDate = LocalDate.now()): BadgeData =
         load(recordsFile(context), today)
 
+    /**
+     * **不过滤日期**地读整份文件（清理旧数据用，2026-10-23）。
+     *
+     * 与 [load] 的差别只有一处：那个会把"不是今天"的条目丢掉（界面看不见），但**盘上还留着** ——
+     * 用户口径是"过期了就该清掉"，所以清理时得先能看到它们。
+     */
+    fun loadAll(file: File): BadgeData {
+        if (!file.isFile) return BadgeData()
+        return try {
+            BadgeCodec.decode(file.readText(Charsets.UTF_8))
+        } catch (e: Exception) {
+            MmLog.w(TAG, "立牌池文件读不了（当作空）：${e.message}")
+            BadgeData()
+        }
+    }
+
+    /**
+     * **清掉今天之前**的记录与收集标记（2026-10-23 用户口径："已经过期了"）。
+     *
+     * 为什么不能只靠读侧过滤：读侧过滤让旧条目"看不见"，但文件会一直长、而且下次写盘若基于
+     * 含旧数据的快照就会把它们再写回去。这里在每次发起任务时一次性清干净。
+     *
+     * @return 删掉的条数（0 = 本来就干净；调用方据此决定要不要写日志）
+     */
+    fun pruneBefore(file: File, today: LocalDate): Int {
+        val all = loadAll(file)
+        val records = all.records.filterNot { it.recordedOn.isBefore(today) }
+        val collected = all.collected.filterNot { it.on.isBefore(today) }
+        val removed = (all.records.size - records.size) + (all.collected.size - collected.size)
+        if (removed <= 0) return 0
+        save(file, BadgeData(records = records, collected = collected))
+        return removed
+    }
+
+    /**
+     * 一个区服**收集结束**时：该区服只保留**这一轮**读到的牌（2026-10-23 用户口径）。
+     *
+     * 场景：今天已经跑过一次，池里留着该区服的旧码 / 旧分数；现在重跑并收到了新的 ——
+     * 用户要的是"以这一次为准"，不是新旧混在一起（分数会被游戏刷新，旧码也可能已失效）。
+     *
+     * @param round 本轮真正读到并落盘的那些记录（`BadgeSession.roundRecords`）
+     * @return 删掉的旧条数（0 = 本来就没有旧数据）
+     */
+    fun keepOnlyRound(file: File, serverName: String, round: List<BadgeRecord>): Int {
+        val all = loadAll(file)
+        val before = all.records.count { it.serverName == serverName }
+        // 本轮的那些（同一张牌重复读只留一条）
+        val keep = round.filter { it.serverName == serverName }.distinctBy { it.code }
+        val others = all.records.filterNot { it.serverName == serverName }
+        val next = BadgeData(records = others + keep, collected = all.collected)
+        if (next.records == all.records) return 0
+        save(file, next)
+        return maxOf(0, before - keep.size)
+    }
+
     /** 读当日数据（纯文件版，JVM 可测；与 [load] 共用同一实现）。 */
     fun load(file: File, today: LocalDate): BadgeData {
         if (!file.isFile) return BadgeData()

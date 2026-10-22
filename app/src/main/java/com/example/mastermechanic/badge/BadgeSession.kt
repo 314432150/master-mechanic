@@ -128,6 +128,17 @@ object BadgeSession {
     @Volatile
     var lastClickAtMs: Long = 0L
 
+    /**
+     * **本轮这个区服**真正读到并落盘的记录（2026-10-23 用户口径）。
+     *
+     * 用途：一个区服收集结束时，该区服在池子里只保留这一轮收到的牌（旧码 / 旧分数清掉）。
+     * 与 `BadgeStore.upsert` 的关系：upsert 是"写进去"（可能和旧记录合并），
+     * 这里是"这一轮到底读到了什么"的清单，收尾时用它替换掉该区服的旧行。
+     */
+    @Volatile
+    var roundRecords: List<BadgeRecord> = emptyList()
+        private set
+
     /** 最近一句给人看的话（悬浮窗顶部标签用）。 */
     @Volatile
     var lastNote: String? = null
@@ -166,6 +177,7 @@ object BadgeSession {
         lastClickAtMs = 0L
         endedAtMs = 0L
         cardsRead = emptySet()
+        roundRecords = emptyList()
         val task = Task(
             phase = Phase.SWITCH,
             switch = switch,
@@ -224,6 +236,7 @@ object BadgeSession {
     fun continueFrom(server: String, nowMs: Long): Task? {
         val task = state ?: return null
         if (!task.isRunning) return task
+        roundRecords = emptyList()
         val rotated = rotateTo(task.queue, server)
         val next = task.copy(
             phase = Phase.COLLECT,
@@ -275,6 +288,8 @@ object BadgeSession {
     fun finishServer(marked: Boolean, nowMs: Long): Task? {
         val task = state ?: return null
         if (!task.isRunning || task.phase != Phase.COLLECT) return task
+        // 这个区服收完了 ⇒ 本轮记录已由调用方写进池子（`BadgeStore.keepOnlyRound`），清空备用
+        roundRecords = emptyList()
         val rest = task.queue.drop(1)
         val done = task.done + 1
         if (rest.isEmpty()) {
@@ -388,6 +403,15 @@ object BadgeSession {
         cardsRead = cardsRead + key
     }
 
+    /** 记一条本轮读到的记录（同一分享码只留一条；收尾时用它替换该区服的旧数据）。 */
+    fun markRecord(record: BadgeRecord) {
+        if (roundRecords.any { it.code == record.code }) {
+            roundRecords = roundRecords.map { if (it.code == record.code) record else it }
+        } else {
+            roundRecords = roundRecords + record
+        }
+    }
+
     /** 停止：什么都不跑，清空全部会话状态。 */
     fun stop() {
         val was = state
@@ -396,6 +420,7 @@ object BadgeSession {
         lastClickAtMs = 0L
         lastNote = null
         cardsRead = emptySet()
+        roundRecords = emptyList()
         // **最后**递增代次（同 `PatrolSession.stop` 的理由：先 ++ 再清 state 会漏一种竞态）
         generation++
         if (was != null) MmLog.i(TAG, "立牌任务停止：停在第 ${was.done + 1} 个区服「${was.current}」")

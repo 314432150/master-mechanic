@@ -3896,6 +3896,8 @@ class CaptureService : Service() {
         // 读到一张立牌：**先落盘再推进**（写盘失败只告警，不丢掉已读到的东西）
         outcome.record?.let { record ->
             BadgeTask.saveRecord(this, record)
+            // 记进"本轮这个区服收到了什么"：收尾时用它替换该区服的旧数据（2026-10-23 用户口径）
+            BadgeSession.markRecord(record)
             // 这张牌已经定案 ⇒ 投票读数不再有用（作用域本会在换牌时变，这里再显式清一次，
             // 免得"同一张卡被重读"时把上一轮的读数当成这一轮的证据）
             badgeCodeConfirm.reset()
@@ -3905,6 +3907,14 @@ class CaptureService : Service() {
             }
         }
         if (outcome.finished) {
+            // **该区服只保留这一轮**（2026-10-23 用户口径）：今天早些时候跑过的旧码 / 旧分数清掉，
+            // 以这一次为准。放在打收集标记之前 —— 两者都成功才算"今天这个区服收好了"。
+            if (server != null) {
+                val removed = BadgeTask.keepOnlyRound(this, server, BadgeSession.roundRecords)
+                if (removed > 0) {
+                    MmLog.i(TAG, "「$server」收完：清掉该区服 ${removed} 条旧数据，只留本轮读到的")
+                }
+            }
             val marked = server != null && BadgeTask.markServerCollected(this, server)
             BadgeSession.finishServer(marked, now)
             logBadgeNote(BadgeSession.lastNote)

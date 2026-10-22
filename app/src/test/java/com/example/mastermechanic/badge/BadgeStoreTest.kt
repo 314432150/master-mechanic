@@ -156,4 +156,77 @@ class BadgeStoreTest {
         BadgeStore.upsert(file, record(), today)
         assertEquals(listOf(record()), BadgeStore.load(file, today).records)
     }
+
+    // ---------------------------------------------------------------- 过期数据清理（2026-10-23 用户口径）
+
+    @Test
+    fun pruneBeforeDropsYesterdayRecordsAndMarks() {
+        val file = tempFile()
+        // 直接落一份"跨了两天"的产物：`upsert` / `markCollected` 都按当天过滤后再写，
+        // 造不出这种文件（那正是它们不会留下旧条目的原因）—— 这里模拟老版本留下的残留
+        BadgeStore.save(
+            file,
+            BadgeData(
+                records = listOf(
+                    record(code = "OLD111", on = yesterday),
+                    record(code = "NEW222", on = today),
+                ),
+                collected = listOf(
+                    BadgeCollection("海鹰之羽", yesterday),
+                    BadgeCollection("发条权杖", today),
+                ),
+            ),
+        )
+
+        val removed = BadgeStore.pruneBefore(file, today)
+
+        assertEquals("昨天 1 条记录 + 1 个收集标记", 2, removed)
+        // 盘上真的没了（`loadAll` 不过滤日期，能看到残留；这里正是它的用途）
+        val all = BadgeStore.loadAll(file)
+        assertEquals(listOf("NEW222"), all.records.map { it.code })
+        assertEquals(listOf("发条权杖"), all.collected.map { it.serverName })
+    }
+
+    @Test
+    fun pruneBeforeIsANoOpWhenEverythingIsToday() {
+        val file = tempFile()
+        BadgeStore.upsert(file, record(), today)
+        assertEquals(0, BadgeStore.pruneBefore(file, today))
+    }
+
+    @Test
+    fun keepOnlyRoundReplacesThatServersOldRows() {
+        // 今天早些时候跑过一次：该区服留着旧码 / 旧分数；这一轮读到了新的 ⇒ 只留这一轮的
+        val file = tempFile()
+        BadgeStore.upsert(file, record(server = "发条权杖", code = "OLD111", score = 500), today)
+        BadgeStore.upsert(file, record(server = "发条权杖", code = "OLD333", score = 700), today)
+        BadgeStore.upsert(file, record(server = "海鹰之羽", code = "OTHER1", score = 300), today)
+
+        val round = listOf(record(server = "发条权杖", code = "NEW222", score = 877))
+        val removed = BadgeStore.keepOnlyRound(file, "发条权杖", round)
+
+        // 旧的两条里，一条被本轮那条"顶替"，另一条清掉 ⇒ 计数 = 旧数 − 本轮数
+        assertEquals("该区服少了一条旧数据（另一条被本轮顶替）", 1, removed)
+        val all = BadgeStore.loadAll(file)
+        assertEquals(
+            setOf("NEW222", "OTHER1"),
+            all.records.map { it.code }.toSet(),
+        )
+        // 其它区服一条不动
+        assertTrue(all.records.any { it.code == "OTHER1" })
+    }
+
+    @Test
+    fun keepOnlyRoundKeepsTheRoundEvenWhenSameCode() {
+        // 同一张牌这轮又读到（码相同、分数刷新）⇒ 保留这一轮那条，不重复
+        val file = tempFile()
+        BadgeStore.upsert(file, record(code = "SAME11", score = 500), today)
+        val round = listOf(record(code = "SAME11", score = 900))
+
+        BadgeStore.keepOnlyRound(file, "发条权杖", round)
+
+        val all = BadgeStore.loadAll(file)
+        assertEquals(1, all.records.size)
+        assertEquals(900, all.records.single().score)
+    }
 }

@@ -63,6 +63,15 @@ object BadgeTask {
         } ?: return StartResult(false, "还没有服务器清单（先在配置页添加区服）")
 
         val recordsFile = BadgeStore.recordsFile(context)
+        // **先清过期数据**（2026-10-23 用户口径："今日之前的已经过期了"）：读侧过滤只是"看不见"，
+        // 文件会一直长、而且下次写盘基于含旧数据的快照还会把它们写回去 ⇒ 每次发起时清干净。
+        val pruned = try {
+            BadgeStore.pruneBefore(recordsFile, today)
+        } catch (e: Exception) {
+            MmLog.w(TAG, "清过期立牌数据没成功（不影响本次收集）：${e.message}")
+            0
+        }
+        if (pruned > 0) MmLog.i(TAG, "清掉今天之前的过期立牌数据：$pruned 条")
         val pending = queueOf(list) { BadgeStore.hasCollected(recordsFile, it, today) }
         if (list.isEmpty) {
             return StartResult(false, "服务器清单是空的（先在配置页添加区服）")
@@ -102,6 +111,23 @@ object BadgeTask {
         } catch (e: Exception) {
             MmLog.w(TAG, "收集标记没写成功（「$serverName」下次会重跑）：${e.message}")
             false
+        }
+
+    /**
+     * 一个区服收完后：池子里该区服**只保留这一轮**读到的牌（2026-10-23 用户口径）。
+     *
+     * 今天已经跑过一次 ⇒ 池里可能留着该区服的旧码 / 旧分数（分数会被游戏刷新、旧码可能失效）。
+     * 用户要"以这一次为准"，所以在收尾时用本轮记录替换掉该区服的全部旧行。
+     *
+     * @param round 本轮真正读到并落盘的记录（`BadgeSession.roundRecords`）
+     * @return 删掉的旧条数；写盘失败返回 -1（只告警，不影响已收到的数据）
+     */
+    fun keepOnlyRound(context: Context, serverName: String, round: List<BadgeRecord>): Int =
+        try {
+            BadgeStore.keepOnlyRound(BadgeStore.recordsFile(context), serverName, round)
+        } catch (e: Exception) {
+            MmLog.w(TAG, "清「$serverName」的旧立牌数据没成功（池子里会留着旧记录）：${e.message}")
+            -1
         }
 
     /** 记一张立牌（按分享码 upsert；返回是否写成功）。 */

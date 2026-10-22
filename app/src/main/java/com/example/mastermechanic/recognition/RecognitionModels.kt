@@ -84,30 +84,6 @@ data class SearchWindow(val left: Double, val top: Double, val right: Double, va
         require(right >= left && bottom >= top) { "窗口右/下不得小于左/上" }
     }
 
-    /**
-     * 与本窗口求交后**再收窄到一个像素范围**（2026-10-23，立牌「分享区域」）。
-     *
-     * 用途：多实例锚点的搜索范围由一条**只圈区域**的锚点给定（"分享区域"），
-     * 于是"在多大的范围里找这些按钮"变成可标定的数据，而不是由模板尺寸 + 固定余量算出来的小窗。
-     *
-     * @return 交集为空 ⇒ null（**不夹成零宽窗口**：空交集说明两个框没对上，调用方要如实处理）
-     */
-    fun narrowedTo(bounds: PixelBounds, imageWidth: Int, imageHeight: Int): SearchWindow? {
-        if (imageWidth <= 0 || imageHeight <= 0) return null
-        val own = pixelBounds(imageWidth, imageHeight)
-        val x0 = maxOf(own.x0, bounds.x0)
-        val y0 = maxOf(own.y0, bounds.y0)
-        val x1 = minOf(own.x1, bounds.x1)
-        val y1 = minOf(own.y1, bounds.y1)
-        if (x1 <= x0 || y1 <= y0) return null
-        return SearchWindow(
-            left = x0.toDouble() / imageWidth,
-            top = y0.toDouble() / imageHeight,
-            right = x1.toDouble() / imageWidth,
-            bottom = y1.toDouble() / imageHeight,
-        )
-    }
-
     /** 换算为像素范围并裁剪到帧内。换算用 floor/ceil，保证确定性（§5-4）。 */
     fun pixelBounds(imageWidth: Int, imageHeight: Int): PixelBounds = PixelBounds(
         x0 = floor(left * imageWidth).toInt().coerceIn(0, imageWidth),
@@ -117,6 +93,31 @@ data class SearchWindow(val left: Double, val top: Double, val right: Double, va
     )
 
     companion object {
+        /**
+         * 把一个**像素矩形**直接当成搜索窗口（2026-10-23，立牌「分享区域」）。
+         *
+         * ⚠ **是"取代"而不是"求交"**：多实例锚点（「分享」）自己的窗口是"模板 + 固定余量"
+         * （真机 222×178，只装得下一个按钮），拿它去和用户框的「分享区域」求交，交集仍然是那个小窗
+         * （真机第一次实现就是这么错的：区域框成 1637×102，交集只剩 208×129 ⇒ 还是 `第 1/1 张`）。
+         * 区域锚点的语义就是"**在多大的范围里找**"（与好友拜访的「列表区域」同一套），所以直接取代。
+         *
+         * 越界部分裁到帧内；矩形为空 / 越界到没有面积 ⇒ null（调用方按"这次没得搜"处理）。
+         */
+        fun ofPixelBounds(bounds: PixelBounds, imageWidth: Int, imageHeight: Int): SearchWindow? {
+            if (imageWidth <= 0 || imageHeight <= 0) return null
+            val x0 = bounds.x0.coerceIn(0, imageWidth)
+            val y0 = bounds.y0.coerceIn(0, imageHeight)
+            val x1 = bounds.x1.coerceIn(0, imageWidth)
+            val y1 = bounds.y1.coerceIn(0, imageHeight)
+            if (x1 <= x0 || y1 <= y0) return null
+            return SearchWindow(
+                left = x0.toDouble() / imageWidth,
+                top = y0.toDouble() / imageHeight,
+                right = x1.toDouble() / imageWidth,
+                bottom = y1.toDouble() / imageHeight,
+            )
+        }
+
         /**
          * 收紧后模板四周**至少**保留的搜索余量（像素，2026-09-21；**2026-09-24 由 8 提到 32**）。
          *
