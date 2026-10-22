@@ -3654,8 +3654,11 @@ class CaptureService : Service() {
         // **先确认"是不是已经在这个区服"**（2026-10-23 用户报障）：任务意外停止后重跑时，
         // 大厅可能就已经是队首目标区服 —— 那样再走「退出登录 → 换区 → 选服 → 登录」纯属白折腾。
         // 只在"要动手的第一下之前"（退出登录、画面 = 大厅）判一次；判不出就照常换号（安全侧）。
+        //
+        // ⚠ **等第二次读数时必须本轮不动手**（2026-10-23 真机踩到）：第一次读数后照旧点下去，
+        // 第二帧读到的已经是设置页的「设置」⇒ 两次不一致 ⇒ 永远判不出来（白等一次重登）。
         if (!task.identityChecked && current.step == PatrolFlow.Step.LOGOUT && result.state == UiState.HALL) {
-            if (skipSwitchIfAlreadyHere(gray, task, generation, now)) return
+            if (identityCheckOf(gray, task, generation, now) == IdentityCheck.HOLD) return
         }
         val outcome = PatrolRunner.onRound(
             current = current,
@@ -3703,29 +3706,44 @@ class CaptureService : Service() {
     }
 
     /**
-     * 「是不是**已经在这个区服**」：读大厅左下角昵称，与服务器清单里的角色名比对（2026-10-23 用户报障）。
+     * 换号段开头那次"身份判定"的结论：本轮**动不动手**。
      *
-     * 返回 true = 已经切到立牌支线（本轮不要再跑换号段）；false = 照常换号。
+     * 之所以需要这一层：昵称要两次读数一致才采信，而第一次读完之后如果照旧点下去，
+     * 第二帧读到的就是设置页的「设置」（2026-10-23 真机实录）⇒ 两次永远不一致 ⇒ 这个功能等于没做。
+     */
+    private enum class IdentityCheck {
+        /** 本轮照旧跑换号段（判不出 / 确实在别的区服）。 */
+        PROCEED,
+
+        /** 本轮**什么都不点**（还在等第二次读数；或已经判为"就在这个区服"并切到立牌支线）。 */
+        HOLD,
+    }
+
+    /**
+     * 「是不是**已经在这个区服**」：读大厅左下角昵称，与服务器清单里的角色名比对（2026-10-23 用户报障）。
      *
      * **一律不猜**（红线 3 / 7）：昵称要两次读数一致才采信；同名歧义、清单没填角色名、没框区域、
      * 读不出来 —— 全部退回"照常换号"。错判成"已在该区服"的后果是把这一轮的分享码记到别的区服名下
      * （数据污染），比多花两分钟糟得多。
      */
-    private fun skipSwitchIfAlreadyHere(
+    private fun identityCheckOf(
         gray: GrayImage,
         task: BadgeSession.Task,
         generation: Long,
         now: Long,
-    ): Boolean {
-        val server = task.current ?: return false
-        // 等第二次读数时不必等满一秒：昵称是一行静态文字（同分享码确认的短间隔）
-        if (badgeNicknameConfirm.readCount > 0 && now - badgeNicknameAtMs < badgeConfirmIntervalMs) return false
+    ): IdentityCheck {
+        val server = task.current ?: return IdentityCheck.PROCEED
+        // 等第二次读数时不必等满一秒：昵称是一行静态文字（同分享码确认的短间隔）。
+        // ⚠ 这里必须 HOLD 而不是放行 —— 放行就会点下去，第二帧读到的就不是大厅昵称了。
+        if (badgeNicknameConfirm.readCount > 0 && now - badgeNicknameAtMs < badgeConfirmIntervalMs) {
+            return IdentityCheck.HOLD
+        }
         val data = calibrationData
         val locator = anchorLocator
         if (data == null || locator == null) {
             BadgeSession.markIdentityChecked(now)
             logBadgeNote("判不出当前区服（还没有标定结果）⇒ 照常换号")
-            return false
+            return IdentityCheck.PROCEED
         }
         val id = data.anchorIdFor(UiState.HALL, PatrolAnchors.HALL_NICKNAME)
         if (id == null) {
@@ -3736,22 +3754,26 @@ class CaptureService : Service() {
                 "大厅没框「游戏昵称」⇒ 无法判断是否已在「$server」，照常换号" +
                     "（框了它就能省掉这次重登；不影响正确性）",
             )
-            return false
+            return IdentityCheck.PROCEED
         }
         val region = locator.windowInFrame(gray.width, gray.height, UiState.HALL, id)
         if (region == null) {
             BadgeSession.markIdentityChecked(now)
             MmLog.w(TAG, "「游戏昵称」的窗口读不出来 ⇒ 照常换号")
-            return false
+            return IdentityCheck.PROCEED
         }
         badgeNicknameAtMs = now
         val text = nameReader.read(gray, region).joinToString(" ") { it.text }
         val vote = badgeNicknameConfirm.offer("nick|$generation|$server", text.ifBlank { null })
         when (vote) {
             is CodeConfirmation.Verdict.NeedMore -> {
-                // 第一次读数：等下一轮再读一次（同分享码口径），日志留一行便于真机对账
-                MmLog.i(TAG, "判断当前区服：读到大厅昵称「${text.ifBlank { "（空）" }}」，等第二次读数")
-                return false
+                // 第一次读数：**这一轮先别动手**，等下一轮再读一次（同分享码口径）
+                MmLog.i(
+                    TAG,
+                    "判断当前区服：读到大厅昵称「${text.ifBlank { "（空）" }}」，" +
+                        "等第二次读数（这一轮先不点，免得点完读到的是下一屏的字）",
+                )
+                return IdentityCheck.HOLD
             }
             is CodeConfirmation.Verdict.Conflict -> {
                 BadgeSession.markIdentityChecked(now)
@@ -3759,7 +3781,7 @@ class CaptureService : Service() {
                     TAG,
                     "大厅昵称两次读数不一致（${vote.reads.joinToString(" / ") { it ?: "空" }}）⇒ 不判，照常换号",
                 )
-                return false
+                return IdentityCheck.PROCEED
             }
             is CodeConfirmation.Verdict.Confirmed -> Unit // 往下走，比对清单
         }
@@ -3768,12 +3790,12 @@ class CaptureService : Service() {
         } catch (e: IllegalArgumentException) {
             BadgeSession.markIdentityChecked(now)
             MmLog.w(TAG, "服务器清单读不了 ⇒ 判不出当前区服，照常换号：${e.message}")
-            return false
+            return IdentityCheck.PROCEED
         }
         if (list == null) {
             BadgeSession.markIdentityChecked(now)
             MmLog.w(TAG, "还没有服务器清单 ⇒ 判不出当前区服，照常换号")
-            return false
+            return IdentityCheck.PROCEED
         }
         val nickname = (vote as CodeConfirmation.Verdict.Confirmed).code
         when (val verdict = CurrentServer.judge(nickname, list, server)) {
@@ -3783,20 +3805,31 @@ class CaptureService : Service() {
                     "已在该区服（昵称「${verdict.nickname}」=「$server」的角色名）⇒ 跳过换号段，直接收立牌",
                 )
                 logBadgeNote(BadgeSession.lastNote)
-                return true
+                return IdentityCheck.HOLD
             }
             is CurrentServer.Verdict.Elsewhere -> {
                 BadgeSession.markIdentityChecked(now)
+                // 读数像是某个角色名**前半截**时给一句可执行的建议：多半是「游戏昵称」的右边界
+                // 切到了最后一个字（真机 2026-10-23 读到 `卧龙山蓝`，真值 `卧龙山蓝莓`）。
+                // 只写进日志，**不**据此判定（半个名字不足以认定是哪个人）。
+                val truncated = list.entries
+                    .map { it.characterName }
+                    .filter { it.isNotEmpty() && it.startsWith(verdict.nickname) && it != verdict.nickname }
+                val hint = if (verdict.current == null && truncated.isNotEmpty()) {
+                    "（像是「${truncated.first()}」的前半截 ⇒ 到标定页把「游戏昵称」的**右边界**放宽一点）"
+                } else {
+                    ""
+                }
                 MmLog.i(
                     TAG,
-                    "当前在「${verdict.current ?: "（清单里没有这个昵称）"}」，目标是「${verdict.target}」⇒ 照常换号",
+                    "当前在「${verdict.current ?: "（清单里没有这个昵称）"}」，目标是「${verdict.target}」⇒ 照常换号$hint",
                 )
-                return false
+                return IdentityCheck.PROCEED
             }
             is CurrentServer.Verdict.Unknown -> {
                 BadgeSession.markIdentityChecked(now)
                 MmLog.w(TAG, "判不出当前区服（${verdict.reason}）⇒ 照常换号")
-                return false
+                return IdentityCheck.PROCEED
             }
         }
     }
