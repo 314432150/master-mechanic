@@ -133,6 +133,13 @@ object BadgeFlow {
          */
         val centerSinceMs: Long = 0L,
         val cardsRead: Int = 0,
+        /**
+         * 刚点的那张卡**之后还剩几张没读**（0 = 刚才点的是最后一张，2026-10-23 用户口径）。
+         *
+         * 用途只有一个：读完这张之后该点「切换」回卡列表（还有下一张），还是直接点**分享弹框的 X**
+         * 回活动中心（已是最后一张，不必再回卡列表）。
+         */
+        val cardsRemaining: Int = 0,
         val outcome: Outcome = Outcome.RUNNING,
         val reason: String? = null,
         val paused: Boolean = false,
@@ -287,7 +294,10 @@ object BadgeFlow {
     fun cardRead(state: State, nowMs: Long = 0L): State {
         if (!state.isRunning) return state
         if (state.step != Step.READ_CARD) return state
-        return enter(state.copy(cardsRead = state.cardsRead + 1), Step.SWITCH_TO_MY, nowMs)
+        // 还有下一张 ⇒ 点「切换」回卡列表；这已经是最后一张 ⇒ 直接点分享弹框的 X 回活动中心
+        // （用户 2026-10-23 口径：最后一次不必再绕回「我的立牌」）
+        val next = if (state.cardsRemaining > 0) Step.SWITCH_TO_MY else Step.CLOSE_CARD
+        return enter(state.copy(cardsRead = state.cardsRead + 1), next, nowMs)
     }
 
     /** 进入新一步：清掉"已动手"标记与停更状态（上一步的击不能带到下一步，口径 A）。 */

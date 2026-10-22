@@ -80,12 +80,15 @@ class BadgeFlowTest {
 
     @Test
     fun cardReadGoesBackToMyBadgeViaSwitch() {
-        // 2026-10-23 用户口径：读完一张**点「切换」回「我的立牌」**选下一张，
-        // 不再点 X（真机上 X 会把「我的立牌」一起关掉，多张卡就得重新进一次分享）
-        val atRead = advanceTo(BadgeFlow.Step.READ_CARD, cardsRead = 1)
+        // 2026-10-23 用户口径：还有下一张 ⇒ 点「切换」回「我的立牌」；
+        // **这已经是最后一张** ⇒ 直接点分享弹框的 X 关闭（不再绕回卡列表）
+        val atRead = advanceTo(BadgeFlow.Step.READ_CARD, cardsRead = 1).copy(cardsRemaining = 1)
         val next = BadgeFlow.cardRead(atRead, nowMs = t0 + 5_000)
         assertEquals(BadgeFlow.Step.SWITCH_TO_MY, next.step)
         assertEquals(2, next.cardsRead)
+
+        val lastCard = advanceTo(BadgeFlow.Step.READ_CARD, cardsRead = 2).copy(cardsRemaining = 0)
+        assertEquals(BadgeFlow.Step.CLOSE_CARD, BadgeFlow.cardRead(lastCard, t0 + 1).step)
 
         val atFirstRead = advanceTo(BadgeFlow.Step.READ_FIRST)
         assertEquals("第一张（已选立牌）不算卡", atFirstRead, BadgeFlow.cardRead(atFirstRead, t0 + 1))

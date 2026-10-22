@@ -122,6 +122,39 @@ object BadgeRunner {
         return if (ySpan <= xSpan) hits.sortedWith(byX) else hits.sortedWith(byYThenX)
     }
 
+    /** 一张卡的定位键（分享按钮中心的帧坐标）——"读过没有"就按它记。 */
+    fun cardKeyOf(hit: com.example.mastermechanic.decision.AnchorHit): String =
+        "${hit.frameX.toInt()},${hit.frameY.toInt()}"
+
+    /** 「我的立牌」里这一轮该点哪张：要顺手标成已读的键（第一次进时第 1 张）+ 下一张 + 还剩几张 */
+    data class CardPick(val skipKey: String?, val next: com.example.mastermechanic.decision.AnchorHit?, val unread: Int)
+
+    /**
+     * 「我的立牌」里**下一张点哪个**（2026-10-23 用户口径；纯逻辑可测）。
+     *
+     * 用户观察：点「分享立牌」进去的是**第 1 张**的分享码；点「切换」进「我的立牌」后，
+     * **有几个「分享」就有几张卡**，而**第 1 个「分享」就是刚才那张** ⇒ 直接跳过它、从第 2 个开始点。
+     * 所以 [firstVisit] 为真时先把第 1 个键标成"已读"（不点击），再取下一个未读的。
+     *
+     * ⚠ 这条依赖"卡列表顺序 = 分享立牌的选中顺序"这条**用户口径**；万一哪天不成立，
+     * 重复点到的还是同一张时会被「分享码判重」挡下（只更新不重记），不会把别的卡顶掉。
+     */
+    fun planCardPick(
+        hits: List<com.example.mastermechanic.decision.AnchorHit>,
+        readKeys: Set<String>,
+        firstVisit: Boolean,
+    ): CardPick {
+        val ordered = readingOrder(hits)
+        var read = readKeys
+        var skip: String? = null
+        if (firstVisit && ordered.isNotEmpty()) {
+            skip = cardKeyOf(ordered.first())
+            read = read + skip
+        }
+        val unread = ordered.filterNot { cardKeyOf(it) in read }
+        return CardPick(skipKey = skip, next = unread.firstOrNull(), unread = unread.size)
+    }
+
     /** 两个读取步的 OCR 结论。 */
     sealed interface Reading {
         data object Waiting : Reading
@@ -374,7 +407,8 @@ object BadgeRunner {
                 if (input.nowMs - input.lastClickAtMs < BadgeFlow.CLICK_GAP_MS) {
                     return RoundResult(state, note = "点击间隔未满 ${BadgeFlow.CLICK_GAP_MS}ms，等下一轮")
                 }
-                val next = BadgeFlow.advance(state, input.nowMs)
+                // 记住"点完这张还剩几张"：读完是点「切换」回卡列表，还是直接点 X 关闭
+                val next = BadgeFlow.advance(state.copy(cardsRemaining = plan.remaining), input.nowMs)
                 RoundResult(
                     BadgeFlow.acted(next, input.nowMs, input.state),
                     ClickRequest(

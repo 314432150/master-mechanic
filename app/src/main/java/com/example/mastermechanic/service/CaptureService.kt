@@ -4125,25 +4125,31 @@ class CaptureService : Service() {
         if (hits.isEmpty()) {
             return BadgeRunner.CardPlan.NoMore("没找到可点的「分享」（卡都读过了，或「分享」没标定）")
         }
-        val unread = hits.filterNot { BadgeSession.cardsRead.contains(cardKey(it)) }
-        if (unread.isEmpty()) {
-            return BadgeRunner.CardPlan.NoMore("这一屏的「分享」按钮都读过了（共 ${hits.size} 处命中）")
+        // 2026-10-23 用户口径：第 1 个「分享」就是「分享立牌」刚打开的那张 ⇒ 跳过它，从第 2 个开始点
+        val pick = BadgeRunner.planCardPick(
+            hits = hits,
+            readKeys = BadgeSession.cardsRead,
+            firstVisit = BadgeSession.cardsRead.isEmpty(),
+        )
+        pick.skipKey?.let { key ->
+            BadgeSession.markCardRead(key)
+            MmLog.i(
+                TAG,
+                "「我的立牌」共 ${hits.size} 个「分享」：第 1 个就是刚读过的那张（分享立牌打开的）" +
+                    "⇒ 标记为已读，从第 2 个开始点",
+            )
         }
-        val next = unread.first()
-        val key = cardKey(next)
-        pendingCardKey = key
-        val index = hits.size - unread.size + 1
+        val next = pick.next
+            ?: return BadgeRunner.CardPlan.NoMore("这一屏的「分享」按钮都读过了（共 ${hits.size} 处命中）")
+        pendingCardKey = BadgeRunner.cardKeyOf(next)
+        val index = hits.size - pick.unread + 1
         return BadgeRunner.CardPlan.Click(
             next.frameX,
             next.frameY,
-            "第 $index/${hits.size} 张（按从上到下）",
-            remaining = unread.size - 1,
+            "第 $index/${hits.size} 张（按阅读顺序）",
+            remaining = pick.unread - 1,
         )
     }
-
-    /** 卡的位置键（与 [BadgeSession.cardsRead] 同一口径）。 */
-    private fun cardKey(hit: com.example.mastermechanic.decision.AnchorHit): String =
-        "${hit.frameX.toInt()},${hit.frameY.toInt()}"
 
     /**
      * 复制分享弹框的**三块 OCR** → 一张立牌记录（FR-T1 / 红线 7）。

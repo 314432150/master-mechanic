@@ -413,7 +413,7 @@ class BadgeRunnerTest {
     fun cardReadingRecordsAndAdvancesToClose() {
         val record = BadgeRecord("星月晚", "墨子顶级立牌", "1M09G2", 877, LocalDate.of(2026, 10, 21))
         val result = BadgeRunner.onRound(
-            state(BadgeFlow.Step.READ_CARD).copy(cardsRead = 1),
+            state(BadgeFlow.Step.READ_CARD).copy(cardsRead = 1, cardsRemaining = 1),
             input(
                 UiState.BADGE_SHARE,
                 step = BadgeFlow.Step.READ_CARD,
@@ -421,9 +421,59 @@ class BadgeRunnerTest {
             ),
         )
         assertEquals(record, result.record)
-        // 2026-10-23：读完一张点「切换」回「我的立牌」继续选下一张（不再点 X 关闭）
+        // 2026-10-23：还有下一张 ⇒ 点「切换」回「我的立牌」
         assertEquals(BadgeFlow.Step.SWITCH_TO_MY, result.state?.step)
         assertEquals(2, result.state?.cardsRead)
+    }
+
+    @Test
+    fun readingTheLastCardClosesTheShareDialogDirectly() {
+        // 用户口径：点到最后一张的分享码弹框后**不再点切换**，直接点右上角 X 回活动中心
+        val record = BadgeRecord("星月晚", "墨子顶级立牌", "1M09G2", 877, LocalDate.of(2026, 10, 21))
+        val result = BadgeRunner.onRound(
+            state(BadgeFlow.Step.READ_CARD).copy(cardsRead = 2, cardsRemaining = 0),
+            input(
+                UiState.BADGE_SHARE,
+                step = BadgeFlow.Step.READ_CARD,
+                reading = BadgeRunner.Reading.Ok(record, "三块都读到唯一值"),
+            ),
+        )
+        assertEquals(BadgeFlow.Step.CLOSE_CARD, result.state?.step)
+    }
+
+    // ---------------------------------------------------------------- 卡列表的跳过与顺序（2026-10-23）
+
+    private fun hit2(x: Double, y: Double) = AnchorHit("badge_share", 0.99, x, y, x, y)
+
+    @Test
+    fun firstVisitSkipsTheCardThatWasAlreadyRead() {
+        // 「分享立牌」进去的是第 1 张；点「切换」进「我的立牌」后，第 1 个「分享」就是它 ⇒ 跳过
+        val hits = listOf(hit2(300.0, 300.0), hit2(900.0, 300.0), hit2(1500.0, 300.0))
+        val pick = BadgeRunner.planCardPick(hits, readKeys = emptySet(), firstVisit = true)
+        assertEquals("300,300", pick.skipKey)
+        assertEquals("下一张是第 2 个", 900.0, pick.next?.frameX ?: 0.0, 0.001)
+        assertEquals("点完它还剩 1 张", 1, pick.unread - 1)
+    }
+
+    @Test
+    fun laterVisitsDoNotSkipAnything() {
+        val hits = listOf(hit2(300.0, 300.0), hit2(900.0, 300.0), hit2(1500.0, 300.0))
+        val pick = BadgeRunner.planCardPick(
+            hits,
+            readKeys = setOf("300,300", "900,300"),
+            firstVisit = false,
+        )
+        assertEquals(null, pick.skipKey)
+        assertEquals(1500.0, pick.next?.frameX ?: 0.0, 0.001)
+        assertEquals(1, pick.unread)
+    }
+
+    @Test
+    fun singleCardServerHasNothingLeftToClick() {
+        // 只有 1 张卡：那个「分享」就是刚读过的那张 ⇒ 跳过之后没有可点的（直接关「我的立牌」）
+        val pick = BadgeRunner.planCardPick(listOf(hit2(300.0, 300.0)), emptySet(), firstVisit = true)
+        assertEquals("300,300", pick.skipKey)
+        assertEquals(null, pick.next)
     }
 
     @Test
