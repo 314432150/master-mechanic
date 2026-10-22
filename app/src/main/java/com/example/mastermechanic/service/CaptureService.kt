@@ -360,6 +360,18 @@ class CaptureService : Service() {
     private var badgeShareAreaWarned = false
 
     /**
+     * 上一次在「我的立牌」里看到的「分享」命中清单（坐标 + 分数），只用于**变化时打一行日志**。
+     *
+     * 为什么要有它（2026-10-23 用户报"航海广场 999 分的立牌没收到"）：那一屏只识别到 2 处「分享」，
+     * 而用户说有三张牌 ⇒ 要么第三处落在「分享区域」之外、要么那张卡的按钮样式/遮挡让匹配没过线。
+     * 记下每处的坐标与分数，才能一眼分辨是"没框到"还是"没认出来"（不再靠猜）。
+     */
+    private var lastShareHitsKey: String? = null
+
+    /** 上一次在「我的立牌」里识别到的「分享」处数（收尾日志用它对照"本轮到底收到几张"）。 */
+    private var lastShareHitCount = 0
+
+    /**
      * 已经报过「结束」震动的那个代次（0 = 还没报过）。仅帧线程访问。
      *
      * 结束 / 中止的任务快照会一直挂在 `BadgeSession`（等用户点「停止」或再开一轮），帧线程每轮都会
@@ -3923,6 +3935,12 @@ class CaptureService : Service() {
                 if (removed > 0) {
                     MmLog.i(TAG, "「$server」收完：清掉该区服 ${removed} 条旧数据，只留本轮读到的")
                 }
+                // 本轮收到几张 vs 卡列表里认到几处「分享」——差一个数字就说明还有卡没读到
+                val got = BadgeSession.roundRecords.count { it.serverName == server }
+                MmLog.i(
+                    TAG,
+                    "「$server」本轮收到 $got 张（「我的立牌」识别到 $lastShareHitCount 处「分享」）",
+                )
             }
             val marked = server != null && BadgeTask.markServerCollected(this, server)
             BadgeSession.finishServer(marked, now)
@@ -4122,6 +4140,20 @@ class CaptureService : Service() {
         // 同 [claimPlanOf]：复用本轮已定位的「分享」多命中（原先这里又跑了一遍 `locateAll`）。
         // 顺序 = **阅读顺序**（横向排列的卡按 x，纵向才按 y）—— 见 `BadgeRunner.readingOrder`
         val hits = BadgeRunner.readingOrder(anchors.filter { it.name == BadgeAnchors.BADGE_SHARE })
+        // **命中清单只在变化时打一行**（诊断"明明有三张卡、只认出两处分享"用）：
+        // 每处给帧坐标 + 分数，配「分享区域」的窗口就能分辨"没框到外面"还是"没认出来"。
+        val hitsKey = hits.joinToString(";") { "${BadgeRunner.cardKeyOf(it)}@${"%.2f".format(it.score)}" }
+        if (hitsKey != lastShareHitsKey) {
+            lastShareHitsKey = hitsKey
+            lastShareHitCount = hits.size
+            MmLog.i(
+                TAG,
+                "「我的立牌」识别到 ${hits.size} 处「分享」：" +
+                    hits.joinToString("；") {
+                        "(${it.frameX.toInt()},${it.frameY.toInt()}) 分数 ${"%.2f".format(it.score)}"
+                    },
+            )
+        }
         if (hits.isEmpty()) {
             return BadgeRunner.CardPlan.NoMore("没找到可点的「分享」（卡都读过了，或「分享」没标定）")
         }
