@@ -379,7 +379,7 @@ class FloatingWindow(private val context: Context) {
     private fun statusSignature(): String {
         val state = patrolForDisplay()
         return listOf(
-            PatrolStatus.progressLine(state).orEmpty(),
+            PatrolStatus.progressLine(state, BadgeSession.current).orEmpty(),
             PatrolStatus.statusLine(state, PatrolSession.lastNote).orEmpty(),
             PatrolStatus.canResume(state).toString(),
             // **控制行在不在**（2026-10-01）：它只看"真在跑的那个流程"（见 `PatrolStatus.showsControlRow`），
@@ -1683,7 +1683,7 @@ class FloatingWindow(private val context: Context) {
      * **行数恒定**（第二行缺内容时兜「运行中」）：行数一变面板高度就变，正在点菜单的人会点错行。
      */
     private fun statusBlock(state: PatrolFlow.State): LinearLayout {
-        val progress = PatrolStatus.progressLine(state).orEmpty()
+        val progress = PatrolStatus.progressLine(state, BadgeSession.current).orEmpty()
         // **"点击被拒"优先于普通 note**（2026-09-30）：那一句是"为什么它不动"的答案，而 note 每轮都被
         // 编排层重写（只能活 200~500ms，用户事后打开菜单早没了）⇒ 它单独存一份、粘在菜单上
         // （见 `PatrolSession.deniedNote`）。

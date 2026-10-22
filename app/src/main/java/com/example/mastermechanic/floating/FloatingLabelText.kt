@@ -69,6 +69,16 @@ object FloatingLabelText {
     const val MAX_CHARS = 12
 
     /**
+     * 「还在确认当前是哪个区服」时说的话（2026-10-23 用户报障："与实际不符"）。
+     *
+     * 搜集立牌开头会读一次大厅昵称，判断"是不是已经在这个区服、根本不用换号"。
+     * 那 0.6 秒里**还没决定要不要退出登录**，标签就不能先说「退出登录」——
+     * 真机实录：人明明就在目标区服上，标签先亮了 2 秒「退出登录」才跳过。
+     * 文案本体在 [BadgeSession.IDENTITY_TEXT]（菜单进度行也用同一句）。
+     */
+    const val IDENTITY_TEXT = BadgeSession.IDENTITY_TEXT
+
+    /**
      * **停更到什么程度**（2026-09-30 加）：调用方从 `FrameFreshness` 换算后递进来（本对象不碰安卓资源）。
      *
      * 两段的取舍（用户口径："停更持续时，提示里给'能做的事'"）：
@@ -172,6 +182,8 @@ object FloatingLabelText {
             !closingPopupText.isNullOrEmpty() -> closingPopupText
             // 立牌整轮跑完 / 中止：支线阶段没有 `patrol`，得自己判一次
             patrol == null && badge?.finished == true -> words.finished
+            // **还没决定要不要换号**时不许说「退出登录」（2026-10-23 用户报"与实际不符"）
+            patrol != null && badge?.pendingIdentity == true -> IDENTITY_TEXT
             patrol == null && badge != null -> badgeText(badge)
             patrol == null -> words.idle
             // ⚠ **第 10 步（`Step.DONE`，步骤名就叫「完成」）直接说「已完成」**（2026-10-01 用户报障：
@@ -194,7 +206,8 @@ object FloatingLabelText {
      * 拿到同一句话；这里保留兜底，免得 `switch` 与 `patrol` 短暂不同步时标签变空。
      */
     fun badgeText(task: BadgeSession.Task): String = when (task.phase) {
-        BadgeSession.Phase.SWITCH -> task.switch?.step?.label ?: "换号"
+        BadgeSession.Phase.SWITCH ->
+            if (task.pendingIdentity) IDENTITY_TEXT else task.switch?.step?.label ?: "换号"
         BadgeSession.Phase.COLLECT -> task.collect?.step?.label ?: "收集立牌"
     }
 

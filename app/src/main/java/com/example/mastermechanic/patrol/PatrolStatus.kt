@@ -1,5 +1,7 @@
 package com.example.mastermechanic.patrol
 
+import com.example.mastermechanic.badge.BadgeSession
+
 /**
  * 「这次执行现在什么情况」的**纯文案**（M4-T4-5）。
  *
@@ -22,8 +24,11 @@ object PatrolStatus {
      * 写成 `第 1/4 步`（区间内第几步）又会与日志里的步骤号对不上 —— 取舍是**与日志一致**
      * （排障时用户念一句、我们查一行），分母只用来交代"还有多远"。
      */
-    fun progressLine(state: PatrolFlow.State?): String? {
+    fun progressLine(state: PatrolFlow.State?, badge: BadgeSession.Task? = null): String? {
         if (state == null) return null
+        // 搜集立牌开头那 0.6 秒在**确认"是不是已经在这个区服"**：还没决定要不要退出登录，
+        // 写成 `第 3/10 步 · 退出登录` 就是骗人（2026-10-23 用户报"与实际不符"）。
+        if (badge?.pendingIdentity == true) return BadgeSession.IDENTITY_TEXT
         val total = PatrolFlow.lastStep(state.range).number
         return "第 ${state.step.number}/$total 步 · ${state.step.label}"
     }

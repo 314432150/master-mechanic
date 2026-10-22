@@ -361,6 +361,24 @@ class FloatingLabelTextTest {
     }
 
     @Test
+    fun labelSaysIdentityCheckBeforeItSaysLogout() {
+        // 2026-10-23 用户报"与实际不符"：人就在目标区服上，标签却先亮「退出登录」两秒。
+        val switch = requireNotNull(PatrolFlow.start(Scene.LOBBY, Range.SWITCH_ONLY))
+        val badge = BadgeSession.Task(
+            phase = BadgeSession.Phase.SWITCH,
+            switch = switch,
+            queue = listOf("奇迹瀑布"),
+            current = "奇迹瀑布",
+        )
+
+        assertEquals("确认当前区服", label(patrol = switch, badge = badge))
+        // 判完（结论"要换号"）⇒ 回到真实步骤名
+        assertEquals("退出登录", label(patrol = switch, badge = badge.copy(identityChecked = true)))
+        // 巡查（没有立牌任务）照旧
+        assertEquals("退出登录", label(patrol = switch))
+    }
+
+    @Test
     fun badgeStepsAlsoFitTheLabelWidth() {
         // 13 个步骤名都必须在 12 字上限内（否则标签又被截断，用户会读成"卡住了"）
         for (step in BadgeFlow.Step.entries) {

@@ -26,6 +26,13 @@ import com.example.mastermechanic.patrol.PatrolFlow
  */
 object BadgeSession {
 
+    /**
+     * 「还在确认当前是哪个区服」这句给用户看的话（2026-10-23 用户报"与实际不符"）。
+     *
+     * 顶部标签与菜单进度行**共用这一份**：两处各写一遍，迟早会一个说"确认区服"另一个还在说"退出登录"。
+     */
+    const val IDENTITY_TEXT = "确认当前区服"
+
     private const val TAG = "MM-Badge"
 
     /** 任务阶段。 */
@@ -76,6 +83,15 @@ object BadgeSession {
 
         /** 已暂停（游戏不在前台 / 用户点过暂停）：悬浮窗据此决定要不要显示「继续」。 */
         val isPaused: Boolean get() = switch?.paused == true || collect?.paused == true
+
+        /**
+         * 还在**确认"是不是已经在这个区服"**（2026-10-23 用户报障："与实际不符"）。
+         *
+         * 这一小段（约 0.6 秒，等昵称第二次读数）里我们**还没决定要不要退出登录**，
+         * 所以顶部标签与菜单都**不该说「退出登录」** —— 人可能就在目标区服上，一步都不用动。
+         */
+        val pendingIdentity: Boolean
+            get() = phase == Phase.SWITCH && !identityChecked && switch?.step == PatrolFlow.Step.LOGOUT
 
         /** 当前阶段的步骤说明（悬浮窗状态行用）。 */
         val stepText: String

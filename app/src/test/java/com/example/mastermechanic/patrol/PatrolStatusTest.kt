@@ -1,5 +1,6 @@
 package com.example.mastermechanic.patrol
 
+import com.example.mastermechanic.badge.BadgeSession
 import com.example.mastermechanic.patrol.PatrolFlow.Outcome
 import com.example.mastermechanic.patrol.PatrolFlow.Range
 import com.example.mastermechanic.patrol.PatrolFlow.Scene
@@ -28,6 +29,28 @@ class PatrolStatusTest {
     }
 
     // ---------------------------------------------------------------- 进度行
+
+    @Test
+    fun identityCheckDoesNotClaimLogoutYet() {
+        // 2026-10-23 用户报"与实际不符"：人就在目标区服上，菜单却先写「退出登录」两秒。
+        // 那时还在确认昵称（要不要换号都没定）⇒ 只能说「确认当前区服」。
+        val switch = requireNotNull(PatrolFlow.start(Scene.LOBBY, Range.SWITCH_ONLY))
+        val badge = BadgeSession.Task(
+            phase = BadgeSession.Phase.SWITCH,
+            switch = switch,
+            queue = listOf("奇迹瀑布"),
+            current = "奇迹瀑布",
+        )
+
+        assertEquals(BadgeSession.IDENTITY_TEXT, PatrolStatus.progressLine(switch, badge))
+        // 判完了（不管结论）就回到真实步骤名
+        assertEquals(
+            PatrolStatus.progressLine(switch),
+            PatrolStatus.progressLine(switch, badge.copy(identityChecked = true)),
+        )
+        // 没有立牌任务时行为完全不变（巡查照旧）
+        assertEquals(PatrolStatus.progressLine(switch), PatrolStatus.progressLine(switch, null))
+    }
 
     @Test
     fun theControlRowOnlyExistsWhileTheFlowCanStillBeActedOn() {
