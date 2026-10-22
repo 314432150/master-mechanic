@@ -63,8 +63,25 @@ object BadgeAnchors {
     /** 获取立牌弹框 · 点击继续（点「领取」之后出现的继续按钮；2026-10-21 用户确认归本弹框）。 */
     const val BADGE_CONTINUE = "badge_continue"
 
-    /** 我的立牌弹框 · 分享（立牌卡上的分享按钮；两张卡两个，见文件头）。 */
+    /** 我的立牌弹框 · 分享（立牌卡上的分享按钮；多张卡多个，见文件头）。 */
     const val BADGE_SHARE = "badge_share"
+
+    /**
+     * 我的立牌弹框 · **分享区域**（**只圈区域**，不点）：所有「分享」按钮的**最大范围**（2026-10-23 用户口径）。
+     *
+     * ## 为什么必须单独有一条
+     *
+     * 「分享」是**多实例**锚点，而它的搜索窗口按"模板 + 固定余量"算 ⇒ 只装得下一个按钮
+     * （真机：模板 93×50、窗口 221×178）⇒ `locateAll` 永远只返回 1 处（日志恒 `第 1/1 张`），
+     * 「我的立牌」里其余的卡从来没被读过（用户报"999 分的立牌没进池"）。
+     *
+     * 与**农场好友拜访**同一套做法（"粗区域 + 精定位"）：本区域只提供**搜索范围**，
+     * 「分享」按钮模板在这个范围里多实例匹配（`AnchorLocator.locate(narrow = …)`）。
+     * 卡是**横向排列**的（用户 2026-10-23 确认）⇒ 这个框要**够宽**（宽度是主要矛盾，不是高度）。
+     *
+     * 它不参与模板匹配（[regionAnchors] ⇒ `nonLocatableAnchors`），窗口也不收紧（用户框多大就搜多大）。
+     */
+    const val BADGE_SHARE_AREA = "badge_share_area"
 
     /** 我的立牌弹框 · 关闭（右上角 X）。 */
     const val BADGE_MY_CLOSE = "badge_my_close"
@@ -99,6 +116,8 @@ object BadgeAnchors {
         BADGE_SHARE_SCORE_AREA,
         BADGE_SHARE_NAME_AREA,
         BADGE_SHARE_TEXT_AREA,
+        // 2026-10-23：多实例「分享」按钮的搜索范围（只圈区域，不点）
+        BADGE_SHARE_AREA,
     )
 
     /**
@@ -166,6 +185,8 @@ object BadgeAnchors {
 
         UiState.BADGE_MY -> listOf(
             PatrolAnchors.Purpose("分享", BADGE_SHARE),
+            // 2026-10-23：多实例「分享」的**搜索范围**（所有分享按钮的最大范围；只圈区域、不点）
+            PatrolAnchors.Purpose("分享区域", BADGE_SHARE_AREA),
             PatrolAnchors.Purpose("关闭", BADGE_MY_CLOSE),
         )
 
@@ -195,7 +216,7 @@ object BadgeAnchors {
             BADGE_ACTIVITY_EXIT,
         ),
         UiState.BADGE_CLAIM to setOf(BADGE_CLAIM, BADGE_CONTINUE, BADGE_CLAIM_CLOSE),
-        UiState.BADGE_MY to setOf(BADGE_SHARE, BADGE_MY_CLOSE),
+        UiState.BADGE_MY to setOf(BADGE_SHARE, BADGE_SHARE_AREA, BADGE_MY_CLOSE),
         UiState.BADGE_SHARE to setOf(
             BADGE_SHARE_SCORE_AREA,
             BADGE_SHARE_NAME_AREA,

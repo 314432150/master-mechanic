@@ -233,6 +233,9 @@ object BadgeScenes {
             BadgeAnchors.BADGE_SHARE_NAME_AREA,
             BadgeAnchors.BADGE_SHARE_TEXT_AREA,
         ),
+        // 2026-10-23：「我的立牌」的**分享区域**（所有「分享」按钮的最大范围）。
+        // 没有它 ⇒ 多实例定位的窗口只装得下一个按钮 ⇒ 「我的立牌」里只读得到一张卡。
+        UiState.BADGE_MY to setOf(BadgeAnchors.BADGE_SHARE_AREA),
     )
 
     /**

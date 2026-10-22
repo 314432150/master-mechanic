@@ -150,15 +150,37 @@ class AnchorLocator(
      * [multiHitAnchors] 里的锚点在这一轮**返回全部命中**（不按位置歧义否决）——立牌的「领取」「分享」
      * 本来就同屏多处，`locateAll` 的语义并进来后，采集层同一轮只需定位一次，不必再单独跑一遍。
      */
-    fun locate(gray: GrayImage, state: UiState, only: Set<String>): List<AnchorHit> {
+    fun locate(
+        gray: GrayImage,
+        state: UiState,
+        only: Set<String>,
+        /**
+         * **把某几条锚点的搜索范围收窄到一个像素矩形**（2026-10-23，立牌「分享区域」）。
+         *
+         * 用途：多实例锚点（「分享」）的窗口按"模板 + 固定余量"算，只装得下一个实例 ⇒
+         * 由一条**只圈区域**的锚点（`badge_share_area`）给出真正的搜索范围（"粗区域 + 精定位"，
+         * 与好友拜访的「列表区域」同一套做法）。键 = 锚点名；值 = 区域锚点换算出的帧像素矩形。
+         *
+         * 空集 ⇒ 行为与旧版逐字段相同。交集为空 ⇒ 这一条本轮**不产出命中**（不夹成零宽窗口）。
+         */
+        narrow: Map<String, PixelBounds> = emptyMap(),
+    ): List<AnchorHit> {
         val specs = specsByState[state].orEmpty().filter { only.isEmpty() || it.name in only }
         if (specs.isEmpty()) return emptyList()
         val detector = SignalDetector(specs, params)
         return specs.flatMap { spec ->
-            if (spec.name in multiHitAnchors) {
-                allHitsOf(spec, detector, gray)
+            val region = narrow[spec.name]
+            val narrowed = if (region == null) {
+                null
             } else {
-                listOfNotNull(hitOf(spec, detector.detectSignal(gray, spec)))
+                spec.window.narrowedTo(region, gray.width, gray.height)
+                    ?: return@flatMap emptyList<AnchorHit>()
+            }
+            val effective = if (narrowed == null) spec else SignalSpec(spec.name, narrowed, spec.templates)
+            if (effective.name in multiHitAnchors) {
+                allHitsOf(effective, detector, gray)
+            } else {
+                listOfNotNull(hitOf(effective, detector.detectSignal(gray, effective)))
             }
         }
     }

@@ -4,6 +4,7 @@ import com.example.mastermechanic.decision.ExpectedSignals
 import com.example.mastermechanic.decision.UiState
 import com.example.mastermechanic.patrol.PatrolAnchors
 import com.example.mastermechanic.recognition.MatchParams
+import com.example.mastermechanic.recognition.PixelBounds
 import com.example.mastermechanic.recognition.SearchWindow
 import com.example.mastermechanic.recognition.SyntheticImages
 import com.example.mastermechanic.recognition.Template
@@ -351,6 +352,36 @@ class CalibrationModelTest {
         assertTrue(
             "例外不能扩到点击目标：它的窗口照旧重算（否则又要回到大窗口那条老路）",
             runtime.getValue("friend_visit").window.right < button.right,
+        )
+    }
+
+    @Test
+    fun searchWindowCanBeNarrowedToARegionAnchor() {
+        // 2026-10-23：「分享区域」把多实例「分享」的搜索范围收窄到这一块（与好友拜访的
+        // 「列表区域」同一套粗→精）。空交集必须返回 null —— 夹成零宽窗口等于把"没对上"伪装成"空列"。
+        val window = SearchWindow(0.0, 0.0, 1.0, 1.0)
+        val narrowed = requireNotNull(
+            window.narrowedTo(PixelBounds(100, 50, 300, 150), imageWidth = 1000, imageHeight = 500),
+        )
+        assertEquals(PixelBounds(100, 50, 300, 150), narrowed.pixelBounds(1000, 500))
+
+        // 部分重叠 ⇒ 取交集
+        val partial = requireNotNull(
+            SearchWindow(0.5, 0.5, 0.9, 0.9).narrowedTo(
+                PixelBounds(600, 300, 800, 500),
+                imageWidth = 1000,
+                imageHeight = 500,
+            ),
+        )
+        assertEquals(PixelBounds(600, 300, 800, 450), partial.pixelBounds(1000, 500))
+
+        // 完全不相交 ⇒ null（调用方据此"这条本轮不产出命中"）
+        assertNull(
+            SearchWindow(0.0, 0.0, 0.2, 0.2).narrowedTo(
+                PixelBounds(500, 300, 800, 500),
+                imageWidth = 1000,
+                imageHeight = 500,
+            ),
         )
     }
 

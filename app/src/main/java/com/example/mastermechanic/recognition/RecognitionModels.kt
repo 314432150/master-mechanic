@@ -84,6 +84,30 @@ data class SearchWindow(val left: Double, val top: Double, val right: Double, va
         require(right >= left && bottom >= top) { "窗口右/下不得小于左/上" }
     }
 
+    /**
+     * 与本窗口求交后**再收窄到一个像素范围**（2026-10-23，立牌「分享区域」）。
+     *
+     * 用途：多实例锚点的搜索范围由一条**只圈区域**的锚点给定（"分享区域"），
+     * 于是"在多大的范围里找这些按钮"变成可标定的数据，而不是由模板尺寸 + 固定余量算出来的小窗。
+     *
+     * @return 交集为空 ⇒ null（**不夹成零宽窗口**：空交集说明两个框没对上，调用方要如实处理）
+     */
+    fun narrowedTo(bounds: PixelBounds, imageWidth: Int, imageHeight: Int): SearchWindow? {
+        if (imageWidth <= 0 || imageHeight <= 0) return null
+        val own = pixelBounds(imageWidth, imageHeight)
+        val x0 = maxOf(own.x0, bounds.x0)
+        val y0 = maxOf(own.y0, bounds.y0)
+        val x1 = minOf(own.x1, bounds.x1)
+        val y1 = minOf(own.y1, bounds.y1)
+        if (x1 <= x0 || y1 <= y0) return null
+        return SearchWindow(
+            left = x0.toDouble() / imageWidth,
+            top = y0.toDouble() / imageHeight,
+            right = x1.toDouble() / imageWidth,
+            bottom = y1.toDouble() / imageHeight,
+        )
+    }
+
     /** 换算为像素范围并裁剪到帧内。换算用 floor/ceil，保证确定性（§5-4）。 */
     fun pixelBounds(imageWidth: Int, imageHeight: Int): PixelBounds = PixelBounds(
         x0 = floor(left * imageWidth).toInt().coerceIn(0, imageWidth),

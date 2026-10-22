@@ -356,6 +356,9 @@ class CaptureService : Service() {
     /** 上一次读大厅昵称的时刻（ms）：同一任务内不必每帧都 OCR。仅帧线程访问。 */
     private var badgeNicknameAtMs = 0L
 
+    /** 「分享区域」没框这件事是不是已经说过（只在帧每 200ms 一轮的循环里说一次）。仅帧线程访问。 */
+    private var badgeShareAreaWarned = false
+
     /**
      * 已经报过「结束」震动的那个代次（0 = 还没报过）。仅帧线程访问。
      *
@@ -3618,7 +3621,13 @@ class CaptureService : Service() {
                 else -> {
                     val step = task.collect?.step
                     val need = step?.let { BadgeScenes.neededAnchors(it, result.state) }.orEmpty()
-                    if (need.isEmpty()) emptyList() else locator.locate(gray, result.state, need)
+                    if (need.isEmpty()) {
+                        emptyList()
+                    } else {
+                        // 「我的立牌」的多实例「分享」：搜索范围由**只圈区域**的「分享区域」给定
+                        // （2026-10-23 用户口径：粗区域 + 精定位，与好友拜访同一套做法）
+                        locator.locate(gray, result.state, need, shareAreaNarrowing(gray, result.state, step))
+                    }
                 }
             }
         } else {
@@ -4047,6 +4056,41 @@ class CaptureService : Service() {
      * （该位置已读过）—— 于是**漏掉的第二张会在日志里表现为"只读到 1 张"**，
      * 而不是被重复读一遍。
      */
+    /**
+     * 「我的立牌」多实例「分享」的**搜索范围**（2026-10-23 用户口径）：由只圈区域的
+     * [BadgeAnchors.BADGE_SHARE_AREA] 给出，把「分享」的搜索窗口收窄到这一块。
+     *
+     * 为什么必须有它：「分享」的窗口按"模板 + 固定余量"算（真机 221×178），只装得下一个按钮 ⇒
+     * `locateAll` 恒返回 1 处（日志 `第 1/1 张`），「我的立牌」里其余的卡从来没被读过
+     * （用户报"999 分的立牌没进池"）。与好友拜访的「列表区域」是同一套"粗区域 + 精定位"。
+     *
+     * 没框 ⇒ 空表（退回旧行为：只搜锚点自己的小窗），并**只提醒一次**。
+     */
+    private fun shareAreaNarrowing(
+        gray: GrayImage,
+        state: UiState,
+        step: BadgeFlow.Step?,
+    ): Map<String, PixelBounds> {
+        if (state != UiState.BADGE_MY || step != BadgeFlow.Step.PICK_CARD) return emptyMap()
+        val data = calibrationData ?: return emptyMap()
+        val locator = anchorLocator ?: return emptyMap()
+        val id = data.anchorIdFor(UiState.BADGE_MY, BadgeAnchors.BADGE_SHARE_AREA)
+        if (id == null) {
+            if (!badgeShareAreaWarned) {
+                badgeShareAreaWarned = true
+                MmLog.w(
+                    TAG,
+                    "「我的立牌」没框「分享区域」⇒ 只能在「分享」自己的小窗里找，" +
+                        "多张卡只会读到一张；到标定页补一条「分享区域」（所有分享按钮的最大范围）",
+                )
+            }
+            return emptyMap()
+        }
+        val area = locator.windowInFrame(gray.width, gray.height, UiState.BADGE_MY, id)
+            ?: return emptyMap()
+        return mapOf(BadgeAnchors.BADGE_SHARE to area)
+    }
+
     private fun cardPlanOf(
         anchors: List<AnchorHit>,
         state: UiState,
@@ -4057,8 +4101,8 @@ class CaptureService : Service() {
         }
         if (anchorLocator == null) return BadgeRunner.CardPlan.Failed("没有标定结果")
         // 同 [claimPlanOf]：复用本轮已定位的「分享」多命中（原先这里又跑了一遍 `locateAll`）。
-        val hits = anchors.filter { it.name == BadgeAnchors.BADGE_SHARE }
-            .sortedBy { it.frameY }
+        // 顺序 = **阅读顺序**（横向排列的卡按 x，纵向才按 y）—— 见 `BadgeRunner.readingOrder`
+        val hits = BadgeRunner.readingOrder(anchors.filter { it.name == BadgeAnchors.BADGE_SHARE })
         if (hits.isEmpty()) {
             return BadgeRunner.CardPlan.NoMore("没找到可点的「分享」（卡都读过了，或「分享」没标定）")
         }

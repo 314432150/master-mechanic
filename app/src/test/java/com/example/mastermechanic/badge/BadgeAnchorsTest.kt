@@ -3,6 +3,7 @@ package com.example.mastermechanic.badge
 import com.example.mastermechanic.calibration.CalibrationData
 import com.example.mastermechanic.decision.UiState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -54,15 +55,24 @@ class BadgeAnchorsTest {
 
     @Test
     fun recognitionAreasAreRegionOnly() {
-        // 只圈区域（文字识别输入）、不是可点击目标的三个：复制分享的立牌信息三块
-        // （分数 / 立牌名称 / 分享码）
+        // 只圈区域、不是可点击目标：复制分享的立牌信息三块（分数 / 立牌名称 / 分享码）
+        // + 「我的立牌」的**分享区域**（多实例「分享」的搜索范围，2026-10-23）
         assertEquals(
             setOf(
                 BadgeAnchors.BADGE_SHARE_SCORE_AREA,
                 BadgeAnchors.BADGE_SHARE_NAME_AREA,
                 BadgeAnchors.BADGE_SHARE_TEXT_AREA,
+                BadgeAnchors.BADGE_SHARE_AREA,
             ),
             BadgeAnchors.regionAnchors,
         )
+    }
+
+    @Test
+    fun shareAreaIsNeverAClickTarget() {
+        // 区域只给搜索范围用：不能同时进多实例点击集合（AnchorLocator 构造时就要求两者不相交）
+        assertTrue(BadgeAnchors.BADGE_SHARE in BadgeAnchors.multiInstanceAnchors)
+        assertFalse(BadgeAnchors.BADGE_SHARE_AREA in BadgeAnchors.multiInstanceAnchors)
+        assertTrue(BadgeAnchors.BADGE_SHARE_AREA in BadgeAnchors.regionAnchors)
     }
 }

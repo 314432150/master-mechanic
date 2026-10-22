@@ -100,6 +100,26 @@ object BadgeRunner {
         data class Failed(val reason: String) : CardPlan
     }
 
+    /**
+     * 多个「分享」命中按**阅读顺序**排（2026-10-23）：先按行（y 相近的算一行），行内按 x。
+     *
+     * ## 为什么不能只按 y
+     *
+     * 用户 2026-10-23 确认立牌卡是**横向排列**的 ⇒ 同一行里各按钮的 y 有 ±几像素的匹配噪声，
+     * 只按 y 排序会得到"随机"的行内顺序；只按 x 排序则在纵向堆叠时会把第二行接到第一行中间。
+     * 这里用几何关系自己判：**y 跨度 ≤ x 跨度**（一条横排）⇒ 按 x；否则按 y 再按 x（多行）。
+     *
+     * 纯逻辑（[AnchorHit] 只是坐标数据），可 JVM 单测。
+     */
+    fun readingOrder(hits: List<com.example.mastermechanic.decision.AnchorHit>): List<com.example.mastermechanic.decision.AnchorHit> {
+        if (hits.size <= 1) return hits
+        val xSpan = hits.maxOf { it.frameX } - hits.minOf { it.frameX }
+        val ySpan = hits.maxOf { it.frameY } - hits.minOf { it.frameY }
+        val byX = compareBy<com.example.mastermechanic.decision.AnchorHit> { it.frameX }
+        val byYThenX = compareBy<com.example.mastermechanic.decision.AnchorHit> { it.frameY }.then(byX)
+        return if (ySpan <= xSpan) hits.sortedWith(byX) else hits.sortedWith(byYThenX)
+    }
+
     /** 两个读取步的 OCR 结论。 */
     sealed interface Reading {
         data object Waiting : Reading

@@ -507,4 +507,28 @@ class BadgeRunnerTest {
         assertEquals(BadgeFlow.Outcome.RUNNING, result.state?.outcome)
         assertEquals(now, result.state?.stepEnteredAtMs)
     }
+
+    // ---------------------------------------------------------------- 多张卡的阅读顺序（2026-10-23）
+
+    private fun hit(x: Double, y: Double) = AnchorHit("badge_share", 0.99, x, y, x, y)
+
+    @Test
+    fun horizontallyArrangedCardsAreOrderedLeftToRight() {
+        // 用户 2026-10-23：立牌卡是**横向排列**的 ⇒ 同一行里按 x 读；y 的几像素噪声不该打乱顺序
+        val hits = listOf(hit(900.0, 300.0), hit(300.0, 304.0), hit(1500.0, 298.0))
+        assertEquals(
+            listOf(300.0, 900.0, 1500.0),
+            BadgeRunner.readingOrder(hits).map { it.frameX },
+        )
+    }
+
+    @Test
+    fun verticallyStackedCardsStillReadTopDown() {
+        // 纵向堆叠时不能只按 x（否则第二行会插到第一行中间）：y 跨度更大 ⇒ 先按 y
+        val hits = listOf(hit(300.0, 900.0), hit(300.0, 300.0), hit(300.0, 1500.0))
+        assertEquals(
+            listOf(300.0, 900.0, 1500.0),
+            BadgeRunner.readingOrder(hits).map { it.frameY },
+        )
+    }
 }
