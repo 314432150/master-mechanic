@@ -762,7 +762,7 @@ class FloatingWindow(private val context: Context) {
                 onTrailing = { openSwitchVisitConfig() },
             ) { onVisitPreset() },
         )
-        // **「搜集立牌」**（临时需求 temp/badge-share-1021，2026-10-21；活动结束随分支移除）：
+        // **「收集立牌」**（临时需求 temp/badge-share-1021，2026-10-21；活动结束随分支移除）：
         // 启动一条流程（换号段 + 立牌支线），所以放在启动类动作这一组；收集到的数据在「更多 → 立牌池」看。
         // 名字 2026-10-22 由「换号取立牌」改来：这条流程是**一整轮抛号**（按清单逐个区服收一遍），
         // 名字要说"收集"，不是"换一次号顺带取一张"。
@@ -2216,7 +2216,7 @@ class FloatingWindow(private val context: Context) {
             return context.getString(R.string.floating_label_capture_stopped)
         }
         val patrol = patrolForDisplay()
-        // **搜集立牌的支线阶段**（2026-10-23 用户报障）：它没有 `PatrolFlow.State`，
+        // **收集立牌的支线阶段**（2026-10-23 用户报障）：它没有 `PatrolFlow.State`，
         // 于是标签整段被判"待命"并摘掉（真机 01:30:28 实录）；跳过换号段后更是一句话都没有。
         // 这里把 badge 任务一起递进去，让支线步骤（进活动 / 领取 / 分享 / 返回）也能在顶部说一句。
         val badge = BadgeSession.current

@@ -317,7 +317,7 @@ class FloatingLabelTextTest {
         assertEquals("待命", FloatingLabelText.shorten("待命"))
     }
 
-    // ---------------------------------------------------------------- 搜集立牌（2026-10-23 用户报障）
+    // ---------------------------------------------------------------- 收集立牌（2026-10-23 用户报障）
 
     private fun badgeCollect(step: BadgeFlow.Step): BadgeSession.Task = BadgeSession.Task(
         phase = BadgeSession.Phase.COLLECT,

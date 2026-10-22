@@ -140,7 +140,7 @@ object FloatingLabelText {
      * @param frameStale 停更到什么程度（调用方从 `FrameFreshness` 换算；默认 [FrameStale.NONE] =
      *   老调用点行为不变）。**它不代表"镜像坏了"**，只代表"我们现在看不见变化"：
      *   采集侧同时已停止一切点击，所以这一刻"正在关弹窗 / 第 N 步"都是**旧画面上的结论** ⇒ 说这一句更有用。
-     * @param badge 当前的**搜集立牌**任务（临时需求 temp/badge-share-1021；null = 没有）。
+     * @param badge 当前的**收集立牌**任务（临时需求 temp/badge-share-1021；null = 没有）。
      *   它的**换号段**本来就是 `PatrolFlow.State`（走 `patrol`），只有**立牌支线**没有 `PatrolFlow` ——
      *   2026-10-23 用户口径：立牌那几步（进活动 / 领取 / 我的立牌 / 分享 / 返回）也要在顶部说一句，
      *   否则跳过换号段后标签直接变「待命」、整条被摘掉，用户不知道程序在干什么。
@@ -226,7 +226,7 @@ object FloatingLabelText {
          */
         frameStarved: Boolean = false,
         /**
-         * 当前的**搜集立牌**任务（2026-10-23）：支线阶段没有 `patrol`，不把它算进来的话
+         * 当前的**收集立牌**任务（2026-10-23）：支线阶段没有 `patrol`，不把它算进来的话
          * 标签会在整段收集过程中被判成"待命"并**整条摘掉** —— 那正是用户报的"顶部什么都不显示"。
          */
         badge: BadgeSession.Task? = null,

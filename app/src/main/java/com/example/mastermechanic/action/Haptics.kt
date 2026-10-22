@@ -51,7 +51,7 @@ object Haptics {
      * ⚠ 由调用方保证**每次流程只调一次**：
      * - 巡查（换号 / 只拜访 / 换号拜访）：`CaptureService.stepPatrol` 里分别挂在
      *   `outcome.finished` 与"中止原因首次记录"两个分支上；
-     * - 搜集立牌（2026-10-22 补）：`CaptureService.announceBadgeEndedOnce`（按 `BadgeSession` 代次去重，
+     * - 收集立牌（2026-10-22 补）：`CaptureService.announceBadgeEndedOnce`（按 `BadgeSession` 代次去重，
      *   因为结束后的任务快照会一直挂着、帧线程每轮都会走进 `stepBadge`）。
      *
      * 两者都不在用户手点「停止」时调 —— 那一下本来就有按钮反馈。

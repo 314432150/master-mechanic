@@ -44,7 +44,7 @@ object PatrolAnchors {
     /**
      * 大厅 · **左下角的游戏昵称**（区域型锚点，不做点击，2026-10-23）。
      *
-     * 用途：读当前登录的是哪个小号 ⇒ 反推当前区服。**搜集立牌**重跑时据此判断"是不是已经在该区服"，
+     * 用途：读当前登录的是哪个小号 ⇒ 反推当前区服。**收集立牌**重跑时据此判断"是不是已经在该区服"，
      * 免得明明已经登录好了还退出去重登一遍（用户报的冗余操作）。
      * 比对键 = 服务器清单里的「角色名」（`ServerEntry.characterName`），判据见 `badge/CurrentServer`。
      *
@@ -379,7 +379,7 @@ object PatrolAnchors {
         Need(
             UiState.HALL,
             HALL_NICKNAME,
-            "**大厅左下角的游戏昵称**（文字识别的输入范围，不是点击目标）：搜集立牌重跑时用它判断" +
+            "**大厅左下角的游戏昵称**（文字识别的输入范围，不是点击目标）：收集立牌重跑时用它判断" +
                 "「当前登录的是哪个小号 ⇒ 哪个区服」，已经在该区服就不重复登录。框昵称那一行即可",
         ),
         Need(UiState.HALL_SETTINGS, SETTINGS_LOGOUT, "第 3 步：设置页里的退出登录"),
@@ -492,7 +492,7 @@ object PatrolAnchors {
      * 为什么单独一张表而不是塞进 [nameAreaAnchors]：`nameAreaAnchors` 的键集合被
      * `NameLocating` 当作"按名称定位的输入区域"，大厅没有可定位的名单；混进去会让两件事耦合。
      *
-     * **可选**：没框 ⇒ 搜集立牌照常换号（老行为），只在日志里说清"没框「游戏昵称」"。
+     * **可选**：没框 ⇒ 收集立牌照常换号（老行为），只在日志里说清"没框「游戏昵称」"。
      */
     val identityAreaAnchors: Map<UiState, String> = mapOf(
         UiState.HALL to HALL_NICKNAME,
