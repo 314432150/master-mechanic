@@ -79,10 +79,12 @@ class BadgeFlowTest {
     }
 
     @Test
-    fun cardReadOnlyAdvancesFromReadCard() {
+    fun cardReadGoesBackToMyBadgeViaSwitch() {
+        // 2026-10-23 用户口径：读完一张**点「切换」回「我的立牌」**选下一张，
+        // 不再点 X（真机上 X 会把「我的立牌」一起关掉，多张卡就得重新进一次分享）
         val atRead = advanceTo(BadgeFlow.Step.READ_CARD, cardsRead = 1)
         val next = BadgeFlow.cardRead(atRead, nowMs = t0 + 5_000)
-        assertEquals(BadgeFlow.Step.CLOSE_CARD, next.step)
+        assertEquals(BadgeFlow.Step.SWITCH_TO_MY, next.step)
         assertEquals(2, next.cardsRead)
 
         val atFirstRead = advanceTo(BadgeFlow.Step.READ_FIRST)

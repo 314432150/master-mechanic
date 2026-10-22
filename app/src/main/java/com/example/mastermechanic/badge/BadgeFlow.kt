@@ -133,16 +133,6 @@ object BadgeFlow {
          */
         val centerSinceMs: Long = 0L,
         val cardsRead: Int = 0,
-        /**
-         * 上一轮「选卡」**点完之后还剩几张没读**（0 = 这是最后一张，2026-10-23）。
-         *
-         * 为什么需要它：真机发现「复制分享」的 X 会**把「我的立牌」那层一起关掉** ⇒ 回到活动中心后
-         * 如果还有没读的卡，就必须**再进一次**「分享立牌 → 切换」才能读到下一张（原来一律当"只有 1 张"
-         * 直接返回大厅 ⇒ 3 张卡只收到 1 张）。
-         */
-        val cardsRemaining: Int = 0,
-        /** 本轮为了读多张卡，重新进了几次「分享立牌」（防止在异常画面上无限循环）。 */
-        val cardRounds: Int = 0,
         val outcome: Outcome = Outcome.RUNNING,
         val reason: String? = null,
         val paused: Boolean = false,
@@ -281,11 +271,23 @@ object BadgeFlow {
         return enter(state.copy(needsClaim = needsClaim), next, nowMs)
     }
 
-    /** 记一次"卡片已读"（[READ_CARD] 验证通过时）并推进到关闭。 */
+    /**
+     * 记一次"卡片已读"（[READ_CARD] 验证通过时）并**点「切换」回「我的立牌」**继续选下一张
+     * （2026-10-23 用户口径，替代原来的"点 X 关闭"）：
+     *
+     * ```
+     * 分享立牌 → 第 1 张 → 切换 → 我的立牌 → 第 2 张的分享 → 第 2 张 → 切换 → …
+     * ⇒ 没有更多卡时：关闭「我的立牌」→ 活动中心 → 返回大厅
+     * ```
+     *
+     * 为什么不再点 X：真机上「复制分享」的 X 会把「我的立牌」那层**一起关掉** ⇒ 回到活动中心后
+     * 想看下一张就得**重新进一次分享立牌**（3 张卡要多走两轮、还会把第 1 张再读一遍）。
+     * 而「切换」按钮每张卡的弹框上都有 ⇒ 直接回到卡列表，下一张只需一次点击。
+     */
     fun cardRead(state: State, nowMs: Long = 0L): State {
         if (!state.isRunning) return state
         if (state.step != Step.READ_CARD) return state
-        return enter(state.copy(cardsRead = state.cardsRead + 1), Step.CLOSE_CARD, nowMs)
+        return enter(state.copy(cardsRead = state.cardsRead + 1), Step.SWITCH_TO_MY, nowMs)
     }
 
     /** 进入新一步：清掉"已动手"标记与停更状态（上一步的击不能带到下一步，口径 A）。 */

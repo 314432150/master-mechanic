@@ -3895,6 +3895,15 @@ class CaptureService : Service() {
         )
         // 读到一张立牌：**先落盘再推进**（写盘失败只告警，不丢掉已读到的东西）
         outcome.record?.let { record ->
+            // 同一分享码本轮已经读过 = 又点到了「已选」那张卡（它本来就在分享立牌里读过一遍）：
+            // 保存是幂等的（upsert 按码合并），这里只把这件事说清，免得日志里看着像"重复收集"。
+            if (BadgeSession.roundRecords.any { it.code == record.code }) {
+                MmLog.i(
+                    TAG,
+                    "「${record.cardName}」的分享码 ${record.code} 本轮已经读过（多半是「已选」那张卡）" +
+                        "⇒ 只更新不重复记，继续换下一张",
+                )
+            }
             BadgeTask.saveRecord(this, record)
             // 记进"本轮这个区服收到了什么"：收尾时用它替换该区服的旧数据（2026-10-23 用户口径）
             BadgeSession.markRecord(record)

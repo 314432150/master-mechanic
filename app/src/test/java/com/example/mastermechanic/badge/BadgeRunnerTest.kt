@@ -407,32 +407,6 @@ class BadgeRunnerTest {
         assertEquals(BadgeAnchors.BADGE_SHARE, result.request?.anchorName)
         assertEquals(BadgeFlow.Step.READ_CARD, result.state?.step)
         assertEquals(now, result.state?.lastActionAtMs)
-        // 点完这张还剩 1 张：关闭 X 把「我的立牌」一起关掉时，要靠它决定要不要再进一次
-        assertEquals(1, result.state?.cardsRemaining)
-    }
-
-    @Test
-    fun closingOntoActivityCenterWithCardsLeftGoesBackToShareEntry() {
-        // 真机 2026-10-23：一个区服 **3 张卡**，读完第 1 张后 X 把「我的立牌」一起关了 ⇒
-        // 原来一律"直接返回大厅" ⇒ 只收到 1 张。还有没读的卡就必须回活动中心再进一次分享。
-        val result = BadgeRunner.onRound(
-            state(BadgeFlow.Step.CLOSE_CARD).copy(cardsRemaining = 2),
-            input(UiState.ACTIVITY_CENTER, step = BadgeFlow.Step.CLOSE_CARD),
-        )
-        assertEquals(BadgeFlow.Step.SHARE_ENTRY, result.state?.step)
-        assertEquals(1, result.state?.cardRounds)
-    }
-
-    @Test
-    fun reenteringTooManyTimesStopsInsteadOfLoopingForever() {
-        val result = BadgeRunner.onRound(
-            state(BadgeFlow.Step.CLOSE_CARD).copy(
-                cardsRemaining = 2,
-                cardRounds = BadgeRunner.MAX_CARD_ROUNDS,
-            ),
-            input(UiState.ACTIVITY_CENTER, step = BadgeFlow.Step.CLOSE_CARD),
-        )
-        assertEquals(BadgeFlow.Step.EXIT_ACTIVITY, result.state?.step)
     }
 
     @Test
@@ -447,7 +421,8 @@ class BadgeRunnerTest {
             ),
         )
         assertEquals(record, result.record)
-        assertEquals(BadgeFlow.Step.CLOSE_CARD, result.state?.step)
+        // 2026-10-23：读完一张点「切换」回「我的立牌」继续选下一张（不再点 X 关闭）
+        assertEquals(BadgeFlow.Step.SWITCH_TO_MY, result.state?.step)
         assertEquals(2, result.state?.cardsRead)
     }
 
