@@ -2216,6 +2216,10 @@ class FloatingWindow(private val context: Context) {
             return context.getString(R.string.floating_label_capture_stopped)
         }
         val patrol = patrolForDisplay()
+        // **搜集立牌的支线阶段**（2026-10-23 用户报障）：它没有 `PatrolFlow.State`，
+        // 于是标签整段被判"待命"并摘掉（真机 01:30:28 实录）；跳过换号段后更是一句话都没有。
+        // 这里把 badge 任务一起递进去，让支线步骤（进活动 / 领取 / 分享 / 返回）也能在顶部说一句。
+        val badge = BadgeSession.current
         val reading = currentReadingText()
         val closing = currentClosingPopupText()
         // **画面久未更新**（2026-09-30，L2）：60 秒没有新帧 ⇒ 「画面久未更新」那一档要占标签
@@ -2275,12 +2279,13 @@ class FloatingWindow(private val context: Context) {
         // **待命期没有要说的 ⇒ 不挂标签**（2026-09-30 用户口径：只藏标签、手柄留着；直接切换、不做动画）。
         // 判据是纯逻辑 [FloatingLabelText.isIdle]（与 [FloatingLabelText.of] 逐条对应，有单测钉住），
         // **不靠比较文案** —— 「待命」是取舍表的兜底档，它出现就意味着这一刻没有任何信息可给。
-        if (FloatingLabelText.isIdle(reading, closing, patrol, frameStarved = frameStarved)) return null
+        if (FloatingLabelText.isIdle(reading, closing, patrol, frameStarved = frameStarved, badge = badge)) return null
         return FloatingLabelText.of(
             readingText = reading,
             closingPopupText = closing,
             patrol = patrol,
             frameStale = frameStale,
+            badge = badge,
             words = FloatingLabelText.Words(
                 idle = context.getString(R.string.floating_label_idle),
                 failed = context.getString(R.string.floating_label_patrol_failed),

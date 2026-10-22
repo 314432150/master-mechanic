@@ -1,5 +1,6 @@
 package com.example.mastermechanic.floating
 
+import com.example.mastermechanic.badge.BadgeSession
 import com.example.mastermechanic.patrol.PatrolFlow
 
 /**
@@ -139,6 +140,10 @@ object FloatingLabelText {
      * @param frameStale 停更到什么程度（调用方从 `FrameFreshness` 换算；默认 [FrameStale.NONE] =
      *   老调用点行为不变）。**它不代表"镜像坏了"**，只代表"我们现在看不见变化"：
      *   采集侧同时已停止一切点击，所以这一刻"正在关弹窗 / 第 N 步"都是**旧画面上的结论** ⇒ 说这一句更有用。
+     * @param badge 当前的**搜集立牌**任务（临时需求 temp/badge-share-1021；null = 没有）。
+     *   它的**换号段**本来就是 `PatrolFlow.State`（走 `patrol`），只有**立牌支线**没有 `PatrolFlow` ——
+     *   2026-10-23 用户口径：立牌那几步（进活动 / 领取 / 我的立牌 / 分享 / 返回）也要在顶部说一句，
+     *   否则跳过换号段后标签直接变「待命」、整条被摘掉，用户不知道程序在干什么。
      */
     fun of(
         readingText: String?,
@@ -146,20 +151,28 @@ object FloatingLabelText {
         patrol: PatrolFlow.State?,
         words: Words,
         frameStale: FrameStale = FrameStale.NONE,
+        badge: BadgeSession.Task? = null,
     ): String {
         val text = when {
             !readingText.isNullOrEmpty() -> readingText
             patrol?.outcome == PatrolFlow.Outcome.FAILED -> words.failed
+            // 立牌的**中止 / 暂停**同样要占标签：它在支线阶段没有 `patrol`，不写这两条就什么都不会说
+            patrol == null && badge?.failed == true -> words.failed
             patrol?.paused == true -> words.paused
+            patrol == null && badge?.isPaused == true -> words.paused
             // **这次授权没被投喂**（2026-10-01，方案 2）：与"久未更新"相反，它**不要求**"有活儿在等画面"——
             // 恰好在用户刚授完权、还没开始跑的时候就要说（否则他白跑一轮：真机就是这么卡在退出登录页的）。
             frameStale == FrameStale.NEVER && words.frameStarved.isNotEmpty() -> words.frameStarved
             // **画面久未更新**（2026-09-30，L2）：见 [staleTakesTheLabel]（三个条件缺一不可）
-            staleTakesTheLabel(frameStale, words.frameStalled, closingPopupText, patrol) -> staleLabel(frameStale, words)
+            staleTakesTheLabel(frameStale, words.frameStalled, closingPopupText, patrol, badge) ->
+                staleLabel(frameStale, words)
             // ⚠ **必须排在 `patrol == null` 之前**（2026-09-29 真机报障"关闭弹窗依旧显示待命"）：
             // 登录后被自动关掉的那些弹窗，**这时候根本没有跑号流程**（patrol == null）——
             // 早先写成"先判 patrol == null 就返回待命"，这一条就永远走不到。
             !closingPopupText.isNullOrEmpty() -> closingPopupText
+            // 立牌整轮跑完 / 中止：支线阶段没有 `patrol`，得自己判一次
+            patrol == null && badge?.finished == true -> words.finished
+            patrol == null && badge != null -> badgeText(badge)
             patrol == null -> words.idle
             // ⚠ **第 10 步（`Step.DONE`，步骤名就叫「完成」）直接说「已完成」**（2026-10-01 用户报障：
             // "先显示了一个「完成」，接着又显示一个「已完成」，重复了"）。那一步从"跑起来"到
@@ -169,6 +182,20 @@ object FloatingLabelText {
             else -> runningText(patrol)
         }
         return shorten(text)
+    }
+
+    /**
+     * 立牌任务现在在做的那一步：**只取步骤名**（`进入立牌活动` / `打开分享立牌` / `返回大厅`…）。
+     *
+     * 用户口径（2026-10-23）：立牌流程从「大厅点活动」开始也要在顶部有一句简短的当前步骤，
+     * 不能只有登录那几步（换号段）有。真正"第几步"仍在展开菜单与日志里（同巡查口径）。
+     *
+     * 换号段那一相（`Phase.SWITCH`）返回的是 `PatrolFlow.Step.label`，调用方通常已通过 `patrol`
+     * 拿到同一句话；这里保留兜底，免得 `switch` 与 `patrol` 短暂不同步时标签变空。
+     */
+    fun badgeText(task: BadgeSession.Task): String = when (task.phase) {
+        BadgeSession.Phase.SWITCH -> task.switch?.step?.label ?: "换号"
+        BadgeSession.Phase.COLLECT -> task.collect?.step?.label ?: "收集立牌"
     }
 
     /**
@@ -198,10 +225,16 @@ object FloatingLabelText {
          * ⇒ 必须说出来（绝不能跟着待命一起被藏掉 —— 那正是用户懵等的场景：没跑号、标签整条摘掉）。
          */
         frameStarved: Boolean = false,
+        /**
+         * 当前的**搜集立牌**任务（2026-10-23）：支线阶段没有 `patrol`，不把它算进来的话
+         * 标签会在整段收集过程中被判成"待命"并**整条摘掉** —— 那正是用户报的"顶部什么都不显示"。
+         */
+        badge: BadgeSession.Task? = null,
     ): Boolean = !frameStarved &&
         readingText.isNullOrEmpty() &&
         closingPopupText.isNullOrEmpty() &&
-        patrol == null
+        patrol == null &&
+        badge == null
 
     /**
      * 「画面久未更新」这一档要不要占标签（2026-09-30，L2；[of] 用的唯一判据）。
@@ -218,9 +251,10 @@ object FloatingLabelText {
         frameStalledText: String,
         closingPopupText: String?,
         patrol: PatrolFlow.State?,
+        badge: BadgeSession.Task? = null,
     ): Boolean = frameStale != FrameStale.NONE &&
         frameStalledText.isNotEmpty() &&
-        waitingForFreshFrames(closingPopupText, patrol)
+        waitingForFreshFrames(closingPopupText, patrol, badge)
 
     /**
      * 这一档**说什么**：停更很久（[FrameStale.PERSISTENT]）且有处置文案 ⇒ 说处置，否则只陈述事实。
@@ -246,8 +280,11 @@ object FloatingLabelText {
     private fun waitingForFreshFrames(
         closingPopupText: String?,
         patrol: PatrolFlow.State?,
+        badge: BadgeSession.Task? = null,
     ): Boolean = !closingPopupText.isNullOrEmpty() ||
-        (patrol != null && patrol.outcome == PatrolFlow.Outcome.RUNNING && !patrol.paused)
+        (patrol != null && patrol.outcome == PatrolFlow.Outcome.RUNNING && !patrol.paused) ||
+        // 立牌任务正跑着（含它的换号段走 patrol 的情形，这里去重后不影响结论）
+        (badge != null && badge.isRunning && !badge.isPaused)
 
     /**
      * 跑号正在做的那一步：**只说做什么**（`退出登录` / `选择区服` / `打开好友列表`）。

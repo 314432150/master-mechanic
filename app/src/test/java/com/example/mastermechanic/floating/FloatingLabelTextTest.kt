@@ -1,5 +1,7 @@
 package com.example.mastermechanic.floating
 
+import com.example.mastermechanic.badge.BadgeFlow
+import com.example.mastermechanic.badge.BadgeSession
 import com.example.mastermechanic.patrol.PatrolFlow
 import com.example.mastermechanic.patrol.PatrolFlow.Outcome
 import com.example.mastermechanic.patrol.PatrolFlow.Range
@@ -36,7 +38,8 @@ class FloatingLabelTextTest {
         closing: String? = null,
         patrol: PatrolFlow.State? = null,
         frameStale: FloatingLabelText.FrameStale = FloatingLabelText.FrameStale.NONE,
-    ): String = FloatingLabelText.of(reading, closing, patrol, words, frameStale)
+        badge: BadgeSession.Task? = null,
+    ): String = FloatingLabelText.of(reading, closing, patrol, words, frameStale, badge)
 
     @Test
     fun nothingRunningShowsIdle() {
@@ -312,5 +315,57 @@ class FloatingLabelTextTest {
         assertTrue(short.endsWith("…"))
         // 短文本原样返回（不该被动手脚）
         assertEquals("待命", FloatingLabelText.shorten("待命"))
+    }
+
+    // ---------------------------------------------------------------- 搜集立牌（2026-10-23 用户报障）
+
+    private fun badgeCollect(step: BadgeFlow.Step): BadgeSession.Task = BadgeSession.Task(
+        phase = BadgeSession.Phase.COLLECT,
+        collect = BadgeFlow.start().copy(step = step),
+        queue = listOf("奇迹瀑布"),
+        current = "奇迹瀑布",
+    )
+
+    @Test
+    fun badgeCollectStepsSpeakEvenWithoutAPatrol() {
+        // 支线阶段没有 `PatrolFlow.State`：以前这里返回"待命"⇒ 标签整条被摘掉
+        assertEquals("进入立牌活动", label(badge = badgeCollect(BadgeFlow.Step.ENTER_ACTIVITY)))
+        assertEquals("打开分享立牌", label(badge = badgeCollect(BadgeFlow.Step.SHARE_ENTRY)))
+        assertEquals("返回大厅", label(badge = badgeCollect(BadgeFlow.Step.EXIT_ACTIVITY)))
+    }
+
+    @Test
+    fun badgeRunningIsNeverIdle() {
+        val task = badgeCollect(BadgeFlow.Step.ENTER_ACTIVITY)
+        assertFalse(FloatingLabelText.isIdle(null, null, null, badge = task))
+        // 收完 / 中止也是要用户看的话，同样不能跟着待命被藏掉
+        assertFalse(FloatingLabelText.isIdle(null, null, null, badge = task.copy(outcome = BadgeSession.Outcome.FINISHED)))
+        assertFalse(FloatingLabelText.isIdle(null, null, null, badge = task.copy(outcome = BadgeSession.Outcome.FAILED)))
+        // 没有任何任务时才是待命
+        assertTrue(FloatingLabelText.isIdle(null, null, null))
+    }
+
+    @Test
+    fun badgeOutcomeSpeaksTheSameWordsAsPatrol() {
+        val task = badgeCollect(BadgeFlow.Step.READ_CARD)
+        assertEquals("已中止", label(badge = task.copy(outcome = BadgeSession.Outcome.FAILED, reason = "认不出")))
+        assertEquals("已完成", label(badge = task.copy(outcome = BadgeSession.Outcome.FINISHED)))
+    }
+
+    @Test
+    fun badgePauseAndAbortOutrankItsOwnStepName() {
+        val paused = badgeCollect(BadgeFlow.Step.READ_CARD).copy(
+            collect = badgeCollect(BadgeFlow.Step.READ_CARD).collect?.copy(paused = true),
+        )
+        assertEquals("已暂停", label(badge = paused))
+    }
+
+    @Test
+    fun badgeStepsAlsoFitTheLabelWidth() {
+        // 13 个步骤名都必须在 12 字上限内（否则标签又被截断，用户会读成"卡住了"）
+        for (step in BadgeFlow.Step.entries) {
+            val text = label(badge = badgeCollect(step))
+            assertTrue("「$text」超过 ${FloatingLabelText.MAX_CHARS} 字", text.length <= FloatingLabelText.MAX_CHARS)
+        }
     }
 }
