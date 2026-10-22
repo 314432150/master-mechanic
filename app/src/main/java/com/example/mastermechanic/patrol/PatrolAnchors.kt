@@ -296,7 +296,8 @@ object PatrolAnchors {
             Purpose("设置入口", HALL_SETTINGS),
             Purpose("农场入口", HALL_FARM),
             // 2026-10-23（临时需求增量）：只圈区域、不点击 —— 读左下角昵称判断"当前在哪个区服"
-            Purpose("游戏昵称（判断当前区服）", HALL_NICKNAME),
+            // 用途名就叫「游戏昵称」：标定页的 chip 要短（用户 2026-10-23 要求去掉括号里的解释）
+            Purpose("游戏昵称", HALL_NICKNAME),
         )
 
         UiState.LAUNCH_PAGE -> listOf(
