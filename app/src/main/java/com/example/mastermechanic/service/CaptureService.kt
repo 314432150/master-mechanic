@@ -43,6 +43,7 @@ import com.example.mastermechanic.badge.BadgeScenes
 import com.example.mastermechanic.badge.BadgeSession
 import com.example.mastermechanic.badge.BadgeTask
 import com.example.mastermechanic.badge.CodeConfirmation
+import com.example.mastermechanic.recognition.DigitReader
 import com.example.mastermechanic.badge.CurrentServer
 import com.example.mastermechanic.badge.ShareCodeParser
 import com.example.mastermechanic.patrol.FriendSearch
@@ -4219,10 +4220,15 @@ class CaptureService : Service() {
         val locator = anchorLocator ?: return BadgeRunner.Reading.Failed("没有标定结果")
         val data = calibrationData ?: return BadgeRunner.Reading.Failed("没有标定结果")
 
-        fun readArea(anchor: String, label: String): String? {
+        fun readArea(anchor: String, label: String, digits: Boolean = false): String? {
             val id = data.anchorIdFor(UiState.BADGE_SHARE, anchor) ?: return null
             val region = locator.windowInFrame(gray.width, gray.height, UiState.BADGE_SHARE, id) ?: return null
-            val candidates = nameReader.read(gray, region)
+            // 分数是花体数字：走**二值化 + 更大放大**的数字通道（2026-10-23：真机 999 曾稳定读成 666）
+            val candidates = if (digits) {
+                (nameReader as? DigitReader)?.readDigits(gray, region) ?: nameReader.read(gray, region)
+            } else {
+                nameReader.read(gray, region)
+            }
             MmLog.i(
                 TAG,
                 "立牌读取：$label 读到 ${candidates.size} 条「${candidates.joinToString(" / ") { it.text }}」",
@@ -4230,7 +4236,7 @@ class CaptureService : Service() {
             return candidates.joinToString(" ") { it.text }.ifBlank { null }
         }
 
-        val scoreText = readArea(BadgeAnchors.BADGE_SHARE_SCORE_AREA, "分数")
+        val scoreText = readArea(BadgeAnchors.BADGE_SHARE_SCORE_AREA, "分数", digits = true)
         val nameText = readArea(BadgeAnchors.BADGE_SHARE_NAME_AREA, "立牌名称")
         val codeText = readArea(BadgeAnchors.BADGE_SHARE_TEXT_AREA, "分享码")
 

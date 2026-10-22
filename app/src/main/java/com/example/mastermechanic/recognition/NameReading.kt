@@ -49,3 +49,16 @@ data class NameCandidate(
 fun interface NameReader {
     fun read(image: GrayImage, region: PixelBounds): List<NameCandidate>
 }
+
+/**
+ * **数字块专用**读取（2026-10-23，立牌「分享码弹框」的分数）。
+ *
+ * 为什么单开一条通道：游戏里的分数用的是**花体数字**，普通灰度 + ×3 放大时 ML Kit 会把 `9` 稳定读成
+ * `6` —— 真机实测「999 分」两次读数都是「666」，于是现有的"两次读数一致才落盘"校验**挡不住**
+ * （它防的是抖动，防不了系统性误读）。这条通道先做**二值化**再放大 → 笔画边界更干净。
+ *
+ * 默认实现退回 [NameReader.read]：其他实现不必强制支持（试读探针等仍走原路）。
+ */
+interface DigitReader {
+    fun readDigits(image: GrayImage, region: PixelBounds): List<NameCandidate>
+}
