@@ -43,6 +43,7 @@ import com.example.mastermechanic.badge.BadgeScenes
 import com.example.mastermechanic.badge.BadgeSession
 import com.example.mastermechanic.badge.BadgeTask
 import com.example.mastermechanic.badge.CodeConfirmation
+import com.example.mastermechanic.badge.CurrentServer
 import com.example.mastermechanic.badge.ShareCodeParser
 import com.example.mastermechanic.patrol.FriendSearch
 import com.example.mastermechanic.patrol.TextInjectorLike
@@ -343,6 +344,17 @@ class CaptureService : Service() {
 
     /** 上一次读取立牌信息的结论（同一屏不重复读三块，省帧线程）。仅帧线程访问。 */
     private var badgeOcrResult: BadgeRunner.Reading = BadgeRunner.Reading.Waiting
+
+    /**
+     * 「是不是已经在该区服」的**昵称投票**（2026-10-23 用户报障）。
+     *
+     * 昵称只有一行字，一次 OCR 可能少读一个字（少读就变成"不是目标"⇒ 白重登），
+     * 所以和分享码同一套口径：**两次读数一致**才采信（`CodeConfirmation` 复用，作用域 = 任务代次 + 区服）。
+     */
+    private val badgeNicknameConfirm = CodeConfirmation(agreeNeeded = 2, maxReads = 3)
+
+    /** 上一次读大厅昵称的时刻（ms）：同一任务内不必每帧都 OCR。仅帧线程访问。 */
+    private var badgeNicknameAtMs = 0L
 
     /**
      * 已经报过「结束」震动的那个代次（0 = 还没报过）。仅帧线程访问。
@@ -3639,6 +3651,12 @@ class CaptureService : Service() {
             BadgeSession.fail("当前区服未知（队列为空）")
             return
         }
+        // **先确认"是不是已经在这个区服"**（2026-10-23 用户报障）：任务意外停止后重跑时，
+        // 大厅可能就已经是队首目标区服 —— 那样再走「退出登录 → 换区 → 选服 → 登录」纯属白折腾。
+        // 只在"要动手的第一下之前"（退出登录、画面 = 大厅）判一次；判不出就照常换号（安全侧）。
+        if (!task.identityChecked && current.step == PatrolFlow.Step.LOGOUT && result.state == UiState.HALL) {
+            if (skipSwitchIfAlreadyHere(gray, task, generation, now)) return
+        }
         val outcome = PatrolRunner.onRound(
             current = current,
             input = PatrolRunner.RoundInput(
@@ -3669,7 +3687,9 @@ class CaptureService : Service() {
             BadgeSession.fail(outcome.state?.reason ?: "换号段中止")
             return
         }
-        BadgeSession.commit(task.copy(switch = outcome.state), generation)
+        // 用**当前快照**而不是本轮开头那份：上面那次"昵称判定"可能已经把 `identityChecked` 置真，
+        // 拿旧快照写回会把它抹掉 ⇒ 每轮重复 OCR 昵称（2026-10-23）
+        BadgeSession.commit((BadgeSession.current ?: task).copy(switch = outcome.state), generation)
         logBadgeNote(outcome.note)
         outcome.request?.let { request ->
             val allowed = dispatchBadgeClick(request, result, now)
@@ -3680,6 +3700,105 @@ class CaptureService : Service() {
             }
         }
         outcome.swipe?.let { dispatchBadgeSwipe(it, result, now) }
+    }
+
+    /**
+     * 「是不是**已经在这个区服**」：读大厅左下角昵称，与服务器清单里的角色名比对（2026-10-23 用户报障）。
+     *
+     * 返回 true = 已经切到立牌支线（本轮不要再跑换号段）；false = 照常换号。
+     *
+     * **一律不猜**（红线 3 / 7）：昵称要两次读数一致才采信；同名歧义、清单没填角色名、没框区域、
+     * 读不出来 —— 全部退回"照常换号"。错判成"已在该区服"的后果是把这一轮的分享码记到别的区服名下
+     * （数据污染），比多花两分钟糟得多。
+     */
+    private fun skipSwitchIfAlreadyHere(
+        gray: GrayImage,
+        task: BadgeSession.Task,
+        generation: Long,
+        now: Long,
+    ): Boolean {
+        val server = task.current ?: return false
+        // 等第二次读数时不必等满一秒：昵称是一行静态文字（同分享码确认的短间隔）
+        if (badgeNicknameConfirm.readCount > 0 && now - badgeNicknameAtMs < badgeConfirmIntervalMs) return false
+        val data = calibrationData
+        val locator = anchorLocator
+        if (data == null || locator == null) {
+            BadgeSession.markIdentityChecked(now)
+            logBadgeNote("判不出当前区服（还没有标定结果）⇒ 照常换号")
+            return false
+        }
+        val id = data.anchorIdFor(UiState.HALL, PatrolAnchors.HALL_NICKNAME)
+        if (id == null) {
+            // 没框 ⇒ 老行为（照常换号），关键是**说清楚为什么白重登了一次**
+            BadgeSession.markIdentityChecked(now)
+            MmLog.i(
+                TAG,
+                "大厅没框「游戏昵称」⇒ 无法判断是否已在「$server」，照常换号" +
+                    "（框了它就能省掉这次重登；不影响正确性）",
+            )
+            return false
+        }
+        val region = locator.windowInFrame(gray.width, gray.height, UiState.HALL, id)
+        if (region == null) {
+            BadgeSession.markIdentityChecked(now)
+            MmLog.w(TAG, "「游戏昵称」的窗口读不出来 ⇒ 照常换号")
+            return false
+        }
+        badgeNicknameAtMs = now
+        val text = nameReader.read(gray, region).joinToString(" ") { it.text }
+        val vote = badgeNicknameConfirm.offer("nick|$generation|$server", text.ifBlank { null })
+        when (vote) {
+            is CodeConfirmation.Verdict.NeedMore -> {
+                // 第一次读数：等下一轮再读一次（同分享码口径），日志留一行便于真机对账
+                MmLog.i(TAG, "判断当前区服：读到大厅昵称「${text.ifBlank { "（空）" }}」，等第二次读数")
+                return false
+            }
+            is CodeConfirmation.Verdict.Conflict -> {
+                BadgeSession.markIdentityChecked(now)
+                MmLog.w(
+                    TAG,
+                    "大厅昵称两次读数不一致（${vote.reads.joinToString(" / ") { it ?: "空" }}）⇒ 不判，照常换号",
+                )
+                return false
+            }
+            is CodeConfirmation.Verdict.Confirmed -> Unit // 往下走，比对清单
+        }
+        val list = try {
+            ServerListStore.load(this)
+        } catch (e: IllegalArgumentException) {
+            BadgeSession.markIdentityChecked(now)
+            MmLog.w(TAG, "服务器清单读不了 ⇒ 判不出当前区服，照常换号：${e.message}")
+            return false
+        }
+        if (list == null) {
+            BadgeSession.markIdentityChecked(now)
+            MmLog.w(TAG, "还没有服务器清单 ⇒ 判不出当前区服，照常换号")
+            return false
+        }
+        val nickname = (vote as CodeConfirmation.Verdict.Confirmed).code
+        when (val verdict = CurrentServer.judge(nickname, list, server)) {
+            is CurrentServer.Verdict.Same -> {
+                BadgeSession.toCollect(
+                    now,
+                    "已在该区服（昵称「${verdict.nickname}」=「$server」的角色名）⇒ 跳过换号段，直接收立牌",
+                )
+                logBadgeNote(BadgeSession.lastNote)
+                return true
+            }
+            is CurrentServer.Verdict.Elsewhere -> {
+                BadgeSession.markIdentityChecked(now)
+                MmLog.i(
+                    TAG,
+                    "当前在「${verdict.current ?: "（清单里没有这个昵称）"}」，目标是「${verdict.target}」⇒ 照常换号",
+                )
+                return false
+            }
+            is CurrentServer.Verdict.Unknown -> {
+                BadgeSession.markIdentityChecked(now)
+                MmLog.w(TAG, "判不出当前区服（${verdict.reason}）⇒ 照常换号")
+                return false
+            }
+        }
     }
 
     /** 立牌支线：`BadgeRunner` 出结论，采集层负责多实例消歧 / OCR / 记录写盘 / 区服收尾。 */

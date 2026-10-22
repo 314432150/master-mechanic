@@ -53,6 +53,13 @@ object BadgeSession {
         val current: String? = null,
         /** 已经收完的区服数（日志 / 展示用）。 */
         val done: Int = 0,
+        /**
+         * 「是不是已经在该区服」**判过了**（2026-10-23）。
+         *
+         * 一次任务只判一次：判完（无论结论）就置真，免得帧线程每轮都去 OCR 昵称。
+         * 新一轮任务 / 换下一个区服都是新快照 ⇒ 重新判（换区服后确实要重新判）。
+         */
+        val identityChecked: Boolean = false,
         val outcome: Outcome = Outcome.RUNNING,
         val reason: String? = null,
     ) {
@@ -142,18 +149,38 @@ object BadgeSession {
         }
     }
 
-    /** 换号段跑完（已在大厅）⇒ 交接给立牌支线。 */
-    fun toCollect(nowMs: Long): Task? {
+    /**
+     * 换号段跑完（已在大厅）⇒ 交接给立牌支线。
+     *
+     * @param note 换一句日志与状态行（2026-10-23：**不换号直接进支线**那条路要说明原因，
+     *   否则日志里只看到"换号段完成"会误以为真的换过号）
+     */
+    fun toCollect(nowMs: Long, note: String? = null): Task? {
         val task = state ?: return null
         if (!task.isRunning || task.phase != Phase.SWITCH) return task
         val next = task.copy(
             phase = Phase.COLLECT,
             switch = null,
             collect = BadgeFlow.start(nowMs),
+            identityChecked = true,
         )
         state = next
-        lastNote = "「${task.current}」：进入立牌活动"
-        MmLog.i(TAG, "「${task.current}」：换号段完成（已在大厅）⇒ 开始收立牌")
+        lastNote = note ?: "「${task.current}」：进入立牌活动"
+        MmLog.i(TAG, note ?: "「${task.current}」：换号段完成（已在大厅）⇒ 开始收立牌")
+        return next
+    }
+
+    /**
+     * 标记"是不是已经在该区服"**已经判过**（2026-10-23）。
+     *
+     * 判不出（缺昵称锚点 / 清单没填角色名 / 读数不一致）时也要标：这一轮照常换号即可，
+     * 不必每帧重试 —— 帧线程一轮最多 200ms，重试只会把 OCR 成本叠上去。
+     */
+    fun markIdentityChecked(nowMs: Long): Task? {
+        val task = state ?: return null
+        if (task.identityChecked) return task
+        val next = task.copy(identityChecked = true)
+        state = next
         return next
     }
 

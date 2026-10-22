@@ -41,6 +41,18 @@ object PatrolAnchors {
     /** 大厅 · 王者农场入口（第 7 步）。 */
     const val HALL_FARM = "hall_farm"
 
+    /**
+     * 大厅 · **左下角的游戏昵称**（区域型锚点，不做点击，2026-10-23）。
+     *
+     * 用途：读当前登录的是哪个小号 ⇒ 反推当前区服。**搜集立牌**重跑时据此判断"是不是已经在该区服"，
+     * 免得明明已经登录好了还退出去重登一遍（用户报的冗余操作）。
+     * 比对键 = 服务器清单里的「角色名」（`ServerEntry.characterName`），判据见 `badge/CurrentServer`。
+     *
+     * 它是 **只圈区域**（[nonLocatableAnchors]）：不进模板匹配、窗口也不收紧（同「列表区域」口径）。
+     * ⚠ 属于临时需求（temp/badge-share-1021）的一部分，活动结束随 `badge/` 一起移除。
+     */
+    const val HALL_NICKNAME = "hall_nickname"
+
     /** 启动页 · 换区（第 4 步）。 */
     const val LAUNCH_SWITCH = "launch_switch"
 
@@ -283,6 +295,8 @@ object PatrolAnchors {
         UiState.HALL -> listOf(
             Purpose("设置入口", HALL_SETTINGS),
             Purpose("农场入口", HALL_FARM),
+            // 2026-10-23（临时需求增量）：只圈区域、不点击 —— 读左下角昵称判断"当前在哪个区服"
+            Purpose("游戏昵称（判断当前区服）", HALL_NICKNAME),
         )
 
         UiState.LAUNCH_PAGE -> listOf(
@@ -343,16 +357,17 @@ object PatrolAnchors {
     data class Need(val state: UiState, val name: String, val purpose: String)
 
     /**
-     * **需要标定的锚点全集**（16 条）——这份清单同时也是"标定侧现在缺什么"的答案。
+     * **需要标定的锚点全集**（17 条）——这份清单同时也是"标定侧现在缺什么"的答案。
      *
      * 刻意手写而不是从 [nameFor] 反推：它是**验收对象**（真机核对的清单），
      * 从实现反推就等于自己证明自己。
      *
      * `friend_visit`（2026-09-21）**不走步骤点击链**：第 9 步先按名字找到那一行、再点行尾图标，
      * 由 [nameLocatingAnchors] 给出用处；但它**一样要标定**，所以照样在本清单里（否则"还缺什么"会漏）。
+     * `hall_nickname`（2026-10-23，临时需求）同理：只读文字、不做点击，但**必须框**才能判"当前在哪个区服"。
      *
      * **服务器列表的两条列竖带不在本清单里**（2026-09-24）：它们是「可选精化」，与老产物的兼容口径一致
-     * ——没框就退回「列表区域」，所以不催用户去框。锚点总数 = 16 + 2 = 18。
+     * ——没框就退回「列表区域」，所以不催用户去框。锚点总数 = 17 + 2 = 19。
      */
     val all: List<Need> = listOf(
         Need(UiState.FARM, FARM_EXIT, "第 2 步：农场里的返回 / 退出"),
@@ -360,6 +375,12 @@ object PatrolAnchors {
         Need(UiState.SCENE_RETURN_CONFIRM, RETURN_LOBBY, "第 2 步：返回确认框里的「返回大厅」"),
         Need(UiState.HALL, HALL_SETTINGS, "第 3 步：大厅里的设置入口"),
         Need(UiState.HALL, HALL_FARM, "第 7 步：大厅里的农场入口"),
+        Need(
+            UiState.HALL,
+            HALL_NICKNAME,
+            "**大厅左下角的游戏昵称**（文字识别的输入范围，不是点击目标）：搜集立牌重跑时用它判断" +
+                "「当前登录的是哪个小号 ⇒ 哪个区服」，已经在该区服就不重复登录。框昵称那一行即可",
+        ),
         Need(UiState.HALL_SETTINGS, SETTINGS_LOGOUT, "第 3 步：设置页里的退出登录"),
         Need(UiState.LOGOUT_CONFIRM, LOGOUT_CONFIRM_OK, "第 3 步：确认框里的确认"),
         Need(UiState.LAUNCH_PAGE, LAUNCH_SWITCH, "第 4 步：启动页的「换区」"),
@@ -461,6 +482,22 @@ object PatrolAnchors {
     )
 
     /**
+     * **身份读取区域**（2026-10-23 用户报障驱动）：状态 → 用途。
+     *
+     * 与 [nameAreaAnchors] 同一类（只圈区域 → 送去读文字，**不做点击**、不进模板匹配），
+     * 差别只在"读来干什么"：那个读的是**要给谁点击的目标名单**，这个读的是**身份**——
+     * 大厅左下角的昵称 ⇒ 当前登录的是哪个小号 ⇒ 哪个区服。
+     *
+     * 为什么单独一张表而不是塞进 [nameAreaAnchors]：`nameAreaAnchors` 的键集合被
+     * `NameLocating` 当作"按名称定位的输入区域"，大厅没有可定位的名单；混进去会让两件事耦合。
+     *
+     * **可选**：没框 ⇒ 搜集立牌照常换号（老行为），只在日志里说清"没框「游戏昵称」"。
+     */
+    val identityAreaAnchors: Map<UiState, String> = mapOf(
+        UiState.HALL to HALL_NICKNAME,
+    )
+
+    /**
      * **服务器列表的两条列竖带**（T4-9，2026-09-24）：与 [nameColumnAnchors] 同口径（**只取横向**，
      * 纵向一律用 [SERVER_LIST_AREA]），差别只在**一个状态有两条列** ⇒ 形状从 `Map<UiState, String>`
      * 换成 `Map<UiState, List<String>>`。
@@ -480,8 +517,9 @@ object PatrolAnchors {
      * **只圈区域、不当点击目标**的锚点用途全集（2026-09-22 真机修）：构造 `AnchorLocator` 时排除。
      *
      * 它与 [nameLocatingAnchors] / [all] / [purposesFor] 是同一批契约名，取 [nameAreaAnchors]、
-     * [nameColumnAnchors]、[serverListColumnAnchors] 的值，再加 [BadgeAnchors.regionAnchors] 即可
-     * —— 新增一条区域锚点时**只改那几张表**，这里与测试会跟着自动对齐。
+     * [nameColumnAnchors]、[identityAreaAnchors]、[serverListColumnAnchors] 的值，
+     * 再加 [BadgeAnchors.regionAnchors] 即可 —— 新增一条区域锚点时**只改那几张表**，
+     * 这里与测试会跟着自动对齐。
      * 单独给个带"后果"的名字，是因为**漏了它不是少点一下就完了**：这些锚点往往框得很大
      * （「列表区域」真机 431×511），一旦跟着做模板匹配，帧线程单轮停摆 20 秒以上 ——
      * 实测与算量见 [FRIEND_LIST_AREA] 与 `AnchorLocator` 的构造参数说明。
@@ -492,7 +530,13 @@ object PatrolAnchors {
      *    （"用户框多大就用多大"，理由见 [FRIEND_LIST_AREA] 与 `tightenedWindows`）。
      */
     val nonLocatableAnchors: Set<String> =
-        (nameAreaAnchors.values + nameColumnAnchors.values + serverListColumnAnchors.values.flatten()).toSet() +
+        (
+            nameAreaAnchors.values +
+                nameColumnAnchors.values +
+                // 2026-10-23：大厅昵称（读身份用，同属"只圈区域"）
+                identityAreaAnchors.values +
+                serverListColumnAnchors.values.flatten()
+            ).toSet() +
             // 立牌临时需求（temp/badge-share-1021）的识别区域锚点（分享码文本区）
             BadgeAnchors.regionAnchors
 

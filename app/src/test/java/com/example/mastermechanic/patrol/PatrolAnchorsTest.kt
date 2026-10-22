@@ -16,17 +16,18 @@ class PatrolAnchorsTest {
     // ---------------------------------------------------------------- 清单与命名
 
     @Test
-    fun theChecklistHasSixteenDistinctAnchors() {
+    fun theChecklistHasSeventeenDistinctAnchors() {
         // 11 条点击链 − 2 条（两个农场的返回 / 好友入口合并成 1 条 ×2）
         // + 第 9 步的「拜访」图标（按名称定位后用）
         // + 第 9 步文字识别的**列表区域**（2026-09-21 按名称定位走 OCR）
         // + 第 9 步文字识别的**好友名称列**（2026-09-22：只把名字这一列送去读，行首头像/装饰不进 OCR）
         // + 第 5 步文字识别的**服务器列表区域**（T4-9，2026-09-24）= 13
         // + 第 9 步**搜索式查找**的三个控件（2026-10-01 用户拍板：搜好友入口 / 搜索框 / 搜索按钮）= 16
+        // + 大厅**游戏昵称**区域（2026-10-23：读昵称判当前区服，已在该区服就不重复登录）= 17
         // 注：第 5 步的**左/右列竖带**（T4-9，2026-09-24）**不进这份"待标定清单"**（清单是"催用户去框"的，
-        // 而两条竖带是**可选精化**、与「好友名称列」同口径）⇒ 清单是 16 条，锚点总数是 18。
+        // 而两条竖带是**可选精化**、与「好友名称列」同口径）⇒ 清单是 17 条，锚点总数是 19。
         // 2026-09-23：三条**农场身份判据**锚点（主账号头像 / 好友头像 / 农场名称）随农场归属判定整块撤下。
-        assertEquals(16, PatrolAnchors.all.size)
+        assertEquals(17, PatrolAnchors.all.size)
         val names = PatrolAnchors.all.map { it.name }
         assertEquals("锚点名必须唯一", names.size, names.distinct().size)
     }
@@ -51,9 +52,10 @@ class PatrolAnchorsTest {
     @Test
     fun everyAnchorOfTheChecklistIsUsedByTheCode() {
         // 「要标什么」与「代码点哪」必须是同一份事实：清单里的每条都要有出处 ——
-        // 出处有五条：步骤点击链（[PatrolAnchors.actions]）、**按名称定位**的辅助锚点
+        // 出处有六条：步骤点击链（[PatrolAnchors.actions]）、**按名称定位**的辅助锚点
         // （[PatrolAnchors.nameLocatingAnchors]，第 9 步的拜访图标走这条）、只圈区域不做点击的
         // 两条（[PatrolAnchors.nameAreaAnchors] 粗区域 / [PatrolAnchors.nameColumnAnchors] 名称列）、
+        // 身份读取区域（[PatrolAnchors.identityAreaAnchors] 大厅昵称）、
         // 以及第 9 步搜索式查找的三个控件（[PatrolAnchors.searchFlowAnchors]）。
         // 注：服务器列表的两条列竖带**刻意不在清单里**（可选精化），所以这里也不收它们。
         for (need in PatrolAnchors.all) {
@@ -63,11 +65,12 @@ class PatrolAnchorsTest {
             val inNameLocating = PatrolAnchors.nameLocatingAnchors[need.state] == need.name
             val inNameSample = PatrolAnchors.nameAreaAnchors[need.state] == need.name
             val inNameColumn = PatrolAnchors.nameColumnAnchors[need.state] == need.name
+            val inIdentityArea = PatrolAnchors.identityAreaAnchors[need.state] == need.name
             // 第 9 步「搜索式查找」的三个控件（2026-10-01）
             val inSearchFlow = PatrolAnchors.searchFlowAnchors[need.state]?.contains(need.name) == true
             assertTrue(
                 "清单里的锚点「${need.name}」在代码里没人用",
-                inActions || inNameLocating || inNameSample || inNameColumn || inSearchFlow,
+                inActions || inNameLocating || inNameSample || inNameColumn || inIdentityArea || inSearchFlow,
             )
         }
     }
@@ -81,6 +84,7 @@ class PatrolAnchorsTest {
             PatrolAnchors.nameLocatingAnchors.values.forEach { add(it) }
             PatrolAnchors.nameAreaAnchors.values.forEach { add(it) }
             PatrolAnchors.nameColumnAnchors.values.forEach { add(it) }
+            PatrolAnchors.identityAreaAnchors.values.forEach { add(it) }
             PatrolAnchors.searchFlowAnchors.values.flatten().forEach { add(it) }
         }
         assertEquals(PatrolAnchors.all.map { it.name }.toSet(), derived)
@@ -113,6 +117,8 @@ class PatrolAnchorsTest {
         assertEquals(
             PatrolAnchors.nameAreaAnchors.values.toSet() +
                 PatrolAnchors.nameColumnAnchors.values +
+                // 2026-10-23：大厅昵称（读身份，不是点击目标）
+                PatrolAnchors.identityAreaAnchors.values +
                 // T4-9（2026-09-24）：服务器列表的两条列竖带同属"只圈区域"的一族
                 PatrolAnchors.serverListColumnAnchors.values.flatten() +
                 // 立牌临时需求（temp/badge-share-1021）：分享码文本区也是"只圈区域"
@@ -159,6 +165,10 @@ class PatrolAnchorsTest {
             usedByState.getOrPut(state) { mutableSetOf() } += anchor
         }
         for ((state, anchor) in PatrolAnchors.nameColumnAnchors) {
+            usedByState.getOrPut(state) { mutableSetOf() } += anchor
+        }
+        // 2026-10-23：大厅昵称（读身份）也是"这个状态在用的锚点" ⇒ 用途表里要能选到
+        for ((state, anchor) in PatrolAnchors.identityAreaAnchors) {
             usedByState.getOrPut(state) { mutableSetOf() } += anchor
         }
         // 第 9 步「搜索式查找」的三个控件（2026-10-01）：也要能在用途表里选到
@@ -239,12 +249,20 @@ class PatrolAnchorsTest {
     @Test
     fun screensWithTwoButtonsHaveTwoPurposes() {
         // 一个界面两个控件、序号分不出谁是谁 —— 这正是要引入"用途"的原因
-        for (state in listOf(UiState.HALL, UiState.LAUNCH_PAGE)) {
-            assertEquals("$state 应该有两个用途", 2, PatrolAnchors.ownPurposesFor(state).size)
-        }
-        // 2026-10-21：HALL 合并临时需求（temp/badge-share-1021）的「活动入口」后共 3 个 ——
-        // 多的那一个是立牌流程的（活动结束随分支移除），见 `BadgeAnchors`
-        assertEquals(3, PatrolAnchors.purposesFor(UiState.HALL).size)
+        assertEquals("LAUNCH_PAGE 应该有两个用途", 2, PatrolAnchors.ownPurposesFor(UiState.LAUNCH_PAGE).size)
+        // HALL 的**点击**用途仍是两个；2026-10-23 起多了一条区域用途「游戏昵称」（读身份、不点击）
+        assertEquals(3, PatrolAnchors.ownPurposesFor(UiState.HALL).size)
+        assertEquals(
+            listOf(
+                PatrolAnchors.HALL_SETTINGS,
+                PatrolAnchors.HALL_FARM,
+                PatrolAnchors.HALL_NICKNAME,
+            ),
+            PatrolAnchors.ownPurposesFor(UiState.HALL).map { it.name },
+        )
+        // 2026-10-21：HALL 合并临时需求（temp/badge-share-1021）的「活动入口」后共 4 个 ——
+        // 多的两个都是立牌的（活动结束随分支移除）：活动入口（点击）+ 游戏昵称（区域）
+        assertEquals(4, PatrolAnchors.purposesFor(UiState.HALL).size)
         // 2026-09-21 起农场画面曾一度是"2 个动作 + 3 条身份判据"（主账号头像 / 好友头像 / 农场名称）。
         // 2026-09-23 用户拍板把农场归属判定整块删掉 ⇒ 农场回到**只有两个要点的控件**。
         assertEquals(
