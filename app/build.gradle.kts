@@ -22,6 +22,14 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         /**
+         * M6 换 OCR 引擎的 A/B 开关（计划 §7 步骤 4）：`mlkit`（默认）/ `paddle`。
+         * 用 `-PocrEngine=paddle` 打包即可切到 PP-OCRv4 rec，**不改一行代码**就得到对照构建。
+         * 默认保持 mlkit，是为了守住验收项「开关切回 ML Kit 时行为与改前一致」。
+         */
+        val ocrEngine = (project.findProperty("ocrEngine") as String?) ?: "mlkit"
+        buildConfigField("String", "OCR_ENGINE", "\"$ocrEngine\"")
+
+        /**
          * 只打 **arm64-v8a**（2026-09-21，T4-3）：ML Kit 中文 OCR 的原生库
          * `libmlkit_google_ocr_pipeline.so` 每个 ABI 约 **11MB**，四个 ABI 合计 41MB ——
          * 不裁剪会让安装包从 22.36MB 涨到 45.09MB（NFR-03 要求 ≤25MB）。
@@ -45,12 +53,29 @@ android {
             }
         }
     }
+    /**
+     * 打包口径（2026-10-23，换 OCR 引擎）：
+     * - `useLegacyPackaging = true` ⇒ 原生库**压缩**进 APK。ONNX Runtime 的 arm64 `libonnxruntime.so`
+     *   未压缩 16.8MB、gzip 后 6.0MB；不压缩的话包体会从 16.48MB 直接顶到 30MB 以上。
+     *   代价是安装时解压一次（targetSdk 34+ 上仍由系统管理），对 NFR-03 划算。
+     * - `noCompress += "onnx"` ⇒ 模型保持不压缩，便于 mmap 直接读（也避免解压后再缓冲一份 10MB）。
+     */
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+    androidResources {
+        noCompress += "onnx"
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
     buildFeatures {
         compose = true
+        // M6 换 OCR 引擎：引擎选择要靠 BuildConfig 常量（见 CaptureService.createNameReader）
+        buildConfig = true
     }
     /**
      * JVM 单测里 `android.*` 的桩方法**返回默认值而不抛异常**：纯逻辑会顺手写一行日志
@@ -108,6 +133,8 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     // T4-3 名称定位（第 5 / 9 步）：区服名 / 好友名的文字识别，**捆绑模型**（无需 Google Play 服务）
     implementation(libs.mlkit.text.recognition.chinese)
+    // M6 换 OCR 引擎：PP-OCRv4 mobile rec 走 ONNX Runtime（模型在 assets/ocr，不入网）
+    implementation(libs.onnxruntime.android)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

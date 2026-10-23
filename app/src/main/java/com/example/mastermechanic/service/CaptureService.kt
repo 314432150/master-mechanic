@@ -27,6 +27,7 @@ import com.example.mastermechanic.log.MmLog
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
+import com.example.mastermechanic.BuildConfig
 import com.example.mastermechanic.MainActivity
 import com.example.mastermechanic.R
 import com.example.mastermechanic.action.ClickDispatch
@@ -283,12 +284,38 @@ class CaptureService : Service() {
     private var lastOcrTryTick: Long = FriendListOcrSignal.tick
 
     /**
-     * 名称读取通道（M4-T4-3）：按名称定位那两步的**眼睛**，安卓侧实现是 ML Kit 中文识别。
+     * 名称读取通道（M4-T4-3）：按名称定位那两步的**眼睛**。
      *
      * 只在第 5 / 9 步 + 对应的列表画面才会被调用（[namePlanOf]）—— 引擎初始化是懒的，
      * 不跑流程就不会付出这份代价。
+     *
+     * 2026-10-23（M6 换 OCR 引擎）：装哪套引擎由 [createNameReader] 按 `BuildConfig.OCR_ENGINE` 决定，
+     * 默认仍是 ML Kit；`paddle` 时套一层 [FallbackNameReader]（模型缺失 / 初始化失败 ⇒ 回退并写日志）。
+     * 用 `by lazy`：Paddle 那条要读 `assets`，而 Service 的 Context 在构造期还没挂上。
      */
-    private val nameReader: NameReader = MlKitNameReader()
+    private val nameReader: NameReader by lazy { createNameReader() }
+
+    /**
+     * 分数通道（立牌流程才有）：Paddle 时装同一个引擎的 [PaddleOcrReader]。
+     *
+     * 为什么单独存一份：`nameReader` 被 [FallbackNameReader] 包住之后 `as? DigitReader` 就取不到了，
+     * 而分数要的是"整块直读"，与名称那条"切行带"不是同一跳。ML Kit 时留空，[readArea] 走原有数字通道。
+     */
+    private var paddleReader: PaddleOcrReader? = null
+
+    /**
+     * 按构建开关装配文字识别引擎（M6，计划 `m6-ocr-engine.md` §7 步骤 4）。
+     *
+     * - `mlkit`（默认）：与改前**完全一致**，用于"回退时行为不变"这条验收；
+     * - `paddle`：PP-OCRv4 mobile rec（rec-only），名称走行带切块、分数走整块直读。
+     */
+    private fun createNameReader(): NameReader {
+        if (BuildConfig.OCR_ENGINE.lowercase() != "paddle") return MlKitNameReader()
+        MmLog.i(TAG, "文字识别引擎：Paddle（PP-OCRv4 mobile rec，rec-only）")
+        val reader = PaddleOcrReader(OrtRecEngine(assets))
+        paddleReader = reader
+        return FallbackNameReader(primary = reader) { MlKitNameReader() }
+    }
 
     /**
      * ~~本次预设要拜访的好友名~~（2026-09-21 起改由 [PatrolSession.targetFriend] 承载）——
@@ -4223,9 +4250,11 @@ class CaptureService : Service() {
         fun readArea(anchor: String, label: String, digits: Boolean = false): String? {
             val id = data.anchorIdFor(UiState.BADGE_SHARE, anchor) ?: return null
             val region = locator.windowInFrame(gray.width, gray.height, UiState.BADGE_SHARE, id) ?: return null
-            // 分数是花体数字：走**二值化 + 更大放大**的数字通道（2026-10-23：真机 999 曾稳定读成 666）
-            val candidates = if (digits) {
-                (nameReader as? DigitReader)?.readDigits(gray, region) ?: nameReader.read(gray, region)
+            // 分数是花体数字：ML Kit 走**二值化 + 更大放大**的数字通道；Paddle 时整块直喂 rec
+            // （2026-10-23：真机 999 曾被 ML Kit 稳定读成 666）
+            val digitChannel = paddleReader ?: (nameReader as? DigitReader)
+            val candidates = if (digits && digitChannel != null) {
+                digitChannel.readDigits(gray, region)
             } else {
                 nameReader.read(gray, region)
             }
