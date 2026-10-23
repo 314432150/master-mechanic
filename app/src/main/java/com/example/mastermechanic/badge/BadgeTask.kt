@@ -24,6 +24,14 @@ object BadgeTask {
     private const val TAG = "MM-Badge"
 
     /**
+     * "刚跑完一整轮"的冷却窗口（ms）：这段时间内再来一次「收集立牌」按**重复请求**忽略。
+     *
+     * 取 10 秒：重复投递几乎是同毫秒到达；而用户真想再跑一遍，从"看到完成"到"再点一下菜单"
+     * 通常也要几秒（菜单还要展开）⇒ 10 秒不挡真人，只挡重复。
+     */
+    const val FULL_RERUN_QUIET_MS = 10_000L
+
+    /**
      * 本次要跑的区服队列：**清单顺序**，剔除今日已收集的（纯逻辑，JVM 可测）。
      *
      * @param collected 该区服今天是否已收集完毕（生产 = [BadgeStore.hasCollected]）
@@ -76,7 +84,20 @@ object BadgeTask {
         if (list.isEmpty) {
             return StartResult(false, "服务器清单是空的（先在配置页添加区服）")
         }
-        // 全都收集过 ⇒ **照跑不误**（整轮重跑，2026-10-22 用户口径），只留一条日志说明为什么跑了全量
+        // 全都收集过 ⇒ 本来要**整轮重跑**（2026-10-22 用户口径："不应该阻止我重复搜集"）。
+        // ⚠ 但"刚跑完一整轮又来一次"多半是**同一次点击被重复投递**（2026-10-23 用户报障：
+        // "收集完所有的服务器后又从头开始了"）⇒ 冷却窗口内的请求按重复忽略，不白白再跑 14 个区服。
+        if (pending.isEmpty()) {
+            val since = BadgeSession.msSinceEnded(nowMs)
+            if (since in 0 until FULL_RERUN_QUIET_MS) {
+                MmLog.w(
+                    TAG,
+                    "刚跑完一整轮（${since / 1000} 秒前，共 ${BadgeSession.current?.done ?: 0} 个区服）" +
+                        " ⇒ 这次「收集立牌」按重复请求忽略，不再自动从头跑",
+                )
+                return StartResult(false, "刚跑完一整轮，稍等几秒再点")
+            }
+        }
         val queue = runQueueOf(list, pending)
         if (pending.isEmpty()) {
             MmLog.i(TAG, "今天全部区服都已收集 ⇒ 按整轮重跑（${queue.size} 个区服）")

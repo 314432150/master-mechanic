@@ -39,6 +39,23 @@ object BadgeAnchors {
     /** 活动中心 · 获取立牌入口（打开「获取立牌」弹框）。 */
     const val BADGE_CLAIM_ENTRY = "badge_claim_entry"
 
+    /**
+     * 活动中心 · **立牌活动入口**（活动列表里那张「送传说皮」卡）：点它才把右侧切到立牌活动页。
+     *
+     * 2026-10-23 用户口径：点「活动」进的是**上次看的那一页**（可能是别的活动）⇒ 除了等
+     * 「分享立牌」出现，还要在活动列表里找这张卡、先点它进立牌活动。
+     * 只在「活动列表区域」里搜（[BADGE_ACTIVITY_LIST_AREA]），不整屏扫。
+     */
+    const val BADGE_ACTIVITY_ENTRY = "badge_activity_entry"
+
+    /**
+     * 活动中心 · **活动列表区域**（**只圈区域**，不点）：左上返回按钮下方、占屏幕剩余高度的整片列表。
+     *
+     * 用途只有一个 —— 给 [BADGE_ACTIVITY_ENTRY] 限定搜索范围（红线 4：不靠"整屏碰运气"）。
+     * 与「分享区域」同一套做法：粗区域 + 精定位。
+     */
+    const val BADGE_ACTIVITY_LIST_AREA = "badge_activity_list_area"
+
     /** 活动中心 · 返回（左上角 «；退出活动中心回大厅）。 */
     const val BADGE_ACTIVITY_EXIT = "badge_activity_exit"
 
@@ -118,6 +135,8 @@ object BadgeAnchors {
         BADGE_SHARE_TEXT_AREA,
         // 2026-10-23：多实例「分享」按钮的搜索范围（只圈区域，不点）
         BADGE_SHARE_AREA,
+        // 2026-10-23：「立牌活动入口」的搜索范围（活动列表整片；只圈区域，不点）
+        BADGE_ACTIVITY_LIST_AREA,
     )
 
     /**
@@ -141,6 +160,8 @@ object BadgeAnchors {
      */
     fun clickLabel(anchor: String): String = when (anchor) {
         HALL_ACTIVITY -> "活动入口"
+        BADGE_ACTIVITY_ENTRY -> "立牌活动入口"
+        BADGE_ACTIVITY_LIST_AREA -> "活动列表区域"
         BADGE_CLAIM_ENTRY -> "获取立牌入口"
         BADGE_CLAIM -> "领取"
         BADGE_CONTINUE -> "点击继续"
@@ -171,6 +192,8 @@ object BadgeAnchors {
         UiState.HALL -> listOf(PatrolAnchors.Purpose("活动入口", HALL_ACTIVITY))
 
         UiState.ACTIVITY_CENTER -> listOf(
+            PatrolAnchors.Purpose("立牌活动入口", BADGE_ACTIVITY_ENTRY),
+            PatrolAnchors.Purpose("活动列表区域", BADGE_ACTIVITY_LIST_AREA),
             PatrolAnchors.Purpose("获取立牌入口", BADGE_CLAIM_ENTRY),
             PatrolAnchors.Purpose("分享立牌", BADGE_SHARE_ENTRY),
             PatrolAnchors.Purpose("空立牌槽", BADGE_EMPTY_SLOT),
@@ -210,6 +233,8 @@ object BadgeAnchors {
     val usageByState: Map<UiState, Set<String>> = mapOf(
         UiState.HALL to setOf(HALL_ACTIVITY),
         UiState.ACTIVITY_CENTER to setOf(
+            BADGE_ACTIVITY_ENTRY,
+            BADGE_ACTIVITY_LIST_AREA,
             BADGE_CLAIM_ENTRY,
             BADGE_SHARE_ENTRY,
             BADGE_EMPTY_SLOT,

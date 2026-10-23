@@ -274,10 +274,41 @@ object BadgeRunner {
             val next = BadgeFlow.advance(state, input.nowMs)
             return RoundResult(
                 next,
-                note = "第 1 步：${UiState.ACTIVITY_CENTER.label}已就绪（「获取立牌」「分享立牌」都在）→ 第 2 步",
+                note = "第 1 步：${UiState.ACTIVITY_CENTER.label}已就绪（「分享立牌」在）→ 第 2 步",
             )
         }
         val since = if (state.centerSinceMs > 0L) state.centerSinceMs else input.nowMs
+        // **先在活动列表里点「立牌活动入口」**（2026-10-23 用户口径）：点「活动」进的是上次那一页，
+        // 可能是别的活动；列表里那张「送传说皮」卡就是立牌活动的入口。就绪门一旦看到「分享立牌」
+        // 已经在上面 return 了 ⇒ 这里只处理"还没进到立牌活动"的情况（也就天然做到"先搜到分享立牌就不再搜入口"）。
+        val entry = input.anchors.firstOrNull { it.name == BadgeAnchors.BADGE_ACTIVITY_ENTRY }
+        if (entry != null) {
+            val pendingEntry = state.lastActionAtMs > 0 && state.stateAtLastAction == UiState.ACTIVITY_CENTER
+            if (pendingEntry && input.nowMs - state.lastActionAtMs < ACTION_RETRY_MS) {
+                return RoundResult(
+                    state.copy(centerSinceMs = since),
+                    note = "第 1 步：刚点过「${input.anchorLabel(BadgeAnchors.BADGE_ACTIVITY_ENTRY)}」，等立牌活动页出来",
+                )
+            }
+            if (input.nowMs - input.lastClickAtMs < BadgeFlow.CLICK_GAP_MS) {
+                return RoundResult(
+                    state.copy(centerSinceMs = since),
+                    note = "点击间隔未满 ${BadgeFlow.CLICK_GAP_MS}ms，等下一轮",
+                )
+            }
+            return RoundResult(
+                BadgeFlow.acted(state.copy(centerSinceMs = since), input.nowMs, input.state),
+                ClickRequest(
+                    decisionId = input.decisionId,
+                    source = ClickSource.BADGE_STEP,
+                    anchorName = BadgeAnchors.BADGE_ACTIVITY_ENTRY,
+                    frameX = entry.frameX,
+                    frameY = entry.frameY,
+                ),
+                "第 1 步：活动列表里看到「${input.anchorLabel(BadgeAnchors.BADGE_ACTIVITY_ENTRY)}」" +
+                    "⇒ 点它进入立牌活动，之后应看到「${input.anchorLabel(BadgeAnchors.BADGE_SHARE_ENTRY)}」",
+            )
+        }
         val waited = input.nowMs - since
         val missing = BadgeScenes.readyAnchors.filterNot { it in anchorNames }
             .joinToString("、") { input.anchorLabel(it) }
@@ -294,8 +325,10 @@ object BadgeRunner {
         // 为什么在这里自己判定、不交给 [clickStep]：那里 ④ 会把「已到活动中心」当成第 1 步通过
         // （大厅那条动作的期望画面就是活动中心）⇒ 等满 10 秒后反而"通过"，永远走不到点返回。
         // 这里仍走同一套约束：**锚点必须定位到**才点、点击间隔、记录"已动手"、按 [ACTION_RETRY_MS] 冷却重试。
+        // ⚠ 按 **restartStep** 认那条「返回」动作，不能再用"活动中心上的第一条"—— 2026-10-23 起
+        // 同一屏还声明了「立牌活动入口」，按顺序取第一条会点错控件。
         val back = BadgeScenes.actions(BadgeFlow.Step.ENTER_ACTIVITY)
-            .firstOrNull { it.state == UiState.ACTIVITY_CENTER } ?: return null
+            .firstOrNull { it.state == UiState.ACTIVITY_CENTER && it.restartStep } ?: return null
         val hit = input.anchors.firstOrNull { it.name == back.anchor }
             ?: return RoundResult(
                 state,

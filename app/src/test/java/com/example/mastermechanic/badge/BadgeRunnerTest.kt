@@ -149,6 +149,48 @@ class BadgeRunnerTest {
         assertEquals(1, retry.state?.entryAttempts)
     }
 
+    /**
+     * 2026-10-23 用户口径：点「活动」可能停在**别的活动页** ⇒ 这次不等满 10 秒，
+     * 只要在活动列表里看到「立牌活动入口」就直接点它进立牌活动。
+     */
+    @Test
+    fun activityListEntryIsClickedWithoutWaitingOutTheTimeout() {
+        val entering = state(BadgeFlow.Step.ENTER_ACTIVITY, nowMs = now).copy(centerSinceMs = now)
+        val clicked = BadgeRunner.onRound(
+            entering,
+            input(
+                UiState.ACTIVITY_CENTER,
+                anchors = listOf(
+                    hit(BadgeAnchors.BADGE_ACTIVITY_ENTRY, 120.0, 900.0),
+                    hit(BadgeAnchors.BADGE_ACTIVITY_EXIT),
+                ),
+                nowMs = now + 1_000,
+            ),
+        )
+        assertEquals("先点活动列表里的立牌活动入口", BadgeAnchors.BADGE_ACTIVITY_ENTRY, clicked.request?.anchorName)
+        assertEquals("点完仍停在第 1 步（等「分享立牌」出现）", BadgeFlow.Step.ENTER_ACTIVITY, clicked.state?.step)
+        assertTrue("点过要记成已动手", (clicked.state?.lastActionAtMs ?: 0L) > 0L)
+    }
+
+    /** 已经在立牌活动页（「分享立牌」已定位到）⇒ 就绪放行，**不许**再去点列表里那张卡。 */
+    @Test
+    fun shareEntryAlreadyPresentSkipsTheActivityListEntry() {
+        val entering = state(BadgeFlow.Step.ENTER_ACTIVITY, nowMs = now).copy(centerSinceMs = now)
+        val advanced = BadgeRunner.onRound(
+            entering,
+            input(
+                UiState.ACTIVITY_CENTER,
+                anchors = listOf(
+                    hit(BadgeAnchors.BADGE_SHARE_ENTRY),
+                    hit(BadgeAnchors.BADGE_ACTIVITY_ENTRY, 120.0, 900.0),
+                ),
+                nowMs = now + 500,
+            ),
+        )
+        assertNull("就绪了就不该再点任何东西", advanced.request)
+        assertEquals(BadgeFlow.Step.DECIDE_BRANCH, advanced.state?.step)
+    }
+
     @Test
     fun entryAttemptsAreCappedInsteadOfLoopingForever() {
         // "极大概率"≠ 必然：3 次都没进立牌活动就停下报原因（FR-T5），不无限重试。

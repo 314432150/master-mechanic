@@ -63,6 +63,8 @@ class BadgeAnchorsTest {
                 BadgeAnchors.BADGE_SHARE_NAME_AREA,
                 BadgeAnchors.BADGE_SHARE_TEXT_AREA,
                 BadgeAnchors.BADGE_SHARE_AREA,
+                // 2026-10-23：「立牌活动入口」的搜索范围（活动列表整片）
+                BadgeAnchors.BADGE_ACTIVITY_LIST_AREA,
             ),
             BadgeAnchors.regionAnchors,
         )

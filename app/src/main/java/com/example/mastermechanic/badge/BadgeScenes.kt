@@ -54,6 +54,15 @@ object BadgeScenes {
         // ⚠ 判据是「分享立牌」（2026-10-23 用户纠正）：当日已提交时「获取立牌」按钮不显示，拿它当准入门会永远不就绪。
         BadgeFlow.Step.ENTER_ACTIVITY -> listOf(
             Action(UiState.HALL, BadgeAnchors.HALL_ACTIVITY, expect = UiState.ACTIVITY_CENTER),
+            // 2026-10-23 用户口径：点「活动」可能停在别的活动页 ⇒ 先在**活动列表**里点「立牌活动入口」
+            // 把右侧切到立牌活动；已经在立牌活动（「分享立牌」就在）时不会再点它 —— 就绪门先放行，
+            // 见 [BadgeRunner] 的 `enterActivityGate`。
+            Action(
+                UiState.ACTIVITY_CENTER,
+                BadgeAnchors.BADGE_ACTIVITY_ENTRY,
+                expect = UiState.ACTIVITY_CENTER,
+                expectAnchor = BadgeAnchors.BADGE_SHARE_ENTRY,
+            ),
             Action(
                 UiState.ACTIVITY_CENTER,
                 BadgeAnchors.BADGE_ACTIVITY_EXIT,

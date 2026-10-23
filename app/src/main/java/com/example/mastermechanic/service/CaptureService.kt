@@ -387,6 +387,9 @@ class CaptureService : Service() {
     /** 「分享区域」没框这件事是不是已经说过（只在帧每 200ms 一轮的循环里说一次）。仅帧线程访问。 */
     private var badgeShareAreaWarned = false
 
+    /** 「活动列表区域」没框这件事是不是已经说过（同上，2026-10-23）。仅帧线程访问。 */
+    private var badgeActivityListAreaWarned = false
+
     /**
      * 上一次在「我的立牌」里看到的「分享」命中清单（坐标 + 分数），只用于**变化时打一行日志**。
      *
@@ -3669,9 +3672,27 @@ class CaptureService : Service() {
                     if (need.isEmpty()) {
                         emptyList()
                     } else {
-                        // 「我的立牌」的多实例「分享」：搜索范围由**只圈区域**的「分享区域」给定
+                        // 两处「只圈区域」的收窄：我的立牌的多实例「分享」、活动中心的「立牌活动入口」
                         // （2026-10-23 用户口径：粗区域 + 精定位，与好友拜访同一套做法）
-                        locator.locate(gray, result.state, need, shareAreaNarrowing(gray, result.state, step))
+                        val narrow = shareAreaNarrowing(gray, result.state, step) +
+                            activityListNarrowing(gray, result.state)
+                        // **先搜「分享立牌」**（2026-10-23 用户口径）：它已经在 ⇒ 说明就在立牌活动页，
+                        // 「立牌活动入口」那一条**本轮不必再搜**（省一次模板匹配，也避免点到列表里别的卡）。
+                        if (BadgeAnchors.BADGE_ACTIVITY_ENTRY !in need) {
+                            locator.locate(gray, result.state, need, narrow)
+                        } else {
+                            val ready = locator.locate(gray, result.state, BadgeScenes.readyAnchors, narrow)
+                            if (ready.isNotEmpty()) {
+                                ready + locator.locate(
+                                    gray,
+                                    result.state,
+                                    need - BadgeAnchors.BADGE_ACTIVITY_ENTRY - BadgeScenes.readyAnchors,
+                                    narrow,
+                                )
+                            } else {
+                                locator.locate(gray, result.state, need, narrow)
+                            }
+                        }
                     }
                 }
             }
@@ -4159,6 +4180,33 @@ class CaptureService : Service() {
         val area = locator.windowInFrame(gray.width, gray.height, UiState.BADGE_MY, id)
             ?: return emptyMap()
         return mapOf(BadgeAnchors.BADGE_SHARE to area)
+    }
+
+    /**
+     * 活动中心「立牌活动入口」的搜索范围（2026-10-23 用户口径）：由**只圈区域**的「活动列表区域」给出。
+     *
+     * 没框这条区域 ⇒ 返回空表（入口退化成在模板自己的小窗里找，多半找不到 ⇒ 就走原来的"等不到就返回重进"）。
+     * 只在**活动中心**这屏生效，别的屏不受影响。
+     */
+    private fun activityListNarrowing(gray: GrayImage, state: UiState): Map<String, PixelBounds> {
+        if (state != UiState.ACTIVITY_CENTER) return emptyMap()
+        val data = calibrationData ?: return emptyMap()
+        val locator = anchorLocator ?: return emptyMap()
+        val id = data.anchorIdFor(UiState.ACTIVITY_CENTER, BadgeAnchors.BADGE_ACTIVITY_LIST_AREA)
+        if (id == null) {
+            if (!badgeActivityListAreaWarned) {
+                badgeActivityListAreaWarned = true
+                MmLog.w(
+                    TAG,
+                    "活动中心没框「活动列表区域」⇒ 「立牌活动入口」只能在它自己的小窗里找（多半找不到），" +
+                        "会退回原来的\"等不到就点返回重进\"；到标定页补一条「活动列表区域」",
+                )
+            }
+            return emptyMap()
+        }
+        val area = locator.windowInFrame(gray.width, gray.height, UiState.ACTIVITY_CENTER, id)
+            ?: return emptyMap()
+        return mapOf(BadgeAnchors.BADGE_ACTIVITY_ENTRY to area)
     }
 
     private fun cardPlanOf(
