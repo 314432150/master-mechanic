@@ -331,7 +331,8 @@ object BadgeRunner {
             val next = BadgeFlow.advance(state, input.nowMs)
             return RoundResult(
                 next,
-                note = "第 1 步：${UiState.ACTIVITY_CENTER.label}已就绪（「分享立牌」在）→ 第 2 步",
+                note = "第 1 步：看到「${input.anchorLabel(BadgeAnchors.BADGE_SHARE_ENTRY)}」" +
+                    "⇒ 已经在立牌活动页 → 第 2 步",
             )
         }
         val since = if (state.centerSinceMs > 0L) state.centerSinceMs else input.nowMs
@@ -344,8 +345,8 @@ object BadgeRunner {
         if (waited < BadgeFlow.ACTIVITY_READY_TIMEOUT_MS) {
             return RoundResult(
                 state.copy(centerSinceMs = since),
-                note = "第 1 步：在「${UiState.ACTIVITY_CENTER.label}」等就绪（还差「$missing」；" +
-                    "已等 ${waited / 1000} 秒，最多 ${BadgeFlow.ACTIVITY_READY_TIMEOUT_MS / 1000} 秒）",
+                note = "第 1 步：在活动中心等「$missing」出现" +
+                    "（已等 ${waited / 1000} 秒，最多 ${BadgeFlow.ACTIVITY_READY_TIMEOUT_MS / 1000} 秒）",
             )
         }
 
@@ -410,16 +411,18 @@ object BadgeRunner {
             return waitOrAbort(
                 state,
                 input,
-                "第 ${state.step.number} 步：${UiState.ACTIVITY_CENTER.label}还没就绪" +
-                    "（自动提交动效可能还在播；缺「$missing」）",
+                // **说破**（2026-10-23 用户口径：原来的"还没就绪"看不懂）：现在人在活动中心，
+                // 但看不到立牌活动的入口按钮 ⇒ 就是"不在立牌活动页"。
+                "第 ${state.step.number} 步：在活动中心，但看不到「$missing」" +
+                    "⇒ 不在立牌活动页（是不是切到别的活动了？）",
             )
         }
         val waited = BadgeFlow.waitedMs(state, input.nowMs)
         if (waited < BadgeScenes.MIN_SETTLE_MS) {
             return RoundResult(
                 state,
-                note = "第 ${state.step.number} 步：${UiState.ACTIVITY_CENTER.label}已可交互，再稳 " +
-                    "${(BadgeScenes.MIN_SETTLE_MS - waited) / 1000 + 1} 秒再判今日立牌",
+                note = "第 ${state.step.number} 步：能看到「${input.anchorLabel(BadgeAnchors.BADGE_SHARE_ENTRY)}」了，" +
+                    "再稳 ${(BadgeScenes.MIN_SETTLE_MS - waited) / 1000 + 1} 秒看空位还在不在",
             )
         }
         // **「不在」需要连续确认，「在」是硬证据立刻采信**（2026-10-22）：

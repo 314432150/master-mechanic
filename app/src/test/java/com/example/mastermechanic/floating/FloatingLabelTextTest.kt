@@ -328,10 +328,12 @@ class FloatingLabelTextTest {
 
     @Test
     fun badgeCollectStepsSpeakEvenWithoutAPatrol() {
-        // 支线阶段没有 `PatrolFlow.State`：以前这里返回"待命"⇒ 标签整条被摘掉
-        assertEquals("进入立牌活动", label(badge = badgeCollect(BadgeFlow.Step.ENTER_ACTIVITY)))
-        assertEquals("打开分享立牌", label(badge = badgeCollect(BadgeFlow.Step.SHARE_ENTRY)))
-        assertEquals("返回大厅", label(badge = badgeCollect(BadgeFlow.Step.EXIT_ACTIVITY)))
+        // 支线阶段没有 `PatrolFlow.State`：以前这里返回"待命"⇒ 标签整条被摘掉。
+        // 断言"标签 == 步骤名"而不是写死文案（2026-10-23 步骤名改成"动词 + 对象"，
+        // 写死就得跟着改；这条用例守的是"支线也有话可说"，不是措辞）。
+        assertEquals(BadgeFlow.Step.ENTER_ACTIVITY.label, label(badge = badgeCollect(BadgeFlow.Step.ENTER_ACTIVITY)))
+        assertEquals(BadgeFlow.Step.SHARE_ENTRY.label, label(badge = badgeCollect(BadgeFlow.Step.SHARE_ENTRY)))
+        assertEquals(BadgeFlow.Step.EXIT_ACTIVITY.label, label(badge = badgeCollect(BadgeFlow.Step.EXIT_ACTIVITY)))
     }
 
     @Test
