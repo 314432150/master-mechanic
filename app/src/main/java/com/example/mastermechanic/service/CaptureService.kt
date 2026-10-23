@@ -2987,7 +2987,16 @@ class CaptureService : Service() {
                 // **这一屏没有 ⇒ 问扫描器：回顶 / 继续往下 / 到底了就停下**（2026-09-29，硬性要求 #4）。
                 // 注意：**不**在这里报 Failed —— 那会走 `PatrolFlow.fail` 计重试，3 屏就把这一步耗成中止；
                 // 真正的"找不到"由 [ServerListScan] 在"滑动后画面不再动"或超上限时给出。
-                val scanStep = serverScan.onMiss(rowKeysOf(candidates), SystemClock.elapsedRealtime())
+                // **几何判据：最上面那一行贴着列表上沿 ⇒ 已在顶部**（2026-10-23）：原来只能靠"滑一下看动没动"
+                // 来试，真机实录已在顶部时仍要滑 2 次 + 白读 3 次屏（≈3.5s）。行 y 本来就在手上，一帧可判。
+                val atTopByGeometry = rowYs.values.minOrNull()
+                    ?.let { it - listArea.y0 <= SERVER_AT_TOP_MARGIN_PX } ?: false
+                val scanStep = serverScan.onMiss(
+                    rowKeysOf(candidates),
+                    SystemClock.elapsedRealtime(),
+                    rowYs,
+                    atTopEvidence = atTopByGeometry,
+                )
                 // 扫描的每一拍都留一句**依据**（用户 2026-09-29 追问："为什么滑到顶后还滑了好多下" ——
                 // 原来只有"目标不在这一屏"这一句，看不出它为什么认为还没到顶）
                 val scanNote = serverScan.lastDecisionNote
@@ -5846,6 +5855,14 @@ class CaptureService : Service() {
          * `滑动下发｜…屏幕点: (x, y) -> (x2, y2)` 与滑完那一屏读到的行，照它调即可。
          */
         private const val SCROLL_EDGE_RATIO = 0.25
+
+        /**
+         * **"最上行贴着列表上沿"的容差**（px，2026-10-23）：行中心离列表区域上沿小于它 ⇒ 判定已在顶部。
+         *
+         * 取一行的高度（真机实测 ≈93px）：行中心在"上沿 + 半行"以内就说明这一行已经顶到边了；
+         * 再放宽会把"上沿上方还有半行没露出来"的中间态误判成顶部。
+         */
+        private const val SERVER_AT_TOP_MARGIN_PX = 96.0
 
         /**
          * "这一屏没有目标"的**决策节拍**（ms，2026-10-23）：回顶 / 下滑 / 放弃 至多这么久一次。
