@@ -2891,8 +2891,29 @@ class CaptureService : Service() {
         // 我们只关心"那一行还在不在原地"，没必要把 28 行整屏再读一遍（真机 ≈1.5s/遍）。
         // 窄带 = 命中行 y ± [SERVER_CONFIRM_BAND_PX]（两列都取，因为不知道它落哪一列）。
         val focusY = pendingServerHitY
-        val readRegions = if (focusY != null) confirmRegions(regions, focusY) else regions
-        val reading = readNames(gray, PatrolFlow.Step.PICK_SERVER, readRegions)
+        val baseRegions = if (focusY != null) confirmRegions(regions, focusY) else regions
+        // **第一遍只读「微信XXX区」那一段**（2026-10-23 A 方案）：rec 的成本 ≈ 行数 × 行宽，
+        // 区号永远是行首那段 ⇒ 横向裁到 45% 就能判"这一屏有没有目标"，单列 0.70s → ≈0.3s。
+        // 判定仍用 [RealmPickDecision]（**区号为主**，平台内唯一）。
+        val stripRegions = if (focusY == null) baseRegions.map { leftStripOf(it) } else baseRegions
+        var reading = readNames(gray, PatrolFlow.Step.PICK_SERVER, stripRegions)
+        // **兜底：裁窄后一个数字都没读到 ⇒ 这一刀没裁对**（列宽/字符起点与预想不同）⇒ 本轮退回整列读。
+        // 这样最坏也就是今天的速度，不会因为裁窄而"看不见"。
+        // 裁窄是否"看起来正常"：至少要有一条候选**带「区」字**。区服行永远是「微信392区…」，
+        // 若整屏都读不出「区」，说明这一刀切掉了关键信息（可能是「微信39」这种**截断的数字**，
+        // 它照样有数字，但拿它去比区号会判成"这一屏没有目标" ⇒ 白滑一屏）⇒ 必须退回整列。
+        val looksComplete = reading.candidates.any { candidate -> candidate.text.contains('区') }
+        val noDigits = reading.candidates.isEmpty() ||
+            reading.candidates.none { candidate -> candidate.text.any(Char::isDigit) }
+        if (focusY == null && reading.fresh && (noDigits || !looksComplete)) {
+            MmLog.w(
+                TAG,
+                "第 5 步：裁窄（左 ${(SERVER_NUMBER_STRIP_RATIO * 100).toInt()}%）后" +
+                    if (reading.candidates.isEmpty()) "一个字都没读到" else "一个数字都没读到" +
+                    " ⇒ 退回整列读（不影响正确性，只是这一屏慢一点）",
+            )
+            reading = readNames(gray, PatrolFlow.Step.PICK_SERVER, baseRegions)
+        }
         val candidates = reading.candidates
         if (candidates.isEmpty()) {
             // 复用结果读空不算"没读到文字"（这一帧根本没再读）→ 只说"还在找"，不计失败
@@ -3649,6 +3670,19 @@ class CaptureService : Service() {
      *
      * 返回空列表 ⇒ 调用方退回整屏读（怕的是命中行贴着区域边缘、交集太薄）。
      */
+    /**
+     * **只取一列左边那一段**（2026-10-23，A 方案）：区服行是「微信392区发条权杖」，
+     * 区号固定在行首 ⇒ 认出区号就够定位，不必把整个名字读完。
+     *
+     * 裁到 [SERVER_NUMBER_STRIP_RATIO]：真机上「微信392区」约占行首 35~40%，留 45% 有余量。
+     * 裁窄后若一个数字都没读到，调用方会**退回整列读**（见 `serverPlanOf`）。
+     */
+    private fun leftStripOf(region: PixelBounds): PixelBounds {
+        val width = (region.x1 - region.x0).coerceAtLeast(1)
+        val keep = (width * SERVER_NUMBER_STRIP_RATIO).toInt().coerceAtLeast(1)
+        return region.copy(x1 = region.x0 + keep)
+    }
+
     private fun confirmRegions(regions: List<PixelBounds>, centerY: Double): List<PixelBounds> {
         val narrowed = regions.mapNotNull { region ->
             val y0 = maxOf(region.y0, (centerY - SERVER_CONFIRM_BAND_PX).toInt())
@@ -5925,6 +5959,15 @@ class CaptureService : Service() {
          * 又不能大到把整屏装进来（那就退化成整屏读了）。
          */
         private const val SERVER_CONFIRM_BAND_PX = 140.0
+
+        /**
+         * 第一遍读屏**横向只取列的这么一段**（2026-10-23，A 方案）。
+         *
+         * 区服行格式是「微信392区发条权杖」，区号固定在行首 ⇒ 只认这一段就能判"这一屏有没有"。
+         * rec 的成本 ≈ 行数 × 行宽，所以这一步直接砍掉 ~55% 的宽度成本（真机单列 0.70s → ≈0.3s）。
+         * 取 0.45：真机「微信392区」约占 35~40%，留余量给字号差异；裁不对时调用方会退回整列读。
+         */
+        private const val SERVER_NUMBER_STRIP_RATIO = 0.45
 
         /**
          * "这一屏没有目标"的**决策节拍**（ms，2026-10-23）：回顶 / 下滑 / 放弃 至多这么久一次。
