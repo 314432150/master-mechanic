@@ -399,6 +399,12 @@ class CaptureService : Service() {
     /** 上一次"新读"之后是否下发过滑动（只测量用：没有滑动就不必量位移）。仅帧线程访问。 */
     private var serverScrollSinceRead = false
 
+    /** 因为"帧太旧"连续跳过了几轮 OCR（见 [shouldSkipOcrForStaleFrame]）。仅帧线程访问。 */
+    private var staleOcrSkips = 0
+
+    /** 上一次为"帧太旧所以先不读字"写日志的时刻（同一段陈旧只记一行）。仅帧线程访问。 */
+    private var lastStaleSkipNoteAtMs = 0L
+
     // ⚠ **第 9 步曾经有一套"逐屏滑屏找人"**（[ServerListScan] 的第二个实例 `friendScan`、三个好友专属
     //   调参常量 `FRIEND_SCROLL_EDGE_RATIO` / `FRIEND_SCROLL_DRAG_MS` / `FRIEND_SETTLE_MS`、
     //   以及滑动回告的路由分支）—— **2026-10-01 按用户口径整套删除**：
@@ -2532,6 +2538,11 @@ class CaptureService : Service() {
      */
     private fun namePlanOf(gray: GrayImage, state: UiState): PatrolRunner.NamePlan {
         val current = PatrolSession.current ?: return PatrolRunner.NamePlan.Waiting
+        // **帧太旧就不读字**（2026-10-23 用户口径）：真机日志里常见"这一轮用的是 1480ms 前拍到的画面"
+        // （`兜底重放`，采集队列来不及取新帧）。读这种画面只会：① 白花约 250ms 的 OCR；
+        // ② 命中行的 y 是旧的 ⇒ 下一轮还得再确认一次，等于多付一轮。等一帧新的再读更划算。
+        // ⚠ 不能无限等（万一面板持续陈旧就再也不读字了）⇒ 连续跳 [NAME_OCR_STALE_SKIP_MAX] 轮后强制读一次。
+        if (shouldSkipOcrForStaleFrame()) return PatrolRunner.NamePlan.Waiting
         // **口径 A 在采集层的贯彻**：本步一旦下过击，编排层接下来**只等期望画面**（不重新定位、不补点）
         // ⇒ 这一轮就算读出一堆名字也**没有任何用处**，却要占住帧线程：第 5 步两列 ≈0.5s、第 9 步 ≈0.3s。
         //
@@ -3390,6 +3401,38 @@ class CaptureService : Service() {
      *
      * @param regions 送去识别的区域（第 9 步一块；第 5 步两块 = 两条列竖带各一块），**只在这一轮真读时才用**。
      */
+    /**
+     * 这一轮该不该**因为帧太旧而跳过 OCR**（2026-10-23）。
+     *
+     * 判据只有两条：**本轮是"兜底重放"** 且 **那张画面已经超过 [NAME_OCR_MAX_FRAME_AGE_MS] 毫秒**。
+     * 新帧哪怕内容一样也照读（那种情况 [FrameFingerprint] 会直接复用，不花时间）。
+     *
+     * @return true = 跳过（调用方返回 Waiting）
+     */
+    private fun shouldSkipOcrForStaleFrame(): Boolean {
+        val nowMs = SystemClock.elapsedRealtime()
+        if (!currentFrameReplayed || currentFrameAtMs <= 0L) {
+            staleOcrSkips = 0
+            return false
+        }
+        val age = nowMs - currentFrameAtMs
+        if (age <= NAME_OCR_MAX_FRAME_AGE_MS) {
+            staleOcrSkips = 0
+            return false
+        }
+        if (staleOcrSkips >= NAME_OCR_STALE_SKIP_MAX) {
+            // 一直陈旧 ⇒ 强制读一次（宁可读旧画面，也不要这一步彻底不读字）
+            staleOcrSkips = 0
+            return false
+        }
+        staleOcrSkips++
+        if (nowMs - lastStaleSkipNoteAtMs > STALE_SKIP_NOTE_INTERVAL_MS) {
+            lastStaleSkipNoteAtMs = nowMs
+            MmLog.i(TAG, "本帧 ${age}ms 前的（兜底重放）⇒ 这一轮先不读字，等一帧新的（第 $staleOcrSkips/$NAME_OCR_STALE_SKIP_MAX 次）")
+        }
+        return true
+    }
+
     private fun readNames(
         gray: GrayImage,
         step: PatrolFlow.Step,
@@ -4776,6 +4819,20 @@ class CaptureService : Service() {
          * `滑动下发｜…屏幕点: (x, y) -> (x2, y2)` 与滑完那一屏读到的行，照它调即可。
          */
         private const val SCROLL_EDGE_RATIO = 0.25
+
+        /**
+         * "帧太旧就不读字"的门槛（ms，2026-10-23）：兜底重放的画面超过它就不再拿去 OCR。
+         *
+         * 取值依据：真机日志里陈旧重放常见 1000~1500ms，而一轮处理 ≈385ms ⇒ 500ms 已经明显旧；
+         * 再放宽就失去意义（读出来的 y 一定对不上当前画面）。
+         */
+        private const val NAME_OCR_MAX_FRAME_AGE_MS = 500L
+
+        /** 连续跳过几轮后**强制读一次**（防"面板一直陈旧 ⇒ 这一步再也不读字"）。 */
+        private const val NAME_OCR_STALE_SKIP_MAX = 3
+
+        /** "因帧太旧跳过 OCR"这句话的最小记录间隔（ms），避免每轮刷屏。 */
+        private const val STALE_SKIP_NOTE_INTERVAL_MS = 2_000L
 
         /** 一次列表拖动的手势时长（ms），见 [SCROLL_EDGE_RATIO]。 */
         private const val SCROLL_DRAG_MS = 300L
