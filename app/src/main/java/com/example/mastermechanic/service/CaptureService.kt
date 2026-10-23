@@ -94,6 +94,7 @@ import com.example.mastermechanic.decision.UiStateSignal
 import com.example.mastermechanic.floating.FloatingScreen
 import com.example.mastermechanic.foreground.ForegroundSignal
 import com.example.mastermechanic.calibration.SelectionWindow
+import com.example.mastermechanic.recognition.FrameFingerprint
 import com.example.mastermechanic.recognition.GrayImage
 import com.example.mastermechanic.recognition.PixelBounds
 
@@ -379,8 +380,25 @@ class CaptureService : Service() {
     /** 上一次的文字识别结果（间隔内复用，见 [OCR_MIN_INTERVAL_MS]）。仅帧线程访问。 */
     private var lastOcrCandidates: List<NameCandidate> = emptyList()
 
-    /** 一次文字读取的结果（[readNames]）：[fresh] = 这一轮真的读了（复用的结果不许下结论）。 */
-    private data class NameReading(val candidates: List<NameCandidate>, val fresh: Boolean)
+    /**
+     * 产出 [lastOcrCandidates] 那一刻的**画面指纹**（2026-10-23，见 [FrameFingerprint]）。
+     *
+     * 用途：这一轮画面与那次**像素完全一样** ⇒ 复用第一遍的结果等价于"又读了一遍"，
+     * 于是"选服务器"那一步不必为确认再读 26 行一遍（一步 2.3s → ≈1.3s）。仅帧线程访问。
+     */
+    private var lastOcrFingerprint: Long = FrameFingerprint.EMPTY
+
+    /**
+     * 一次文字读取的结果（[readNames]）。
+     *
+     * @param fresh 这一轮**真的读了**（时间节流复用的结果不许下结论）
+     * @param unchanged 这一轮画面与上次读时**像素完全一样**（此时复用也是可信的，见 [lastOcrFingerprint]）
+     */
+    private data class NameReading(
+        val candidates: List<NameCandidate>,
+        val fresh: Boolean,
+        val unchanged: Boolean = false,
+    )
 
     /**
      * 上一次打过日志的文字识别输入区域（2026-09-22）：**只在区域变化时打**。
@@ -2775,8 +2793,11 @@ class CaptureService : Service() {
                 // 直接点 —— 而那个 y 来自最多 1 秒前那张画面，列表回弹一个步长（实测 Δ≈185px ≈ 2 行）
                 // 恰好把"第二屏最后一行"打成"第一屏最后一行"（第 245 条同型，那次是 815ms 后下手）。
                 // 现在：**复用轮不下结论**，等下一次真读（节流 1s ⇒ 最多多等 ≈1s，单步预算 15s 足够）。
-                if (!reading.fresh) {
-                    MmLog.i(TAG, "第 5 步命中（${judged.via}）但本轮是**复用**的识别结果 ⇒ 不下结论，等一次真读")
+                // **复用也要分两种**（2026-10-23）：时间节流那种（画面可能已经变了）仍然不许下结论；
+                // 但**像素一模一样**那种（[NameReading.unchanged]）等价于又读了一遍 ——
+                // 这正是本步省掉"第二遍 26 行"的地方，而且比原来更严：判据是像素，不是时间。
+                if (!reading.fresh && !reading.unchanged) {
+                    MmLog.i(TAG, "第 5 步命中（${judged.via}）但本轮是**节流复用**的识别结果 ⇒ 不下结论，等一次真读")
                     return PatrolRunner.NamePlan.Waiting
                 }
                 val row = judged.row
@@ -3185,7 +3206,9 @@ class CaptureService : Service() {
         //
         // ⚠ **命中 / 未命中都要"新读才算数"**（与第 5 步同一条门，2026-09-29 同型事故）：`readNames` 有 1 秒
         //    节流，复用来的候选可能来自最多 1 秒前那张画面 —— 那时列表若回弹了一行，命中的就是隔壁那一行。
-        if (!reading.fresh) return PatrolRunner.NamePlan.Waiting
+        // 2026-10-23：**像素一模一样**的复用（[NameReading.unchanged]）等价于又读了一遍，可以下结论；
+        // 只有"时间节流复用"（画面可能已经变了）才必须等一次真读。判据从"时间"换成"像素"，只会更严。
+        if (!reading.fresh && !reading.unchanged) return PatrolRunner.NamePlan.Waiting
         val hit = (NameLocating.locateFriend(target, listOf(candidates)) as? NameLocator.Result.Found)?.payload
 
         // ④ **命中就采信**（用户 2026-10-01 二次拍板："**每次都滑到顶再找有点费事，改为在当前屏先找一次，
@@ -3414,13 +3437,28 @@ class CaptureService : Service() {
         regions: List<PixelBounds>,
     ): NameReading {
         val nowMs = SystemClock.elapsedRealtime()
+        // **画面一模一样 ⇒ 复用等价于新读**（2026-10-23 用户口径）：这是本步骤最贵的地方 ——
+        // rec-only 引擎一屏要认 26 行、每行一次调用，再为"确认"读第二遍就是双倍。
+        // 判据是**像素**不是时间：列表只要动一个点，指纹就变，这一轮照旧真读。
+        val fingerprint = FrameFingerprint.of(gray, regions)
+        if (lastOcrStep == step &&
+            lastOcrCandidates.isNotEmpty() &&
+            fingerprint != FrameFingerprint.EMPTY &&
+            fingerprint == lastOcrFingerprint
+        ) {
+            lastOcrAtMs = nowMs
+            return NameReading(lastOcrCandidates, fresh = false, unchanged = true)
+        }
         if (lastOcrStep == step && nowMs - lastOcrAtMs < OCR_MIN_INTERVAL_MS) {
             return NameReading(lastOcrCandidates, fresh = false)
         }
         lastOcrAtMs = nowMs
         lastOcrStep = step
-        lastOcrCandidates = regions.flatMap { nameReader.read(gray, it) }
-        return NameReading(lastOcrCandidates, fresh = true)
+        val read = regions.flatMap { nameReader.read(gray, it) }
+        lastOcrCandidates = read
+        // 只在**真读到东西**时记指纹：读空说明这一帧没文字（或区域框错），不该拿它当"稳定"的证据
+        lastOcrFingerprint = if (read.isEmpty()) FrameFingerprint.EMPTY else fingerprint
+        return NameReading(read, fresh = true)
     }
 
     /**
