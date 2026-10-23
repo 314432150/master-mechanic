@@ -470,6 +470,34 @@ class ServerListScanTest {
     }
 
     @Test
+    fun geometricEvidenceSkipsTheSwipeUpProbeEntirely() {
+        // 2026-10-23 用户报"第二屏的服务器还是很慢"：真机实录**列表本来就在顶部**，但它仍是
+        // "滑一下看动没动"→"再滑一次确认"，两次空滑 + 三次全屏读数 ≈3.5s。
+        // 现在调用方会把"最上面那一行贴着列表上沿"这个几何事实传进来 ⇒ 第一拍就直接往下找。
+        val scan = newScan()
+        val step = scan.onMiss(rows(100), 1_000L, atTopEvidence = true)
+        assertEquals(
+            "几何上已在顶部 ⇒ 不回顶，直接往下找",
+            ServerListScan.Step.ScrollDown,
+            step,
+        )
+        assertTrue("并且这一屏就算作顶部（命中可采信）", scan.atTopConfirmed)
+    }
+
+    @Test
+    fun geometricEvidenceAlsoEndsTheTopPhaseWithoutTheSecondProbe() {
+        // 回顶途中看到"最上行贴上沿" ⇒ 立刻收工，不再走"再滑一次确认"那一来一回
+        val scan = newScan()
+        // 第一拍：没有几何证据 ⇒ 老实回顶
+        assertEquals(ServerListScan.Step.ScrollTowardsTop, scan.onMiss(rows(100), 1_000L))
+        scan.onScrollDispatched(1_000L)
+        // 第二拍：滑完仍在同一屏（重合度极高），但这次带几何证据
+        val step = scan.onMiss(rows(100), 3_000L, atTopEvidence = true)
+        assertEquals("几何判据直接判定到顶，转为往下找", ServerListScan.Step.ScrollDown, step)
+        assertTrue(scan.atTopConfirmed)
+    }
+
+    @Test
     fun atTopIsOnlyConfirmedAfterTheTopHasBeenSettled() {
         // 扫描器自己的状态：**"顶部这件事交代过了没有"** = 已经进入"往下找"阶段。
         // ⚠ 好友那一步（第 9 步）从 2026-10-01 起**不再拿它拦命中**（用户口径："在当前屏先找一次，
