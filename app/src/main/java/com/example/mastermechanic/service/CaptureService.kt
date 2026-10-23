@@ -297,37 +297,29 @@ class CaptureService : Service() {
     private val nameReader: NameReader by lazy { createNameReader() }
 
     /**
-     * 分数通道（立牌流程才有）：`paddle` / `hybrid` 时装一个 [PaddleOcrReader]。
+     * 分数通道（立牌流程才有）：Paddle 时装一个 [PaddleOcrReader]。
      *
      * 为什么单独存一份：`nameReader` 被 [FallbackNameReader] 包住之后 `as? DigitReader` 就取不到了，
-     * 而分数要的是"整块直读"，与名称那条"切行带"不是同一跳。`mlkit` 时留空，[readArea] 走原有数字通道。
+     * 而分数要的是"整块直读"，与名称那条"切行带"不是同一跳。
      *
      * ⚠ 用 `by lazy` 而不是在 [createNameReader] 里顺手赋值：**名字那一路可能整场都不被调用**
-     * （纯立牌流程；或 hybrid 模式下名字走 ML Kit），那时分数仍要能用 Paddle 读。
+     * （纯立牌流程），那时分数仍要能用 Paddle 读。
      */
     private val paddleReader: PaddleOcrReader? by lazy {
-        val choice = BuildConfig.OCR_ENGINE.lowercase()
-        if (choice == "paddle" || choice == "hybrid") PaddleOcrReader(OrtRecEngine(assets)) else null
+        if (BuildConfig.OCR_ENGINE.lowercase() == "paddle") PaddleOcrReader(OrtRecEngine(assets)) else null
     }
 
     /**
      * 按构建开关装配**名称**读取引擎（M6，计划 `m6-ocr-engine.md` §7 步骤 4）。
      *
-     * - `mlkit`（默认）：与改前完全一致（名称 + 分数都走 ML Kit），守住"回退时行为不变"；
      * - `paddle`：名称与分数都走 PP-OCRv4 rec（rec-only，名称按行带切块）；
-     * - `hybrid`（**2026-10-23 用户口径**）：**名称走 ML Kit、分数走 Paddle**。理由有数据支撑：
-     *   ① 名称那一路 ML Kit **一次调用读整块、自带检测器切行**，不必我们切（切行是我们自己加的
-     *      成本与脆弱性来源）；② 换引擎真正要修的只有**花体分数**（`999` 被读成 `666`），Paddle 8/8 全对；
-     *   ③ 名字精度上 ML Kit 也更好（`蒙讶` 读对，Paddle 读成 `蒙狂`），而红线 3 是**全等匹配**。
+     * - `mlkit`（默认，回退档）：与改前完全一致，守住"回退时行为不变"这条验收。
+     *
+     * 2026-10-23 用户口径：**不保留双引擎** ⇒ `hybrid` 已删；要走的路线是"全 Paddle"，
+     * 剩下要补的是**让 Paddle 自带检测器**（像 ML Kit 那样整块进、行自己出），见计划文档。
      */
     private fun createNameReader(): NameReader {
-        val choice = BuildConfig.OCR_ENGINE.lowercase()
-        if (choice != "paddle") {
-            if (choice == "hybrid") {
-                MmLog.i(TAG, "文字识别引擎：混合（名称 ML Kit 整块读 / 分数 Paddle rec）")
-            }
-            return MlKitNameReader()
-        }
+        if (BuildConfig.OCR_ENGINE.lowercase() != "paddle") return MlKitNameReader()
         MmLog.i(TAG, "文字识别引擎：Paddle（PP-OCRv4 mobile rec，rec-only）")
         val reader = paddleReader ?: PaddleOcrReader(OrtRecEngine(assets))
         return FallbackNameReader(primary = reader) { MlKitNameReader() }
