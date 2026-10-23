@@ -10870,3 +10870,52 @@
 - 同段顺带核对：`01:37:43`~`01:37:49` 一次「只拜访」流程完整跑通（第 8 步点农场标志 `farm_friends` 0.9929 → 第 9 步「阿娜雅」行拜访图标，复眼校验通过 → `拜访: 已完成`），
   全程判定 ID `patrol-14` / `patrol-15`，点击均带 `前台: true`。
 - 验证边界（如实记录）：上表三次会话的因果关系仍属强相关推断，非机理级证明；反例已排除（回 App 不致命），但「建会话时本 App 在屏前必死」的机理仍是黑盒。
+
+### 2026-10-23（M6 增量：换 OCR 引擎，§3 离线验证）
+
+- **分支**：从 `main` 新开 **`stage/m6`**（`temp/badge-share-1021` 原样不动，按计划活动结束整支删除）。
+  计划文档 `plans/m6-ocr-engine.md` 原写在临时分支上、`main` 没有 ⇒ 本次**只把文档带过来**（不带立牌流程代码）。
+- **环境**：Python 3.11.9（隔离 venv）+ `paddlepaddle` 3.0.0(CPU) + `paddleocr` 3.7.0；模型 **PP-OCRv4_mobile_det / mobile_rec**、
+  关方向分类（与 §4.4 选型一致）；输入是 `adb screencap` 原图 **3168×1440 不经压缩**。⚠ 桌面 x86 fp32，**不是**交付用的 ncnn int8 arm64。
+- ✅ **唯一硬指标通过**：`999` → **`999`（置信度 1.0000）**，三种读法都过 —— 产物窗口 96×50 rec-only **20ms**、
+  280×140 det+rec 79ms、整帧 40 个框 2264ms；同帧分享码 `UZQ5PN` 也读对（0.9943）⇒ 花体 9/6 同形的问题确实是模型层，换引擎即解决。
+- ✅ **服务器列表**（旧帧池 `frame-0000578183601.png`，6+6）：左右列 x 分明（≈255 / ≈833）、按序无交叉、区服名逐字正确。
+- 🟡 **好友列表**（旧帧池 7 行、竖屏带年代）：按序不串行，但暴露两件判定层必须处理的事 ——
+  ① **一行被切成两块**（`67` + `iu不错哦V（徐诏衍）`；rec-only 下 `77Boss~~喵（阿娜雅）` 丢前缀），ML Kit 是整行；
+  ② **低频字认错**：`蒙讶` → `蒙狂`（0.878，其余常规文字均 0.99+）⇒ 红线 3 是**全等匹配**，认错一个字就变成"流程停下"。
+- ⚠ **耗时规律（桌面实测）**：≈ **框数 × 30~55ms**（分数块 rec-only 20ms / 单行 23ms / 名字列 210×475·21 框 625~769ms /
+  好友面板 550×650·58 框 3.1s / 服务器面板 2.6s / 整帧 2.3s）⇒ **整屏 det+rec 进不了 1s 帧线程预算**，
+  接入必须按区域裁剪（分数块直接 rec-only，det 白花 60ms）。
+- **用户补图后（同日追加）**：`_tmp_check/ocr/frames/scores/` 收到 8 张 3168×1440 原图 ⇒ 其中 **7 张是立牌弹框，分数全部读对**
+  （`589 / 115 / 575 / 326 / 774 / 607 / 999`，真值由裁切拼图 `out/scores-sheet.png` 逐张目视核对），单块 det+rec **中位 45ms**；
+  第 8 张其实是**好友列表**界面（生产尺度 5 行）⇒ 按序读出、不串行，但暴露上面 ②③ 两条：`Boss~~喵` 读成 `80BoSS~~喵`
+  （等级数字并进名字）、`细细の听(许畅)` 读成 `细细听（许杨）`。**还剩 10 张分数待补**（`904`×2 / `330/111/349/545/233/256/871/660`）。
+- ✅ **门槛收盘（用户 2026-10-23）**：① 余下 10 张分数**不用测**（已到的 7 张全对够用）；
+  ② **"好友列表 25 行"这条门槛本身写错** —— 用户指出**一屏显示行数有上限**，不存在 25 行的画面 ⇒ 门槛改按"一屏实际行数"（现样本 5 行）。
+  ⇒ §3 门槛**通过**，只剩"耗时只能在桌面测"这一点待真机复测。
+- 🔧 **接入形态由本次测量定下（关键）**：`det` 路径整屏 2.1~3.1s（≈ 框数 × 30~55ms）、且会把等级数字并进名字、低频字认错；
+  **跳过 det、按行带直接 rec** 两者都解决（20ms/行，`Boss~~喵（阿娜雅)` 干净读出）⇒ **只要 rec 模型，det 不捆进包**。
+- **用户拍板「全部改为 Paddle」⇒ 运行时定为 ONNX Runtime**（原计划 ncnn）：① 只需 rec，ncnn 的体积优势不再关键；
+  ② 本机 `%ANDROID_SDK%\ndk`、`cmake` 都不存在，ncnn 要装工具链 + 自写 C++ JNI；③ 体积实测中性（见下）。
+  依赖 `com.microsoft.onnxruntime:onnxruntime-android:1.20.0` 已进 `libs.versions.toml`。
+- **模型落地**：`PP-OCRv4_mobile_rec` 的 ONNX（10.35MB）+ 6623 字字符表 → `app/src/main/assets/ocr/`
+  （`noCompress += "onnx"`）。**交付前先复验过**：用同一批真机原图（`999` + 用户补的 7 张）→ **8/8 全读对，4ms/块**（桌面 ORT）。
+  ⚠ int8 量化失败（`quantize_dynamic` 报 `Expected conv2d_157.w_0 to be an initializer`）⇒ 先落 fp32。
+- **新增代码**：`recognition/RecDecoding.kt`（输入宽度换算 + CTC 贪心解码，纯逻辑）、`service/OrtRecEngine.kt`（ORT 会话 + BGR/归一化口径）；
+  `RecDecodingTest` **8 例全绿**（`999` 重复帧合并 / 空白不全丢 / 6 与 9 不同类）。
+- **体积实测**：debug 49.10 → **59.18MB**；**release 16.48 → 26.91MB**（ML Kit 还没摘，其压缩后 4.47MB ⇒ 摘掉约 **22.4MB**）；
+  `jniLibs.useLegacyPackaging = true` 让 `libonnxruntime.so` 16.76 → **6.49MB**。
+- **接线（同日）**：`PaddleNameReader`（`NameReader` 的 Paddle 实现，先按投影法切行带再逐行 rec）+
+  `RowBands`（纯逻辑行切分：墨量投影、空隙合并、噪点过滤、深浅字都认）+ `FallbackNameReader`（**首次抛异常才回退** ML Kit
+  并写日志；"读不到字"不算失败，否则真机永远比不出谁更准）。
+- **开关**：`BuildConfig.OCR_ENGINE`（`-PocrEngine=paddle` 才走新引擎，**默认仍是 ML Kit**）⇒ 同一份代码出两个包做 A/B，
+  也守住验收项「切回 ML Kit 行为与改前一致」。`CaptureService.nameReader` 改为 `by lazy`（Paddle 那条要读 `assets`，
+  Service 构造期还没挂 Context）。
+- **单测**：`RecDecodingTest`（8 例）+ `RowBandsTest`（7 例）全绿；`:app:assembleDebug` 通过（**60.33MB**）、
+  `:app:test -PfastTests` 绿。
+- ⏳ **还没生效**：默认引擎没切 ⇒ 应用行为与改前一致；且「分数」那条读法在 `temp/badge-share-1021` 的立牌流程里，
+  `stage/m6`（从 `main` 拉）**没有分数调用点** ⇒ **要看到 `999` 被修好，必须把引擎带到立牌流程那条线上**。
+  另：未装机（`-r` 会重置无障碍授权，而默认引擎不变、装了也看不出差别）。
+- **NFR-03 放宽到 ≤32MB（用户 2026-10-23 拍板）**：`requirements.md` NFR-03 与 `plans/m6-nfr-hardening.md` §2 已同步
+  （原 25MB 只剩 ≈8.5MB 余量，装不下 ≈13MB 的 ncnn + PP-OCR 模型；降级条件已写死：>32MB 或 rec 精度不达标 ⇒ 退回只换分数）。
+- 证据：[verification/m6/t6-1-ocr-offline-gate.md](verification/m6/t6-1-ocr-offline-gate.md)（环境 / 逐用例表 / 原始输出路径）。
