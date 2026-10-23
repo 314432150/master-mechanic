@@ -70,10 +70,11 @@ object BadgeSession {
         /** 已经收完的区服数（日志 / 展示用）。 */
         val done: Int = 0,
         /**
-         * 这一轮的队列是不是**整轮重跑**（今天全都收过 ⇒ 用户又点了一次，见 `BadgeTask.runQueueOf`）。
+         * 这一轮是不是**新开的一轮**（上一轮已结束 / 今天还没跑过，见 `BadgeTask.RoundMarker`）。
          *
-         * 2026-10-23 用它决定"人已经在某个区服时，从它开始跑"合不合法：只有整轮重跑才敢把队列
-         * **轮换**到当前区服（集合不变、只换起点）；有未收集的区服时轮换会漏掉排在前面的那些。
+         * 2026-10-23 用它决定"人已经在某个区服时，从它开始跑"合不合法：只有新开一轮才敢把队列
+         * **轮换**到当前区服（集合不变、只换起点）；续跑那一轮已经按盘上游标轮换过，
+         * 再按"当前区服"轮换会跳过中间没跑的区服。
          */
         val fullRound: Boolean = false,
         /**
@@ -164,19 +165,7 @@ object BadgeSession {
     /** 是否正在跑（与 [PatrolSession] 互斥，由启动方保证）。 */
     val isActive: Boolean get() = state?.isRunning == true
 
-    /**
-     * 距离上一次任务**结束**过去了多久（ms）；正在跑 / 从没跑过 / 被用户停止 ⇒ `-1`。
-     *
-     * 用途只有一个（2026-10-23 用户报障"收集完所有区服后又从头开始"）：识别**重复的启动请求** ——
-     * 刚跑完一整轮又来一次「收集立牌」，多半是同一次点击被重复投递（或用户以为没反应又点了一下），
-     * 不该把整轮 14 个区服再跑一遍。
-     */
-    fun msSinceEnded(nowMs: Long): Long {
-        val task = state ?: return -1
-        if (task.isRunning) return -1
-        val ended = endedAtMs
-        return if (ended <= 0L) -1 else (nowMs - ended).coerceAtLeast(0L)
-    }
+
 
     /** 是否已暂停（见 [Task.isPaused]）。 */
     val isPaused: Boolean get() = state?.isPaused == true

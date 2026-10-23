@@ -25,31 +25,23 @@ object BadgeTask {
     private const val TAG = "MM-Badge"
 
     /**
-     * "刚跑完一整轮"的冷却窗口（ms）：这段时间内再来一次「收集立牌」按**重复请求**忽略。
+     * 一轮收集的**盘上状态**（`round.txt`）：回答"这次点「收集立牌」，是接着上一轮还是开新的一轮"。
      *
-     * 取 10 秒：重复投递几乎是同毫秒到达；而用户真想再跑一遍，从"看到完成"到"再点一下菜单"
-     * 通常也要几秒（菜单还要展开）⇒ 10 秒不挡真人，只挡重复。
+     * 为什么不再看"今天已收集过"：那个标记是**一天一次**的布尔值，14 个区服跑完就全打上了
+     * ⇒ 中途停止再发起时它说不清"上一轮跑到哪了"（2026-10-23 真机：收完 2 个再发起又从第 1 个开始）。
+     * 也不用"刚跑完 10 秒内忽略"这种时间猜测（**用户口径：去掉它，用显式标记说清**）：
+     * 上一轮结束 ⇒ 从第 1 个开始；上一轮没结束 ⇒ 从它停下的那个区服接着收。
      */
-    const val FULL_RERUN_QUIET_MS = 10_000L
+    enum class RoundState {
+        /** 本轮还没跑完（含"中途停止 / 中止"）：再发起就接着收。 */
+        RUNNING,
 
-    /**
-     * 本次要跑的区服队列：**清单顺序**，剔除今日已收集的（纯逻辑，JVM 可测）。
-     *
-     * @param collected 该区服今天是否已收集完毕（生产 = [BadgeStore.hasCollected]）
-     */
-    fun queueOf(list: ServerList, collected: (String) -> Boolean): List<String> =
-        list.entries.map { it.serverName }.filterNot(collected)
+        /** 本轮已跑完最后一个区服：再发起就是全新一轮。 */
+        DONE,
+    }
 
-    /**
-     * 真正开跑时用的队列：未收集的优先（**续跑**省时间）；**全都收集过 ⇒ 整轮重跑**。
-     *
-     * 为什么不直接拦（2026-10-22 用户口径："不应该阻止我重复搜集"）：收集完成标记的作用是
-     * "中途停了接着跑"，不是"今天只许跑一次"。用户再点一次菜单，就是明确要再收集一遍
-     * （牌可能被游戏刷新、或者想看新的分数），拦下来只会让人以为功能坏了。
-     * 重复收集不会污染数据：`BadgeStore.upsert` 按码/同牌合并，`markCollected` 幂等。
-     */
-    fun runQueueOf(list: ServerList, pending: List<String>): List<String> =
-        if (pending.isEmpty()) list.entries.map { it.serverName } else pending
+    /** 盘上的一轮状态：[server] 只在 [RoundState.RUNNING] 时有值（= 下一个该收的区服）。 */
+    data class RoundMarker(val state: RoundState, val server: String? = null)
 
     /** 启动结论：失败时 [reason] 是给人看的一句话（菜单/日志直接显示，不静默）。 */
     data class StartResult(val started: Boolean, val reason: String? = null)
@@ -70,6 +62,10 @@ object BadgeTask {
         } catch (e: IllegalArgumentException) {
             return StartResult(false, "服务器清单读不了：${e.message}")
         } ?: return StartResult(false, "还没有服务器清单（先在配置页添加区服）")
+        val names = list.entries.map { it.serverName }
+        if (names.isEmpty()) {
+            return StartResult(false, "服务器清单是空的（先在配置页添加区服）")
+        }
 
         val recordsFile = BadgeStore.recordsFile(context)
         // **先清过期数据**（2026-10-23 用户口径："今日之前的已经过期了"）：读侧过滤只是"看不见"，
@@ -81,37 +77,23 @@ object BadgeTask {
             0
         }
         if (pruned > 0) MmLog.i(TAG, "清掉今天之前的过期立牌数据：$pruned 条")
-        val pending = queueOf(list) { BadgeStore.hasCollected(recordsFile, it, today) }
-        if (list.isEmpty) {
-            return StartResult(false, "服务器清单是空的（先在配置页添加区服）")
-        }
-        // 全都收集过 ⇒ 本来要**整轮重跑**（2026-10-22 用户口径："不应该阻止我重复搜集"）。
-        // ⚠ 但"刚跑完一整轮又来一次"多半是**同一次点击被重复投递**（2026-10-23 用户报障：
-        // "收集完所有的服务器后又从头开始了"）⇒ 冷却窗口内的请求按重复忽略，不白白再跑 14 个区服。
-        if (pending.isEmpty()) {
-            val since = BadgeSession.msSinceEnded(nowMs)
-            if (since in 0 until FULL_RERUN_QUIET_MS) {
-                MmLog.w(
-                    TAG,
-                    "刚跑完一整轮（${since / 1000} 秒前，共 ${BadgeSession.current?.done ?: 0} 个区服）" +
-                        " ⇒ 这次「收集立牌」按重复请求忽略，不再自动从头跑",
-                )
-                return StartResult(false, "刚跑完一整轮，稍等几秒再点")
-            }
-        }
-        val planned = runQueueOf(list, pending)
-        if (pending.isEmpty()) {
-            MmLog.i(TAG, "今天全部区服都已收集 ⇒ 按整轮重跑（${planned.size} 个区服）")
-        }
-        // **整轮重跑要接着上次的位置**（2026-10-23 用户报障：收完一个区服、在换下一个的重登中途强制停止，
-        // 再发起时又从清单第一个开始）。"全部已收集"时 `pending` 是空的，没有任何东西记得这一轮跑到哪，
-        // 所以单独存一个游标（`round.txt`）。有未收集区服时不需要它 —— `pending` 本身就是续跑信息。
-        val cursor = if (pending.isEmpty()) loadCursor(context, today) else null
-        val queue = if (cursor != null && cursor in planned) {
-            MmLog.i(TAG, "上次这一轮停在「$cursor」⇒ 从它接着收，不从头开始")
-            BadgeSession.rotateTo(planned, cursor)
+
+        // **这一轮从哪个区服开始**（2026-10-23 用户口径）：
+        // - 上一轮还没结束（标记 RUNNING）⇒ 从它停下的那个区服接着收（集合不变，只换起点）；
+        // - 上一轮已结束 / 今天还没跑过（DONE / 无标记）⇒ **从第 1 个开始**，开新的一轮。
+        val marker = loadMarker(context, today)
+        val resuming = marker?.state == RoundState.RUNNING
+        val cursor = marker?.server
+        val queue = if (resuming && cursor != null && cursor in names) {
+            MmLog.i(TAG, "上一轮还没结束（停在「$cursor」）⇒ 从它接着收")
+            BadgeSession.rotateTo(names, cursor)
         } else {
-            planned
+            if (resuming) {
+                MmLog.w(TAG, "上一轮标记为进行中，但记的目标「${cursor ?: "空"}」不在清单里 ⇒ 从第 1 个重新开始")
+            } else {
+                MmLog.i(TAG, "上一轮已结束（或今天还没跑过）⇒ 从第 1 个区服「${names.first()}」开始")
+            }
+            names
         }
         if (switch == null) {
             return StartResult(false, "现在这个画面起步不了（要先回到大厅 / 农场 / 启动页）")
@@ -121,13 +103,14 @@ object BadgeTask {
             MmLog.i(TAG, "立牌任务已在跑 ⇒ 本次请求忽略")
             return StartResult(false, "立牌收集已经在跑了")
         }
-        // `fullRound` 由队列规划给出：整轮重跑时才允许"人在哪个区服就从哪里开始"（见 `continueFrom`）
-        BadgeSession.start(queue, switch, nowMs, fullRound = pending.isEmpty())
-        // 记下游标：这一轮当前的目标区服（中途停止后再发起就从它开始）
-        saveCursor(context, queue.firstOrNull(), today)
+        // `fullRound`：**新开一轮**时才允许"人在哪个区服就从哪里开始"（见 `continueFrom`）；
+        // 续跑那一轮已经按游标轮换过了，再按当前区服轮换会跳过中间没跑的区服。
+        BadgeSession.start(queue, switch, nowMs, fullRound = !resuming)
+        // **本轮进行中标记**：从这一刻起，没跑完之前再发起都会接着跑（而不是从第 1 个重来）。
+        saveRunning(context, queue.first(), today)
         MmLog.i(
             TAG,
-            "立牌任务：清单 ${list.size} 个区服，今天要跑 ${queue.size} 个（跳过 ${list.size - queue.size} 个已收集）",
+            "立牌任务：清单 ${names.size} 个区服，本轮从「${queue.first()}」开始（${if (resuming) "续上一轮" else "新的一轮"}）",
         )
         return StartResult(true)
     }
@@ -167,48 +150,62 @@ object BadgeTask {
     // ---------------------------------------------------------------- 整轮重跑的续跑游标
 
     /**
-     * 游标文件名（与 `records.txt` 同目录，**单独一个文件**：不碰既有格式，删了也只是"从头跑"）。
+     * 轮次标记文件名（与 `records.txt` 同目录，**单独一个文件**：不碰既有格式，删了也只是"从第 1 个跑"）。
      *
-     * 内容 = `日期|区服名`，只回答一件事：**这一天这一轮，下一个该收哪个区服**。
+     * 内容 = `日期|RUNNING|区服名` 或 `日期|DONE|`，只回答两件事：这一轮**结束没有**、下一个该收谁。
      */
-    private const val CURSOR_FILE = "round.txt"
+    private const val ROUND_FILE = "round.txt"
 
-    fun cursorFile(context: Context): File = File(BadgeStore.recordsFile(context).parentFile, CURSOR_FILE)
+    fun roundFile(context: Context): File = File(BadgeStore.recordsFile(context).parentFile, ROUND_FILE)
 
-    /** 读今天的游标（没有 / 隔天的 ⇒ null）。 */
-    fun loadCursor(context: Context, today: LocalDate = LocalDate.now()): String? =
+    /** 读今天的一轮状态（没有 / 隔天的 ⇒ null = 当成"上一轮已结束"）。 */
+    fun loadMarker(context: Context, today: LocalDate = LocalDate.now()): RoundMarker? =
         try {
-            val file = cursorFile(context)
-            if (!file.isFile) null else parseCursor(file.readText(Charsets.UTF_8), today)
+            val file = roundFile(context)
+            if (!file.isFile) null else parseMarker(file.readText(Charsets.UTF_8), today)
         } catch (e: Exception) {
-            MmLog.w(TAG, "续跑游标读不了（当作没有，从头跑）：${e.message}")
+            MmLog.w(TAG, "轮次标记读不了（当作上一轮已结束，从第 1 个开始）：${e.message}")
             null
         }
 
-    /** 写 / 清游标：[server] 为空 ⇒ 删掉（整轮已跑完，下次是全新一轮）。 */
-    fun saveCursor(context: Context, server: String?, today: LocalDate = LocalDate.now()) {
-        val file = cursorFile(context)
+    /** 标记「本轮进行中」，并记下**下一个该收的区服**（中途停止 / 中止后据此续跑）。 */
+    fun saveRunning(context: Context, server: String, today: LocalDate = LocalDate.now()) =
+        writeMarker(context, formatMarker(today, RoundState.RUNNING, server))
+
+    /** 标记「本轮结束」（最后一个区服已收完）：下次点「收集立牌」就是全新一轮。 */
+    fun saveDone(context: Context, today: LocalDate = LocalDate.now()) =
+        writeMarker(context, formatMarker(today, RoundState.DONE, null))
+
+    private fun writeMarker(context: Context, text: String) {
         try {
-            if (server.isNullOrBlank()) {
-                if (file.exists()) file.delete()
-            } else {
-                file.parentFile?.mkdirs()
-                file.writeText(formatCursor(today, server), Charsets.UTF_8)
-            }
+            val file = roundFile(context)
+            file.parentFile?.mkdirs()
+            file.writeText(text, Charsets.UTF_8)
         } catch (e: Exception) {
-            MmLog.w(TAG, "续跑游标没写成功（下次可能从头跑）：${e.message}")
+            MmLog.w(TAG, "轮次标记没写成功（下次可能从第 1 个重跑）：${e.message}")
         }
     }
 
-    /** 游标序列化：`日期|区服名`（纯逻辑，便于单测）。 */
-    internal fun formatCursor(today: LocalDate, server: String): String = "$today|$server"
+    /** 标记序列化：`日期|RUNNING/DONE|区服名`（纯逻辑，便于单测）。 */
+    internal fun formatMarker(today: LocalDate, state: RoundState, server: String?): String =
+        "$today|${state.name}|${server.orEmpty()}"
 
-    /** 游标解析：日期不是今天 ⇒ null（隔天的游标没有意义）。纯逻辑，便于单测。 */
-    internal fun parseCursor(text: String, today: LocalDate): String? {
-        val parts = text.trim().split('|', limit = 2)
-        if (parts.size != 2) return null
-        if (parts[0] != today.toString()) return null
-        return parts[1].trim().ifBlank { null }
+    /**
+     * 标记解析（纯逻辑，便于单测）：
+     * - 日期不是今天 ⇒ null（隔天的标记没有意义）；
+     * - 兼容 2026-10-23 早些时候的旧格式 `日期|区服名`（那时它只是"续跑游标"）⇒ 按**进行中**读。
+     */
+    internal fun parseMarker(text: String, today: LocalDate): RoundMarker? {
+        val parts = text.trim().split('|')
+        if (parts.size < 2 || parts[0] != today.toString()) return null
+        return when (parts[1]) {
+            RoundState.RUNNING.name ->
+                RoundMarker(RoundState.RUNNING, parts.getOrNull(2)?.trim()?.ifBlank { null })
+
+            RoundState.DONE.name -> RoundMarker(RoundState.DONE)
+
+            else -> parts[1].trim().ifBlank { null }?.let { RoundMarker(RoundState.RUNNING, it) }
+        }
     }
 
     /** 记一张立牌（按分享码 upsert；返回是否写成功）。 */

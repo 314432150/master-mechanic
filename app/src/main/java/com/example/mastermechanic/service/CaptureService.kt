@@ -3998,11 +3998,16 @@ class CaptureService : Service() {
             }
             val marked = server != null && BadgeTask.markServerCollected(this, server)
             BadgeSession.finishServer(marked, now)
-            // **续跑游标**（2026-10-23 用户报障）：收完一个区服后，把"下一个目标"记到盘上 ——
-            // 用户可能在换下一个的重登中途强制停止，再发起时若只靠"已收集"标记，整轮重跑会从清单第一个开始。
-            // 整轮跑完 ⇒ 游标作废（下一次是全新一轮，从第一个开始是对的）。
+            // **轮次标记**（2026-10-23 用户口径）：收完一个区服就把"下一个目标"写进盘上的进行中标记 ——
+            // 用户可能在换下一个的重登中途强制停止，再发起时据此续跑（而不是从清单第一个重来）。
+            // 最后一个区服收完 ⇒ 写「本轮结束」：下次点「收集立牌」就是全新一轮，从第 1 个开始。
             val after = BadgeSession.current
-            BadgeTask.saveCursor(this, if (after != null && !after.finished) after.current else null)
+            val next = after?.current ?: server
+            if (after != null && after.finished) {
+                BadgeTask.saveDone(this)
+            } else if (next != null) {
+                BadgeTask.saveRunning(this, next)
+            }
             logBadgeNote(BadgeSession.lastNote)
             return
         }
