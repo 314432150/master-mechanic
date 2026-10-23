@@ -17,6 +17,23 @@ class BadgeFlowTest {
 
     private val t0 = 1_000L
 
+    /**
+     * 步骤名会原样进**顶部悬浮标签**，那里有 12 字上限（`FloatingLabelText.MAX_CHARS`，超了加省略号）。
+     *
+     * 2026-10-23 真机踩到：「读分数 / 名称 / 分享码」14 字 ⇒ 顶部被截成「读分数 / 名称 / 分享…」。
+     * 这条用例把"每个步骤名都装得下"钉住 —— 以后改文案先看它红不红。
+     */
+    @Test
+    fun everyStepLabelFitsTheTopLabelBudget() {
+        for (step in BadgeFlow.Step.entries) {
+            assertTrue(
+                "步骤 ${step.number}「${step.label}」${step.label.length} 字，超过顶部标签上限 " +
+                    "${com.example.mastermechanic.floating.FloatingLabelText.MAX_CHARS} 字（会被省略）",
+                step.label.length <= com.example.mastermechanic.floating.FloatingLabelText.MAX_CHARS,
+            )
+        }
+    }
+
     @Test
     fun startBeginsAtEnterActivity() {
         val state = BadgeFlow.start(t0)
