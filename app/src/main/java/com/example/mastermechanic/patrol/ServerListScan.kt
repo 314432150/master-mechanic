@@ -272,6 +272,7 @@ class ServerListScan(
         previousYs = emptyMap()
         awaitingOutcome = false
         awaitingSinceMs = 0L
+        missingOutcomeStreak = 0
         lastProposalDispatched = false
         noMovementStreak = 0
         topMovedPx = 0.0
@@ -337,6 +338,8 @@ class ServerListScan(
             lastDecisionNote = "上一次滑动的回告 ${pendingMs}ms 没来 ⇒ 当作被拒，撤回这一步重新提议" +
                 "（第 $missingOutcomeStreak/${MAX_MISSING_OUTCOMES} 次）"
             rollbackProposal()
+        } else {
+            missingOutcomeStreak = 0
         }
         if (lastScrollAtMs > 0L && nowMs - lastScrollAtMs < settleMs) {
             lastDecisionNote = "滑动刚下发 ${nowMs - lastScrollAtMs}ms（稳定等待 ${settleMs}ms 未到）"
@@ -536,6 +539,8 @@ class ServerListScan(
     fun onScrollRejected() {
         if (!awaitingOutcome) return
         rollbackProposal()
+        // 被拒也算"回告到了"（通路是好的），只是这一下没滑成
+        missingOutcomeStreak = 0
         lastDecisionNote = "上一次滑动被门禁拒了 ⇒ 撤回这一步"
     }
 
