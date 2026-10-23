@@ -48,9 +48,10 @@ object BadgeScenes {
      */
     fun actions(step: BadgeFlow.Step): List<Action> = when (step) {
         // 「活动」入口不一定进立牌活动（2026-10-22 用户口径）：进去的是上次看的别的活动页。
-        // 那一页**没有独立标志**（十几页各不相同）⇒ 只能靠"活动中心里等不到「获取立牌」"来判，
+        // 那一页**没有独立标志**（十几页各不相同）⇒ 只能靠"活动中心里等不到「分享立牌」"来判，
         // 见 [BadgeRunner] 的就绪门（[BadgeFlow.ACTIVITY_READY_TIMEOUT_MS]）：超时才点**左上角返回**
         // 退回大厅、重新点「活动」。次数上限 [BadgeFlow.ENTRY_MAX_ATTEMPTS]，超了如实停下（不无限重试）。
+        // ⚠ 判据是「分享立牌」（2026-10-23 用户纠正）：当日已提交时「获取立牌」按钮不显示，拿它当准入门会永远不就绪。
         BadgeFlow.Step.ENTER_ACTIVITY -> listOf(
             Action(UiState.HALL, BadgeAnchors.HALL_ACTIVITY, expect = UiState.ACTIVITY_CENTER),
             Action(
@@ -318,15 +319,20 @@ object BadgeScenes {
     }
 
     /**
-     * **立牌活动就绪**的判据（每日首次进入的自动提交动效结束）：两个入口**都**定位到。
+     * **立牌活动就绪**的判据（每日首次进入的自动提交动效结束）：**「分享立牌」入口定位到**即可。
      *
-     * 为什么用"两个入口都在"而不是干等 N 秒：动效时长随网络/机型变（真机 3~8 秒），
-     * 定长等待不是太短就是白等；而两个入口同时可定位 ⇒ 页面已经可交互。
+     * 为什么用"入口可定位"而不是干等 N 秒：动效时长随网络/机型变（真机 3~8 秒），
+     * 定长等待不是太短就是白等。
+     *
+     * ⚠ **2026-10-23 用户纠正（真机踩到）：不能用「获取立牌」当准入判据** —— 当日立牌**已提交**时
+     * 这个按钮**根本不显示**（今天这条线就是这么卡死的：`activityReady` 恒假 ⇒ 10 秒后被踢回大厅重进 ⇒ 中止）。
+     * 而「分享立牌」是常驻入口（领取分支 / 已获取分支都要用它）⇒ 改用它**单独**判就绪。
+     * 活动中心那一屏的**状态标志**是左上角返回（`badge_activity_exit`），也不受影响。
      *
      * ⚠ 锚点框得不准时会一直不就绪 ⇒ 到 [BadgeFlow.ACTIVITY_SETTLE_TIMEOUT_MS] 如实停下
      * （停下 ≠ 错动作，FR-T5）。
      */
-    val readyAnchors: Set<String> = setOf(BadgeAnchors.BADGE_CLAIM_ENTRY, BadgeAnchors.BADGE_SHARE_ENTRY)
+    val readyAnchors: Set<String> = setOf(BadgeAnchors.BADGE_SHARE_ENTRY)
 
     /**
      * 就绪之后**最少**再等多久（ms）：防动效末尾那一下仍在换图（空槽判定误读的窗口）。

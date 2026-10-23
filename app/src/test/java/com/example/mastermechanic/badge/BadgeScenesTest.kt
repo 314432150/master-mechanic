@@ -157,13 +157,10 @@ class BadgeScenesTest {
 
     @Test
     fun neededAnchorsForJudgmentStepsAreExactlyTheirCriteria() {
+        // 就绪锚点跟着 readyAnchors 走（2026-10-23 起只含「分享立牌」：当日已提交时「获取立牌」不显示）
         val branch = BadgeScenes.neededAnchors(BadgeFlow.Step.DECIDE_BRANCH, UiState.ACTIVITY_CENTER)
         assertEquals(
-            setOf(
-                BadgeAnchors.BADGE_CLAIM_ENTRY,
-                BadgeAnchors.BADGE_SHARE_ENTRY,
-                BadgeAnchors.BADGE_EMPTY_SLOT,
-            ),
+            BadgeScenes.readyAnchors + BadgeAnchors.BADGE_EMPTY_SLOT,
             branch,
         )
         // 画面不是判定步所在的那一屏 ⇒ 一条都不定位（编排器本来也不会在那儿动手）
@@ -258,14 +255,17 @@ class BadgeScenesTest {
         assertEquals("产物齐全时不许报缺口：$none", emptyList<String>(), none)
     }
 
+    /**
+     * 就绪判据只看「分享立牌」（2026-10-23 用户纠正）。
+     *
+     * 依据：当日立牌**已提交**时「获取立牌」按钮**不显示** ⇒ 拿它当准入门会永远不就绪
+     * （真机就是这样卡在第 1 步、10 秒后被踢回大厅再中止）。
+     */
     @Test
-    fun activityIsReadyOnlyWhenBothEntriesAreLocated() {
+    fun activityIsReadyAsSoonAsTheShareEntryIsLocated() {
+        assertTrue(BadgeScenes.activityReady(setOf(BadgeAnchors.BADGE_SHARE_ENTRY)))
+        // 只有「获取立牌」不算就绪：那个按钮可能本来就不在，不能反推页面已可交互
         assertFalse(BadgeScenes.activityReady(setOf(BadgeAnchors.BADGE_CLAIM_ENTRY)))
-        assertFalse(BadgeScenes.activityReady(setOf(BadgeAnchors.BADGE_SHARE_ENTRY)))
-        assertTrue(
-            BadgeScenes.activityReady(
-                setOf(BadgeAnchors.BADGE_CLAIM_ENTRY, BadgeAnchors.BADGE_SHARE_ENTRY),
-            ),
-        )
+        assertFalse(BadgeScenes.activityReady(emptySet()))
     }
 }
