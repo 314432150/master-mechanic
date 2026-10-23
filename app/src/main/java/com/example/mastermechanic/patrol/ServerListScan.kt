@@ -208,6 +208,16 @@ class ServerListScan(
     private var awaitingSinceMs = 0L
 
     /**
+     * **连续几次"提议了滑动、回告一直没来"**（[OUTCOME_PENDING_TIMEOUT_MS] 兜底撤回的次数）。
+     *
+     * 2026-10-22 真机事故：调用方的滑动下发**漏了回告**（`onScrollDispatched` 没被调）⇒ 每一轮都是
+     * "提议 → 等 5 秒超时 → 撤回 → 再提议同一件事"：列表本来就在顶部，却一直"向上滚"，永远没有结束判定。
+     * ⇒ 兜底撤离也有上限：连续 [MAX_MISSING_OUTCOMES] 次都没等到回告 ⇒ **如实停下**
+     * （别把接线 bug 变成无限循环）。2026-10-23 从立牌分支带过来（这条护栏与业务无关，巡查同样受益）。
+     */
+    private var missingOutcomeStreak = 0
+
+    /**
      * **上一次提议的滑动到底有没有真下发**（[onScrollDispatched] 置真；[onScrollRejected] / 撤回 / 新提议置假）。
      *
      * 用途只有一个：**"画面没动"这句话只有在"我们真的滑过"之后才有意义**。
@@ -311,7 +321,21 @@ class ServerListScan(
             // "等回告" ⇒ 扫描**再也不提议任何滑动**（真机表现：OCR 每 1.2 秒读一次，但一次都不滑，
             // 用户原话"这次根本就没滑屏"）。⇒ 等够 [OUTCOME_PENDING_TIMEOUT_MS] 就原样撤回、重新提议，
             // 宁可多发一次滑动，也不要卡死不动。
-            lastDecisionNote = "上一次滑动的回告 ${pendingMs}ms 没来 ⇒ 当作被拒，撤回这一步重新提议"
+            //
+            // ⚠ 但**只能自愈有限次**（2026-10-22 真机）：漏回告照样是个 bug。若每一轮都超时撤回、
+            // 再提议同一件事，进度就永远停在原地（用户看到的是"一直向上滚、没有结束判定"）
+            // ⇒ 连续 [MAX_MISSING_OUTCOMES] 次就**如实停下**，把"没人回告"这件事报出来。
+            missingOutcomeStreak++
+            if (missingOutcomeStreak >= MAX_MISSING_OUTCOMES) {
+                lastProposalScrolled = false
+                lastDecisionNote = "连续 $missingOutcomeStreak 次提议滑动都没等到回告"
+                return Step.GiveUp(
+                    "连续 $missingOutcomeStreak 次提议滚动列表都没收到回告（既没下发、也没被拒）⇒ 停下，" +
+                        "避免原地空转；这不是找不到$targetNoun，而是滚动这条通路出了故障，请把日志发给开发者",
+                )
+            }
+            lastDecisionNote = "上一次滑动的回告 ${pendingMs}ms 没来 ⇒ 当作被拒，撤回这一步重新提议" +
+                "（第 $missingOutcomeStreak/${MAX_MISSING_OUTCOMES} 次）"
             rollbackProposal()
         }
         if (lastScrollAtMs > 0L && nowMs - lastScrollAtMs < settleMs) {
@@ -501,6 +525,8 @@ class ServerListScan(
     fun onScrollDispatched(nowMs: Long) {
         awaitingOutcome = false
         awaitingSinceMs = 0L
+        // 回告到了 ⇒ 这条通路是好的（清零"没回告"的连续计数）
+        missingOutcomeStreak = 0
         lastProposalDispatched = true
         lastScrollAtMs = nowMs
         clearHit() // 列表马上要动：上一轮那点坐标作废
@@ -762,6 +788,15 @@ class ServerListScan(
          * 误判到底会直接说"找不到"）。
          */
         const val EDGE_PROBE_MAX = 2
+
+        /**
+         * 连续几次"提议了滑动、回告一直没来"就**如实停下**（2026-10-22 真机）。
+         *
+         * 若调用方**每一次**都漏了回告，进度就永远停在原地 —— 真机表现是"目标在第二屏，却一直向上滚、
+         * 没有结束判定"（当时是立牌换号段的下发函数漏了 `onScrollDispatched`）。
+         * 一次是偶发、两次还可疑、三次就**停下**：把"滚动通路故障"报出来，而不是空转到超时。
+         */
+        const val MAX_MISSING_OUTCOMES = 3
 
         /**
          * 判"这一屏与上一屏是同一屏"所需的**最少行键数**（取 3，2026-10-01 加）。
