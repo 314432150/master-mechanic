@@ -512,6 +512,15 @@ class CaptureService : Service() {
     /** 上一次"新读"之后是否下发过滑动（只测量用：没有滑动就不必量位移）。仅帧线程访问。 */
     private var serverScrollSinceRead = false
 
+    /**
+     * 上一次为"这一屏没有目标"真正下决定（回顶 / 下滑 / 放弃）的时刻（2026-10-23）。
+     *
+     * 为什么要单独的节拍：`readNames` 现在会在**像素没变**时直接复用上一轮结果（`unchanged=true`），
+     * 静态画面每轮都会返回一次 ⇒ 决策若跟着帧率跑就会对着还没滑完的列表连发几枪。
+     * 恢复成 ≈1 秒一拍（[NAME_MISS_DECIDE_MS]），滑动才有时间生效。仅帧线程访问。
+     */
+    private var lastNameMissAtMs = 0L
+
     // ⚠ **第 9 步曾经有一套"逐屏滑屏找人"**（[ServerListScan] 的第二个实例 `friendScan`、三个好友专属
     //   调参常量 `FRIEND_SCROLL_EDGE_RATIO` / `FRIEND_SCROLL_DRAG_MS` / `FRIEND_SETTLE_MS`、
     //   以及滑动回告的路由分支）—— **2026-10-01 按用户口径整套删除**：
@@ -2687,6 +2696,8 @@ class CaptureService : Service() {
             lastServerScanNote = null
             lastServerRowYs = null
             serverScrollSinceRead = false
+            // 决策节拍跟着这一屏一起复位：下次进这一步的第一拍不该被上一步的闸门挡住
+            lastNameMissAtMs = 0L
         }
         // 第 9 步的跨屏扫描状态：同样只在"正在这一步 + 画面确实是好友列表"时有效
         //（离开列表 / 点完拜访 / 换一步 ⇒ 复位；下次进列表重新从"当前这一屏"开始，再按口径回顶）
@@ -2945,9 +2956,16 @@ class CaptureService : Service() {
             }
 
             // 复用结果不下结论：重试要花在**新的识别结果**上
-            is RealmPickDecision.Result.Miss -> if (!reading.fresh) {
+            is RealmPickDecision.Result.Miss -> if (!reading.fresh && !reading.unchanged) {
+                PatrolRunner.NamePlan.Waiting
+            } else if (SystemClock.elapsedRealtime() - lastNameMissAtMs < NAME_MISS_DECIDE_MS) {
+                // ⚠ **决定节奏不能跟着帧率跑**（2026-10-23 真机 bug）：换成"像素没变就复用"之后，
+                // 静态画面每轮都会拿到 `unchanged=true` —— 若不加这道闸，就会对着**还没滑完**的列表
+                // 连发好几枪（或者相反：`fresh=false` 把 Miss 直接吞掉 ⇒ 再也不滑屏，用户报的那个 bug）。
+                // 这里恢复原来的决策节奏（≈1 秒一拍），滑动有足够时间生效。
                 PatrolRunner.NamePlan.Waiting
             } else {
+                lastNameMissAtMs = SystemClock.elapsedRealtime()
                 // **这一屏没有 ⇒ 问扫描器：回顶 / 继续往下 / 到底了就停下**（2026-09-29，硬性要求 #4）。
                 // 注意：**不**在这里报 Failed —— 那会走 `PatrolFlow.fail` 计重试，3 屏就把这一步耗成中止；
                 // 真正的"找不到"由 [ServerListScan] 在"滑动后画面不再动"或超上限时给出。
@@ -5778,6 +5796,14 @@ class CaptureService : Service() {
          * `滑动下发｜…屏幕点: (x, y) -> (x2, y2)` 与滑完那一屏读到的行，照它调即可。
          */
         private const val SCROLL_EDGE_RATIO = 0.25
+
+        /**
+         * "这一屏没有目标"的**决策节拍**（ms，2026-10-23）：回顶 / 下滑 / 放弃 至多这么久一次。
+         *
+         * 取值与 [OCR_MIN_INTERVAL_MS] 同源（原来是 1 秒节流顺带形成的节奏）：滑动手势本身要 300ms，
+         * 加上落位，800ms 刚好"一枪打完再看结果"，既不连发也不拖慢。
+         */
+        private const val NAME_MISS_DECIDE_MS = 800L
 
         /** 一次列表拖动的手势时长（ms），见 [SCROLL_EDGE_RATIO]。 */
         private const val SCROLL_DRAG_MS = 300L
