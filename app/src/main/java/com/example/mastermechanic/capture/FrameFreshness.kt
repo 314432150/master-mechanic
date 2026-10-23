@@ -109,6 +109,10 @@ object FrameFreshness {
     @Volatile
     private var starved = false
 
+    /** 投喂通路已彻底断掉（见 [noteFeedDead]）；收到新帧 / 换会话即复位。 */
+    @Volatile
+    private var feedDead = false
+
     /**
      * 收到一帧**新帧**时调用（采集层）。
      *
@@ -118,6 +122,7 @@ object FrameFreshness {
     fun note() {
         lastNewFrameAtMs = SystemClock.elapsedRealtime()
         starved = false
+        feedDead = false
         // 帧来了 ⇒ "切出切回"那条事件证据不再有用（停更线回到 60 秒那条常规口径）
         flowingBeforeLeave = false
     }
@@ -147,6 +152,7 @@ object FrameFreshness {
     fun noteSessionStart() {
         lastNewFrameAtMs = 0L
         starved = false
+        feedDead = false
         flowingBeforeLeave = false
     }
 
@@ -159,6 +165,7 @@ object FrameFreshness {
     fun reset() {
         lastNewFrameAtMs = 0L
         starved = false
+        feedDead = false
         flowingBeforeLeave = false
     }
 
@@ -193,4 +200,17 @@ object FrameFreshness {
      * - 本判据：**从头到尾零帧** ⇒ 平台没投喂（`onImageAvailable` 回调 0 次）⇒ 直接说清并叫用户换进程重开。
      */
     fun isStarved(): Boolean = starved
+
+    /**
+     * **投喂通路已彻底断掉**（2026-10-23）：中途断流 + 换镜像表面自救用尽 + 平台**零回调**。
+     *
+     * 与 [isStarved] 的区别：那个是"这次授权**从头**就没被投喂"；这个是"跑着跑着被掐断、救不回来"。
+     * 处置是**同一个**（换进程重开 App —— 同进程重新授权在这台机器上只能撑 1~14 秒），
+     * 但说法必须不同：此时帧龄是有的，说"8 秒一帧都没收到"就是假话。
+     */
+    fun noteFeedDead() {
+        feedDead = true
+    }
+
+    fun isFeedDead(): Boolean = feedDead
 }
