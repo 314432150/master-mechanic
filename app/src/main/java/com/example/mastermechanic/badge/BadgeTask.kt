@@ -29,19 +29,23 @@ object BadgeTask {
      *
      * 为什么不再看"今天已收集过"：那个标记是**一天一次**的布尔值，14 个区服跑完就全打上了
      * ⇒ 中途停止再发起时它说不清"上一轮跑到哪了"（2026-10-23 真机：收完 2 个再发起又从第 1 个开始）。
-     * 也不用"刚跑完 10 秒内忽略"这种时间猜测（**用户口径：去掉它，用显式标记说清**）：
-     * 上一轮结束 ⇒ 从第 1 个开始；上一轮没结束 ⇒ 从它停下的那个区服接着收。
+     * 也不用"刚跑完 10 秒内忽略"这种时间猜测（**用户口径：去掉它，用显式标记说清**）。
+     *
+     * ⚠ **记的是"本轮已收过哪些"，不是"下一个是谁"**（2026-10-23 用户报障后改）：
+     * 只记一个游标就得靠"轮换队列"把它转到队首，于是清单里**排在它前面的区服**会被排到这一轮最后 ——
+     * 用户看到的是"已经收完的「发条权杖」又跑了一遍"，像从头开始、永远跑不完。
+     * 改成记已收集集合：续跑 = **清单原顺序 + 跳过本轮已收的**，一轮严格单调向前，跑完即止。
      */
     enum class RoundState {
-        /** 本轮还没跑完（含"中途停止 / 中止"）：再发起就接着收。 */
+        /** 本轮还没跑完（含"中途停止 / 中止"）：再发起就接着收没跑过的。 */
         RUNNING,
 
         /** 本轮已跑完最后一个区服：再发起就是全新一轮。 */
         DONE,
     }
 
-    /** 盘上的一轮状态：[server] 只在 [RoundState.RUNNING] 时有值（= 下一个该收的区服）。 */
-    data class RoundMarker(val state: RoundState, val server: String? = null)
+    /** 盘上的一轮状态：[done] 只在 [RoundState.RUNNING] 时有意义（= 本轮**已经收过**的区服）。 */
+    data class RoundMarker(val state: RoundState, val done: Set<String> = emptySet())
 
     /** 启动结论：失败时 [reason] 是给人看的一句话（菜单/日志直接显示，不静默）。 */
     data class StartResult(val started: Boolean, val reason: String? = null)
@@ -78,22 +82,27 @@ object BadgeTask {
         }
         if (pruned > 0) MmLog.i(TAG, "清掉今天之前的过期立牌数据：$pruned 条")
 
-        // **这一轮从哪个区服开始**（2026-10-23 用户口径）：
-        // - 上一轮还没结束（标记 RUNNING）⇒ 从它停下的那个区服接着收（集合不变，只换起点）；
-        // - 上一轮已结束 / 今天还没跑过（DONE / 无标记）⇒ **从第 1 个开始**，开新的一轮。
+        // **这一轮要收哪些**（2026-10-23 用户口径）：清单原顺序，**跳过本轮已经收过的**。
+        // - 上一轮还没结束（RUNNING）⇒ 只收没跑过的（严格单调向前，不会回头重收）；
+        // - 上一轮已结束 / 今天还没跑过（DONE / 无标记）⇒ 全新一轮，清单全部。
         val marker = loadMarker(context, today)
         val resuming = marker?.state == RoundState.RUNNING
-        val cursor = marker?.server
-        val queue = if (resuming && cursor != null && cursor in names) {
-            MmLog.i(TAG, "上一轮还没结束（停在「$cursor」）⇒ 从它接着收")
-            BadgeSession.rotateTo(names, cursor)
-        } else {
-            if (resuming) {
-                MmLog.w(TAG, "上一轮标记为进行中，但记的目标「${cursor ?: "空"}」不在清单里 ⇒ 从第 1 个重新开始")
-            } else {
-                MmLog.i(TAG, "上一轮已结束（或今天还没跑过）⇒ 从第 1 个区服「${names.first()}」开始")
-            }
-            names
+        val done = if (resuming) marker!!.done else emptySet()
+        val remaining = names.filterNot { it in done }
+        val freshRound = !resuming || remaining.isEmpty()
+        val queue = if (remaining.isEmpty()) names else remaining
+        when {
+            freshRound && done.isNotEmpty() ->
+                MmLog.w(TAG, "上一轮记着 ${done.size} 个区服、清单里一个不剩（结束标记没写成）⇒ 按新的一轮从第 1 个开始")
+
+            freshRound ->
+                MmLog.i(TAG, "上一轮已结束（或今天还没跑过）⇒ 新的一轮，从第 1 个区服「${names.first()}」开始")
+
+            else -> MmLog.i(
+                TAG,
+                "上一轮还没结束：已收 ${done.size} 个、还剩 ${remaining.size} 个 ⇒ 从「${remaining.first()}」接着收" +
+                    "（不会回头重收已收过的）",
+            )
         }
         if (switch == null) {
             return StartResult(false, "现在这个画面起步不了（要先回到大厅 / 农场 / 启动页）")
@@ -104,13 +113,14 @@ object BadgeTask {
             return StartResult(false, "立牌收集已经在跑了")
         }
         // `fullRound`：**新开一轮**时才允许"人在哪个区服就从哪里开始"（见 `continueFrom`）；
-        // 续跑那一轮已经按游标轮换过了，再按当前区服轮换会跳过中间没跑的区服。
-        BadgeSession.start(queue, switch, nowMs, fullRound = !resuming)
-        // **本轮进行中标记**：从这一刻起，没跑完之前再发起都会接着跑（而不是从第 1 个重来）。
-        saveRunning(context, queue.first(), today)
+        // 续跑那一轮不该轮换（否则会把"还没收的"绕到后面去）。
+        BadgeSession.start(queue, switch, nowMs, fullRound = freshRound, roundDone = if (freshRound) emptySet() else done)
+        // **本轮进行中标记**：从这一刻起，没跑完之前再发起都会接着收没跑过的（而不是从第 1 个重来）。
+        saveRunning(context, if (freshRound) emptySet() else done, today)
         MmLog.i(
             TAG,
-            "立牌任务：清单 ${names.size} 个区服，本轮从「${queue.first()}」开始（${if (resuming) "续上一轮" else "新的一轮"}）",
+            "立牌任务：清单 ${names.size} 个区服，本轮要收 ${queue.size} 个（从「${queue.first()}」开始，" +
+                "${if (freshRound) "新的一轮" else "续上一轮"}）",
         )
         return StartResult(true)
     }
@@ -168,13 +178,13 @@ object BadgeTask {
             null
         }
 
-    /** 标记「本轮进行中」，并记下**下一个该收的区服**（中途停止 / 中止后据此续跑）。 */
-    fun saveRunning(context: Context, server: String, today: LocalDate = LocalDate.now()) =
-        writeMarker(context, formatMarker(today, RoundState.RUNNING, server))
+    /** 标记「本轮进行中」，并记下**本轮已经收过的区服**（中途停止 / 中止后据此续跑、且不回头重收）。 */
+    fun saveRunning(context: Context, done: Set<String>, today: LocalDate = LocalDate.now()) =
+        writeMarker(context, formatMarker(today, RoundState.RUNNING, done))
 
     /** 标记「本轮结束」（最后一个区服已收完）：下次点「收集立牌」就是全新一轮。 */
     fun saveDone(context: Context, today: LocalDate = LocalDate.now()) =
-        writeMarker(context, formatMarker(today, RoundState.DONE, null))
+        writeMarker(context, formatMarker(today, RoundState.DONE, emptySet()))
 
     private fun writeMarker(context: Context, text: String) {
         try {
@@ -186,25 +196,32 @@ object BadgeTask {
         }
     }
 
-    /** 标记序列化：`日期|RUNNING/DONE|区服名`（纯逻辑，便于单测）。 */
-    internal fun formatMarker(today: LocalDate, state: RoundState, server: String?): String =
-        "$today|${state.name}|${server.orEmpty()}"
+    /** 标记序列化：`日期|RUNNING/DONE|已收1,已收2,…`（纯逻辑，便于单测）。 */
+    internal fun formatMarker(today: LocalDate, state: RoundState, done: Set<String>): String =
+        "$today|${state.name}|${done.joinToString(",")}"
 
     /**
      * 标记解析（纯逻辑，便于单测）：
      * - 日期不是今天 ⇒ null（隔天的标记没有意义）；
-     * - 兼容 2026-10-23 早些时候的旧格式 `日期|区服名`（那时它只是"续跑游标"）⇒ 按**进行中**读。
+     * - 旧格式 `日期|区服名`（2026-10-23 早些时候那个"游标"）⇒ **当成已结束**：
+     *   它只记了"下一个是谁"，说不出哪些已经收过 ⇒ 宁可干净地重跑一轮，也不要凭猜测跳过。
      */
     internal fun parseMarker(text: String, today: LocalDate): RoundMarker? {
         val parts = text.trim().split('|')
         if (parts.size < 2 || parts[0] != today.toString()) return null
         return when (parts[1]) {
-            RoundState.RUNNING.name ->
-                RoundMarker(RoundState.RUNNING, parts.getOrNull(2)?.trim()?.ifBlank { null })
+            RoundState.RUNNING.name -> RoundMarker(
+                RoundState.RUNNING,
+                parts.getOrNull(2).orEmpty()
+                    .split(',')
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .toSet(),
+            )
 
             RoundState.DONE.name -> RoundMarker(RoundState.DONE)
 
-            else -> parts[1].trim().ifBlank { null }?.let { RoundMarker(RoundState.RUNNING, it) }
+            else -> RoundMarker(RoundState.DONE)
         }
     }
 

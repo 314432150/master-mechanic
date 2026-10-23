@@ -4001,12 +4001,13 @@ class CaptureService : Service() {
             // **轮次标记**（2026-10-23 用户口径）：收完一个区服就把"下一个目标"写进盘上的进行中标记 ——
             // 用户可能在换下一个的重登中途强制停止，再发起时据此续跑（而不是从清单第一个重来）。
             // 最后一个区服收完 ⇒ 写「本轮结束」：下次点「收集立牌」就是全新一轮，从第 1 个开始。
+            // 记的是「本轮已经收过哪些」：续跑时按清单顺序跳过它们，一轮严格单调向前，
+            // 不会出现"跑到最后又回头重收第 1 个"（2026-10-23 用户报障）。
             val after = BadgeSession.current
-            val next = after?.current ?: server
             if (after != null && after.finished) {
                 BadgeTask.saveDone(this)
-            } else if (next != null) {
-                BadgeTask.saveRunning(this, next)
+            } else if (after != null) {
+                BadgeTask.saveRunning(this, after.roundDone)
             }
             logBadgeNote(BadgeSession.lastNote)
             return

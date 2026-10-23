@@ -78,6 +78,11 @@ object BadgeSession {
          */
         val fullRound: Boolean = false,
         /**
+         * **本轮已经收过的区服**（2026-10-23 用户口径）：续跑时据此跳过，保证一轮严格单调向前、
+         * 不会"跑到最后又回头重收第 1 个"。与盘上的 `BadgeTask.RoundMarker.done` 同步。
+         */
+        val roundDone: Set<String> = emptySet(),
+        /**
          * 「是不是已经在该区服」**判过了**（2026-10-23）。
          *
          * 一次任务只判一次：判完（无论结论）就置真，免得帧线程每轮都去 OCR 昵称。
@@ -176,7 +181,13 @@ object BadgeSession {
      * @param queue 本次要跑的区服名（**已按清单顺序、已剔除今日收集过的**，见 [BadgeTask]）
      * @param switch 换号段的起始进度（`PatrolFlow.start(scene, SWITCH_ONLY)`）
      */
-    fun start(queue: List<String>, switch: PatrolFlow.State, nowMs: Long, fullRound: Boolean = false): Task {
+    fun start(
+        queue: List<String>,
+        switch: PatrolFlow.State,
+        nowMs: Long,
+        fullRound: Boolean = false,
+        roundDone: Set<String> = emptySet(),
+    ): Task {
         lastClickAtMs = 0L
         endedAtMs = 0L
         cardsRead = emptySet()
@@ -187,6 +198,7 @@ object BadgeSession {
             queue = queue,
             current = queue.firstOrNull(),
             fullRound = fullRound,
+            roundDone = roundDone,
         )
         // 先写 state 再递增代次（帧线程"先读代次、后读 state"，同 `PatrolSession.start`）
         state = task
@@ -295,12 +307,15 @@ object BadgeSession {
         roundRecords = emptyList()
         val rest = task.queue.drop(1)
         val done = task.done + 1
+        // **本轮已收集合**：续跑时据此跳过（盘上标记也用它）
+        val roundDone = task.roundDone + listOfNotNull(task.current)
         if (rest.isEmpty()) {
             val next = task.copy(
                 phase = Phase.COLLECT,
                 collect = null,
                 queue = emptyList(),
                 done = done,
+                roundDone = roundDone,
                 outcome = Outcome.FINISHED,
             )
             state = next
@@ -308,7 +323,8 @@ object BadgeSession {
             lastNote = "立牌收集完成：共 $done 个区服"
             MmLog.i(
                 TAG,
-                "立牌任务完成：共 $done 个区服" + if (marked) "" else "（⚠ 收集标记没写成功，重跑会重复收集）",
+                "立牌任务完成：共 $done 个区服（本轮结束，不会再自动重跑）" +
+                    if (marked) "" else "（⚠ 收集标记没写成功，重跑会重复收集）",
             )
             return next
         }
@@ -336,6 +352,7 @@ object BadgeSession {
             queue = rest,
             current = target,
             done = done,
+            roundDone = roundDone,
         )
         state = next
         lastClickAtMs = 0L

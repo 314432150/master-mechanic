@@ -2,17 +2,19 @@ package com.example.mastermechanic.badge
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
 
 /**
- * [BadgeTask]（临时需求 temp/badge-share-1021）：**这一轮从哪开始**的纯逻辑口径。
+ * [BadgeTask]（临时需求 temp/badge-share-1021）：**这一轮要收哪些**的纯逻辑口径。
  *
- * 2026-10-23 用户口径：不再看"今天已收集过"（一天一次的布尔值说不清跑到第几个），
- * 改成盘上的一轮标记 ——
- * - 上一轮**没结束**（RUNNING）⇒ 从它停下的区服接着收；
- * - 上一轮**已结束**（DONE / 没标记）⇒ 从清单第 1 个开始。
- * 这样也就不需要"刚跑完 10 秒内忽略"的时间猜测了。
+ * 2026-10-23 用户口径（两次报障后定稿）：
+ * 1. 不再看"今天已收集过"（一天一次的布尔值说不清跑到第几个）；
+ * 2. 也不用"刚跑完 10 秒内忽略"的时间猜测；
+ * 3. 盘上记的是**本轮已经收过的区服集合**，续跑 = 清单原顺序 + 跳过它们 ——
+ *    不能只记"下一个是谁"再靠轮换队列把它转到队首：那样清单里排在前面的区服会被排到这一轮最后，
+ *    用户看到的是"已经收完的第 1 个又跑了一遍"（第三次报障的直接原因）。
  */
 class BadgeTaskTest {
 
@@ -23,66 +25,65 @@ class BadgeTaskTest {
     // ---------------------------------------------------------------- 轮次标记的文本形式
 
     @Test
-    fun runningMarkerCarriesTheNextServer() {
-        val text = BadgeTask.formatMarker(today, BadgeTask.RoundState.RUNNING, "云归处")
-        assertEquals("2026-10-23|RUNNING|云归处", text)
+    fun runningMarkerCarriesTheServersAlreadyCollectedInThisRound() {
+        val text = BadgeTask.formatMarker(today, BadgeTask.RoundState.RUNNING, setOf("星月晚", "云归处"))
+        assertEquals("2026-10-23|RUNNING|星月晚,云归处", text)
         assertEquals(
-            BadgeTask.RoundMarker(BadgeTask.RoundState.RUNNING, "云归处"),
+            BadgeTask.RoundMarker(BadgeTask.RoundState.RUNNING, setOf("星月晚", "云归处")),
             BadgeTask.parseMarker(text, today),
         )
     }
 
     @Test
-    fun doneMarkerCarriesNoServer() {
-        val text = BadgeTask.formatMarker(today, BadgeTask.RoundState.DONE, null)
+    fun doneMarkerCarriesNoServers() {
+        val text = BadgeTask.formatMarker(today, BadgeTask.RoundState.DONE, emptySet())
         assertEquals("2026-10-23|DONE|", text)
-        assertEquals(
-            BadgeTask.RoundMarker(BadgeTask.RoundState.DONE, null),
-            BadgeTask.parseMarker(text, today),
-        )
+        assertEquals(BadgeTask.RoundMarker(BadgeTask.RoundState.DONE), BadgeTask.parseMarker(text, today))
     }
 
     @Test
     fun markerFromAnotherDayIsIgnored() {
         // 隔天的标记没有意义：今天该从清单第 1 个开始
-        assertNull(BadgeTask.parseMarker("2026-10-22|RUNNING|云归处", today))
+        assertNull(BadgeTask.parseMarker("2026-10-22|RUNNING|星月晚", today))
     }
 
     @Test
     fun malformedMarkerIsIgnored() {
         assertNull(BadgeTask.parseMarker("", today))
-        assertNull(BadgeTask.parseMarker("云归处", today))
+        assertNull(BadgeTask.parseMarker("星月晚", today))
     }
 
     @Test
-    fun oldCursorFormatStillReadsAsRunning() {
-        // 兼容 2026-10-23 早些时候的旧格式 `日期|区服名`（那时只当续跑游标）：按"进行中"读，别丢进度
+    fun oldCursorFormatIsTreatedAsFinished() {
+        // 旧格式 `日期|区服名` 只记了"下一个是谁"，说不出哪些已经收过 ⇒ 宁可干净地重跑一轮
         assertEquals(
-            BadgeTask.RoundMarker(BadgeTask.RoundState.RUNNING, "云归处"),
+            BadgeTask.RoundMarker(BadgeTask.RoundState.DONE),
             BadgeTask.parseMarker("2026-10-23|云归处", today),
         )
     }
 
-    // ---------------------------------------------------------------- 队列起点
+    // ---------------------------------------------------------------- 续跑的队列
 
     @Test
-    fun resumingRotatesTheQueueToTheRecordedServerWithoutLosingAnyone() {
+    fun resumingKeepsListOrderAndSkipsWhatThisRoundAlreadyCollected() {
+        // 关键回归（2026-10-23 第三次报障）：已收「星月晚」⇒ 续跑只跑「云归处、雾隐山」，
+        // **不轮换**（轮换会把「星月晚」绕到最后，看起来像从头开始、永远跑不完）
         val marker = BadgeTask.parseMarker(
-            BadgeTask.formatMarker(today, BadgeTask.RoundState.RUNNING, "云归处"),
+            BadgeTask.formatMarker(today, BadgeTask.RoundState.RUNNING, setOf("星月晚")),
             today,
-        )
-        assertEquals(listOf("云归处", "雾隐山", "星月晚"), BadgeSession.rotateTo(names, marker!!.server!!))
+        )!!
+        val remaining = names.filterNot { it in marker.done }
+        assertEquals(listOf("云归处", "雾隐山"), remaining)
+        assertEquals("列表第 1 个不该被绕到后面", "云归处", remaining.first())
     }
 
     @Test
-    fun finishedRoundLeavesTheListOrderAlone() {
-        // DONE ⇒ 不做任何轮换（起点 = 清单第 1 个）。这里钉住"轮换只由 RUNNING 触发"这条边界：
-        // DONE 标记 parse 出来不能带区服名，否则调用方会误以为还要轮换。
+    fun everythingCollectedMeansTheRoundIsOver() {
+        // 本轮 14 个全收完 ⇒ 剩余为空 ⇒ 一轮结束（写 DONE 后下次才从第 1 个重新开始）
         val marker = BadgeTask.parseMarker(
-            BadgeTask.formatMarker(today, BadgeTask.RoundState.DONE, "云归处"),
+            BadgeTask.formatMarker(today, BadgeTask.RoundState.RUNNING, names.toSet()),
             today,
-        )
-        assertEquals(BadgeTask.RoundState.DONE, marker!!.state)
-        assertNull("DONE 标记不该带区服名（带了也不读）", marker.server)
+        )!!
+        assertTrue(names.filterNot { it in marker.done }.isEmpty())
     }
 }
