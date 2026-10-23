@@ -64,4 +64,37 @@ class BadgeTaskTest {
     fun emptyListStillRerunsNothing() {
         assertEquals(emptyList<String>(), BadgeTask.runQueueOf(ServerList.EMPTY, pending = emptyList()))
     }
+
+    // ---------------------------------------------------------------- 续跑游标
+
+    private val today = java.time.LocalDate.of(2026, 10, 23)
+
+    @Test
+    fun cursorRoundTripsThroughItsOwnTextForm() {
+        val text = BadgeTask.formatCursor(today, "云归处")
+        assertEquals("2026-10-23|云归处", text)
+        assertEquals("云归处", BadgeTask.parseCursor(text, today))
+    }
+
+    @Test
+    fun cursorFromAnotherDayIsIgnored() {
+        // 隔天的游标没有意义：那是上一轮的进度，今天该从清单第一个开始
+        assertEquals(null, BadgeTask.parseCursor("2026-10-22|云归处", today))
+    }
+
+    @Test
+    fun malformedCursorIsIgnored() {
+        assertEquals(null, BadgeTask.parseCursor("", today))
+        assertEquals(null, BadgeTask.parseCursor("云归处", today))
+        assertEquals(null, BadgeTask.parseCursor("2026-10-23|", today))
+    }
+
+    @Test
+    fun resumingFromTheCursorRotatesTheQueueWithoutLosingAnyone() {
+        // 2026-10-23 用户报障：收完第 1 个区服、在换第 2 个的重登中途强制停止 ⇒ 再发起要从第 2 个开始，
+        // 而不是从清单第一个。实现 = 用 `BadgeSession.rotateTo` 把游标转到队首（集合不变）。
+        val queue = listOf("星月晚", "云归处", "雾隐山")
+        val cursor = BadgeTask.parseCursor(BadgeTask.formatCursor(today, "云归处"), today)
+        assertEquals(listOf("云归处", "雾隐山", "星月晚"), BadgeSession.rotateTo(queue, cursor!!))
+    }
 }

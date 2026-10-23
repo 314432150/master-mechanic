@@ -5,6 +5,7 @@ import com.example.mastermechanic.log.MmLog
 import com.example.mastermechanic.patrol.PatrolFlow
 import com.example.mastermechanic.servers.ServerList
 import com.example.mastermechanic.servers.ServerListStore
+import java.io.File
 import java.time.LocalDate
 
 /**
@@ -98,9 +99,19 @@ object BadgeTask {
                 return StartResult(false, "刚跑完一整轮，稍等几秒再点")
             }
         }
-        val queue = runQueueOf(list, pending)
+        val planned = runQueueOf(list, pending)
         if (pending.isEmpty()) {
-            MmLog.i(TAG, "今天全部区服都已收集 ⇒ 按整轮重跑（${queue.size} 个区服）")
+            MmLog.i(TAG, "今天全部区服都已收集 ⇒ 按整轮重跑（${planned.size} 个区服）")
+        }
+        // **整轮重跑要接着上次的位置**（2026-10-23 用户报障：收完一个区服、在换下一个的重登中途强制停止，
+        // 再发起时又从清单第一个开始）。"全部已收集"时 `pending` 是空的，没有任何东西记得这一轮跑到哪，
+        // 所以单独存一个游标（`round.txt`）。有未收集区服时不需要它 —— `pending` 本身就是续跑信息。
+        val cursor = if (pending.isEmpty()) loadCursor(context, today) else null
+        val queue = if (cursor != null && cursor in planned) {
+            MmLog.i(TAG, "上次这一轮停在「$cursor」⇒ 从它接着收，不从头开始")
+            BadgeSession.rotateTo(planned, cursor)
+        } else {
+            planned
         }
         if (switch == null) {
             return StartResult(false, "现在这个画面起步不了（要先回到大厅 / 农场 / 启动页）")
@@ -112,6 +123,8 @@ object BadgeTask {
         }
         // `fullRound` 由队列规划给出：整轮重跑时才允许"人在哪个区服就从哪里开始"（见 `continueFrom`）
         BadgeSession.start(queue, switch, nowMs, fullRound = pending.isEmpty())
+        // 记下游标：这一轮当前的目标区服（中途停止后再发起就从它开始）
+        saveCursor(context, queue.firstOrNull(), today)
         MmLog.i(
             TAG,
             "立牌任务：清单 ${list.size} 个区服，今天要跑 ${queue.size} 个（跳过 ${list.size - queue.size} 个已收集）",
@@ -150,6 +163,53 @@ object BadgeTask {
             MmLog.w(TAG, "清「$serverName」的旧立牌数据没成功（池子里会留着旧记录）：${e.message}")
             -1
         }
+
+    // ---------------------------------------------------------------- 整轮重跑的续跑游标
+
+    /**
+     * 游标文件名（与 `records.txt` 同目录，**单独一个文件**：不碰既有格式，删了也只是"从头跑"）。
+     *
+     * 内容 = `日期|区服名`，只回答一件事：**这一天这一轮，下一个该收哪个区服**。
+     */
+    private const val CURSOR_FILE = "round.txt"
+
+    fun cursorFile(context: Context): File = File(BadgeStore.recordsFile(context).parentFile, CURSOR_FILE)
+
+    /** 读今天的游标（没有 / 隔天的 ⇒ null）。 */
+    fun loadCursor(context: Context, today: LocalDate = LocalDate.now()): String? =
+        try {
+            val file = cursorFile(context)
+            if (!file.isFile) null else parseCursor(file.readText(Charsets.UTF_8), today)
+        } catch (e: Exception) {
+            MmLog.w(TAG, "续跑游标读不了（当作没有，从头跑）：${e.message}")
+            null
+        }
+
+    /** 写 / 清游标：[server] 为空 ⇒ 删掉（整轮已跑完，下次是全新一轮）。 */
+    fun saveCursor(context: Context, server: String?, today: LocalDate = LocalDate.now()) {
+        val file = cursorFile(context)
+        try {
+            if (server.isNullOrBlank()) {
+                if (file.exists()) file.delete()
+            } else {
+                file.parentFile?.mkdirs()
+                file.writeText(formatCursor(today, server), Charsets.UTF_8)
+            }
+        } catch (e: Exception) {
+            MmLog.w(TAG, "续跑游标没写成功（下次可能从头跑）：${e.message}")
+        }
+    }
+
+    /** 游标序列化：`日期|区服名`（纯逻辑，便于单测）。 */
+    internal fun formatCursor(today: LocalDate, server: String): String = "$today|$server"
+
+    /** 游标解析：日期不是今天 ⇒ null（隔天的游标没有意义）。纯逻辑，便于单测。 */
+    internal fun parseCursor(text: String, today: LocalDate): String? {
+        val parts = text.trim().split('|', limit = 2)
+        if (parts.size != 2) return null
+        if (parts[0] != today.toString()) return null
+        return parts[1].trim().ifBlank { null }
+    }
 
     /** 记一张立牌（按分享码 upsert；返回是否写成功）。 */
     fun saveRecord(context: Context, record: BadgeRecord, today: LocalDate = LocalDate.now()): Boolean =
