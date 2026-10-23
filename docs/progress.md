@@ -10919,3 +10919,17 @@
 - **NFR-03 放宽到 ≤32MB（用户 2026-10-23 拍板）**：`requirements.md` NFR-03 与 `plans/m6-nfr-hardening.md` §2 已同步
   （原 25MB 只剩 ≈8.5MB 余量，装不下 ≈13MB 的 ncnn + PP-OCR 模型；降级条件已写死：>32MB 或 rec 精度不达标 ⇒ 退回只换分数）。
 - 证据：[verification/m6/t6-1-ocr-offline-gate.md](verification/m6/t6-1-ocr-offline-gate.md)（环境 / 逐用例表 / 原始输出路径）。
+
+### 2026-10-23（M6 OCR 引擎：真机打磨与回迁）
+
+- **换引擎后的真机问题不是"精度"，是"太慢"**：rec-only 一次只认一行，选服一屏 26 行 ⇒ 单列 0.70s
+  （ML Kit 整块约 0.25s）。按瓶颈逐刀量着改，累计 **不滑屏 3.2s → 1.48s、要滑屏 8s → 3.45s**：
+  批量推理（13 行一次 `session.run`）、画面指纹复用（像素没变就不重读）、帧龄 >500ms 不读字、
+  几何判"已在列表顶部"、确认轮只读命中行窄带、首读横向裁 45%（只认行首区号，带两重兜底）。
+- **一次自伤与修复**：指纹复用让 `Miss` 分支永远拿不到"真读"⇒ **第二屏不滑屏**（用户报障）。
+  改成"复用轮也能下决定 + 800ms 决策节拍"，并把这条写进单测。
+- **量化这条路封死（有数）**：只量化 MatMul 0.97×（等于没快）；全量化 2.75MB 但 `589→1589`、`575→1575`。
+  **补 det 也不划算**：桌面单列 det 197ms、真机 400~800ms/列，比现在还慢。
+- **回迁 `stage/m6`**：8 笔 cherry-pick（通用 OCR/巡查/采集）+ 2 笔手工移植（滑动回告护栏、菜单状态行折行），
+  立牌专属 12 笔**不动**；`CaptureService` 只有 `namePlanOf` 开头一处冲突（取 m6 的 `PatrolSession.current` +
+  新判据）。`:app:test -PfastTests` 全绿、`assembleDebug -PocrEngine=paddle` 通过。
