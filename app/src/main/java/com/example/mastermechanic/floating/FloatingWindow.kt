@@ -639,7 +639,14 @@ class FloatingWindow(private val context: Context) {
             )
         }
         val frameAgeMs = FrameFreshness.ageMs()
-        if (frameAgeMs != null && FrameFreshness.isStale()) {
+        // **中途断流且自救无效**（2026-10-23）：这时帧龄是有的，但"久未更新 + 重新授权"是误导 ——
+        // 同进程重新授权救不回来（只有换进程有效）⇒ 单独一句，并且**不再显示**下面那条普通的停更行。
+        val feedDead = FrameFreshness.isFeedDead()
+        if (feedDead) {
+            container.addView(
+                reportRow(context.getString(R.string.floating_frame_feed_dead_notice, (frameAgeMs ?: 0L) / 1000)),
+            )
+        } else if (frameAgeMs != null && FrameFreshness.isStale()) {
             container.addView(
                 reportRow(context.getString(R.string.floating_frame_stalled_notice, frameAgeMs / 1000)),
             )

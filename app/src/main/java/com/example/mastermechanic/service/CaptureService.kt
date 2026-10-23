@@ -1753,6 +1753,10 @@ class CaptureService : Service() {
         if (surfaceRetries >= SURFACE_RETRY_MAX) {
             if (!surfaceRetryGaveUp) {
                 surfaceRetryGaveUp = true
+                // **让界面说同一种话**（2026-10-23 真机）：这时再显示"画面久未更新 + 重新授权"是误导 ——
+                // 同进程重新授权在这台机器上只能撑 1~14 秒（`mm-log-20261020` 00:11~00:31），
+                // 唯一有效的是换进程。置 [FrameFreshness.noteFeedDead]，标签与菜单会改说"退出重开 App"。
+                FrameFreshness.noteFeedDead()
                 MmLog.w(
                     TAG,
                     // 2026-10-20：真机上"同进程重新授权"在这种零回调状态下只能撑 1~14 秒
