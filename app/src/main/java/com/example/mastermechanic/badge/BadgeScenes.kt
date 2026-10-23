@@ -199,14 +199,26 @@ object BadgeScenes {
         val fromActions = actions(step)
             .filter { it.state == state }
             .flatMap { action -> listOfNotNull(action.anchor, action.expectAnchor) }
+            // **要进立牌活动页的那几步**顺手定位「立牌活动入口」：页面被切到别的活动时靠它切回来
+            // （2026-10-23 用户口径；自救上限见 `BadgeRunner.MAX_ENTRY_RESCUES`）。
+            // `EXIT_ACTIVITY` 不算：它点的是左上返回，与"当前显示哪个活动"无关，不必多扫一条。
+            .toMutableSet()
+            .also {
+                val enteringBadgePage = step == BadgeFlow.Step.ENTER_ACTIVITY ||
+                    step == BadgeFlow.Step.CLAIM_ENTRY ||
+                    step == BadgeFlow.Step.SHARE_ENTRY
+                if (state == UiState.ACTIVITY_CENTER && enteringBadgePage) {
+                    it += BadgeAnchors.BADGE_ACTIVITY_ENTRY
+                }
+            }
         val fromJudgment = when {
             // 第 1 步在活动中心**先要判就绪**（等不到「获取立牌」就说明进的是别的活动页）⇒
             // 两条入口锚点必须每轮定位，否则就绪判定永远为假、10 秒后必被踢回大厅。
             step == BadgeFlow.Step.ENTER_ACTIVITY && state == UiState.ACTIVITY_CENTER -> readyAnchors
 
-            // 判定步同样要能点「立牌活动入口」（2026-10-23 真机两次踩到）：第 1 步偶发**假就绪**
-            // （切换动画里闪过一帧「分享立牌」）⇒ 进到第 2 步才发现根本没进立牌活动，
-            // 那时唯一的自救就是"在活动列表里点那张卡"，光等只会等满 20 秒中止。
+            // 判定步同样要能点「立牌活动入口」（2026-10-23 真机两次踩到、用户复盘确认成因）：
+            // 第 1 步通过时人**确实在立牌活动里**，之后用户**手动点了列表里别的活动** ⇒ 页面被切走
+            // ⇒ 第 2 步看不到「分享立牌」只能干等，20 秒后中止。自救 = 在活动列表里点那张卡切回来。
             step == BadgeFlow.Step.DECIDE_BRANCH && state == UiState.ACTIVITY_CENTER ->
                 readyAnchors + BadgeAnchors.BADGE_EMPTY_SLOT + BadgeAnchors.BADGE_ACTIVITY_ENTRY
 

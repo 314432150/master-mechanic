@@ -194,6 +194,26 @@ class BadgeRunnerTest {
         assertEquals("点入口不改变步骤", BadgeFlow.Step.DECIDE_BRANCH, clicked.state?.step)
     }
 
+    /**
+     * 第 6 步（活动中心点「分享立牌」）同样能自救：用户在第 1 步通过后**手动点了别的活动**
+     * ⇒ 分享入口不见了 ⇒ 先点活动列表里的「立牌活动入口」把页面切回来，而不是干等。
+     */
+    @Test
+    fun shareEntryStepRescuesWhenThePageWasSwitchedToAnotherActivity() {
+        val clicking = state(BadgeFlow.Step.SHARE_ENTRY, nowMs = now)
+        val rescued = BadgeRunner.onRound(
+            clicking,
+            input(
+                UiState.ACTIVITY_CENTER,
+                anchors = listOf(hit(BadgeAnchors.BADGE_ACTIVITY_ENTRY, 120.0, 900.0)),
+                nowMs = now + 1_000,
+            ),
+        )
+        assertEquals(BadgeAnchors.BADGE_ACTIVITY_ENTRY, rescued.request?.anchorName)
+        assertEquals("切回页面不换步骤", BadgeFlow.Step.SHARE_ENTRY, rescued.state?.step)
+        assertEquals(1, rescued.state?.entryRescues)
+    }
+
     /** 已经在立牌活动页（「分享立牌」已定位到）⇒ 就绪放行，**不许**再去点列表里那张卡。 */
     @Test
     fun shareEntryAlreadyPresentSkipsTheActivityListEntry() {

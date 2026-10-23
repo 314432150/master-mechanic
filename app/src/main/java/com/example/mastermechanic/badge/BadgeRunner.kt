@@ -40,6 +40,15 @@ object BadgeRunner {
      */
     const val ACTION_RETRY_MS = 1_500L
 
+    /**
+     * 单步最多点几次「立牌活动入口」把页面切回来（2026-10-23 用户口径）。
+     *
+     * 场景是**人工干预**：打开活动后本来就在立牌活动里，用户顺手点了列表里别的活动 ⇒ 页面被切走。
+     * 每步给一条自救路，但点三次还没回来就说明不是这个原因（或者那张卡点了没用）⇒ 停手只等，
+     * 由本步超时如实中止，绝不做成"连点器"。
+     */
+    const val MAX_ENTRY_RESCUES = 3
+
     /** 一轮的全部输入（全部来自采集层 / 定位器 / 时钟）。 */
     data class RoundInput(
         val foreground: Boolean,
@@ -265,6 +274,54 @@ object BadgeRunner {
      *
      * ⚠ 日志只说**读数**（"等了 N 秒仍没看到「获取立牌」"），不说"判定为其他活动"——后者是推断。
      */
+    /**
+     * **页面被切到别的活动时的自救**（2026-10-23 用户口径）。
+     *
+     * 用户实测：打开活动后本来就在立牌活动里，**他故意快速点了列表里别的活动入口** ⇒ 右侧被切走
+     * ⇒ 本步要的入口（分享立牌 / 获取立牌）不见了 ⇒ 光等只会等满超时中止。
+     * 而活动列表里那张「立牌活动入口」还在 ⇒ 点它把页面切回来。
+     *
+     * 动手条件（缺一不可，红线 5/6）：
+     * - 当前确实是「活动中心」这一屏；
+     * - 锚点**真的定位到**（不猜位置）；
+     * - 同一击 1.5 秒内不重复、且满足 300ms 点击间隔；
+     * - 本步自救次数 < [MAX_ENTRY_RESCUES]。
+     *
+     * 不满足就返回 `null`，由调用方按原逻辑继续等。
+     */
+    private fun rescueActivityEntry(
+        state: BadgeFlow.State,
+        input: RoundInput,
+        what: String,
+    ): RoundResult? {
+        if (input.state != UiState.ACTIVITY_CENTER) return null
+        if (state.entryRescues >= MAX_ENTRY_RESCUES) return null
+        val entry = input.anchors.firstOrNull { it.name == BadgeAnchors.BADGE_ACTIVITY_ENTRY }
+            ?: return null
+        val pending = state.lastActionAtMs > 0 && state.stateAtLastAction == UiState.ACTIVITY_CENTER
+        if (pending && input.nowMs - state.lastActionAtMs < ACTION_RETRY_MS) {
+            return RoundResult(
+                state,
+                note = "$what：刚点过「${input.anchorLabel(BadgeAnchors.BADGE_ACTIVITY_ENTRY)}」，等立牌活动页出来",
+            )
+        }
+        if (input.nowMs - input.lastClickAtMs < BadgeFlow.CLICK_GAP_MS) {
+            return RoundResult(state, note = "点击间隔未满 ${BadgeFlow.CLICK_GAP_MS}ms，等下一轮")
+        }
+        return RoundResult(
+            BadgeFlow.acted(BadgeFlow.entryRescued(state), input.nowMs, input.state),
+            ClickRequest(
+                decisionId = input.decisionId,
+                source = ClickSource.BADGE_STEP,
+                anchorName = BadgeAnchors.BADGE_ACTIVITY_ENTRY,
+                frameX = entry.frameX,
+                frameY = entry.frameY,
+            ),
+            "$what：活动列表里找到「${input.anchorLabel(BadgeAnchors.BADGE_ACTIVITY_ENTRY)}」" +
+                "（自救 ${state.entryRescues + 1}/$MAX_ENTRY_RESCUES）⇒ 点它切回立牌活动",
+        )
+    }
+
     private fun enterActivityGate(
         state: BadgeFlow.State,
         input: RoundInput,
@@ -278,37 +335,9 @@ object BadgeRunner {
             )
         }
         val since = if (state.centerSinceMs > 0L) state.centerSinceMs else input.nowMs
-        // **先在活动列表里点「立牌活动入口」**（2026-10-23 用户口径）：点「活动」进的是上次那一页，
-        // 可能是别的活动；列表里那张「送传说皮」卡就是立牌活动的入口。就绪门一旦看到「分享立牌」
-        // 已经在上面 return 了 ⇒ 这里只处理"还没进到立牌活动"的情况（也就天然做到"先搜到分享立牌就不再搜入口"）。
-        val entry = input.anchors.firstOrNull { it.name == BadgeAnchors.BADGE_ACTIVITY_ENTRY }
-        if (entry != null) {
-            val pendingEntry = state.lastActionAtMs > 0 && state.stateAtLastAction == UiState.ACTIVITY_CENTER
-            if (pendingEntry && input.nowMs - state.lastActionAtMs < ACTION_RETRY_MS) {
-                return RoundResult(
-                    state.copy(centerSinceMs = since),
-                    note = "第 1 步：刚点过「${input.anchorLabel(BadgeAnchors.BADGE_ACTIVITY_ENTRY)}」，等立牌活动页出来",
-                )
-            }
-            if (input.nowMs - input.lastClickAtMs < BadgeFlow.CLICK_GAP_MS) {
-                return RoundResult(
-                    state.copy(centerSinceMs = since),
-                    note = "点击间隔未满 ${BadgeFlow.CLICK_GAP_MS}ms，等下一轮",
-                )
-            }
-            return RoundResult(
-                BadgeFlow.acted(state.copy(centerSinceMs = since), input.nowMs, input.state),
-                ClickRequest(
-                    decisionId = input.decisionId,
-                    source = ClickSource.BADGE_STEP,
-                    anchorName = BadgeAnchors.BADGE_ACTIVITY_ENTRY,
-                    frameX = entry.frameX,
-                    frameY = entry.frameY,
-                ),
-                "第 1 步：活动列表里看到「${input.anchorLabel(BadgeAnchors.BADGE_ACTIVITY_ENTRY)}」" +
-                    "⇒ 点它进入立牌活动，之后应看到「${input.anchorLabel(BadgeAnchors.BADGE_SHARE_ENTRY)}」",
-            )
-        }
+        // 还没进到立牌活动（「分享立牌」不在）⇒ 先在活动列表里点「立牌活动入口」切过去；
+        // 已经在上面 return 的情况（已就绪）根本不会走到这里，也就天然做到"先搜到分享立牌就不再搜入口"。
+        rescueActivityEntry(state.copy(centerSinceMs = since), input, "第 1 步")?.let { return it }
         val waited = input.nowMs - since
         val missing = BadgeScenes.readyAnchors.filterNot { it in anchorNames }
             .joinToString("、") { input.anchorLabel(it) }
@@ -376,35 +405,8 @@ object BadgeRunner {
         if (!BadgeScenes.activityReady(anchorNames)) {
             val missing = BadgeScenes.readyAnchors.filterNot { it in anchorNames }
                 .joinToString("、") { input.anchorLabel(it) }
-            // **还没进立牌活动就自己救一下**（2026-10-23 真机两次"卡在第 2 步 20 秒后中止"）：
-            // 第 1 步有时会在切换动画里闪过一帧「分享立牌」⇒ 假就绪、提前进第 2 步；
-            // 之后真正的活动页里没有分享入口。这时活动列表里那张「立牌活动入口」还在 ⇒ 点它。
-            val entry = input.anchors.firstOrNull { it.name == BadgeAnchors.BADGE_ACTIVITY_ENTRY }
-            if (entry != null) {
-                val pendingEntry = state.lastActionAtMs > 0 && state.stateAtLastAction == UiState.ACTIVITY_CENTER
-                if (pendingEntry && input.nowMs - state.lastActionAtMs < ACTION_RETRY_MS) {
-                    return RoundResult(
-                        state,
-                        note = "第 ${state.step.number} 步：刚点过「${input.anchorLabel(BadgeAnchors.BADGE_ACTIVITY_ENTRY)}」" +
-                            "，等立牌活动页出来",
-                    )
-                }
-                if (input.nowMs - input.lastClickAtMs < BadgeFlow.CLICK_GAP_MS) {
-                    return RoundResult(state, note = "点击间隔未满 ${BadgeFlow.CLICK_GAP_MS}ms，等下一轮")
-                }
-                return RoundResult(
-                    BadgeFlow.acted(state, input.nowMs, input.state),
-                    ClickRequest(
-                        decisionId = input.decisionId,
-                        source = ClickSource.BADGE_STEP,
-                        anchorName = BadgeAnchors.BADGE_ACTIVITY_ENTRY,
-                        frameX = entry.frameX,
-                        frameY = entry.frameY,
-                    ),
-                    "第 ${state.step.number} 步：还没看到「$missing」，但活动列表里找到" +
-                        "「${input.anchorLabel(BadgeAnchors.BADGE_ACTIVITY_ENTRY)}」⇒ 点它切到立牌活动",
-                )
-            }
+            // **页面被切到别的活动就切回来**（2026-10-23 用户口径：他顺手点了列表里别的活动 ⇒ 分享入口没了）
+            rescueActivityEntry(state, input, "第 ${state.step.number} 步")?.let { return it }
             return waitOrAbort(
                 state,
                 input,
@@ -661,12 +663,17 @@ object BadgeRunner {
 
         // ⑨ 锚点定位：按 ID 精确取；同屏有多个候选时取**第一个确实定位到的**（语义不同，不是"最像的"）
         val hit = input.anchors.firstOrNull { it.name == candidate.anchor }
-            ?: return waitOrAbort(
+        if (hit == null) {
+            // 在活动中心上找「获取立牌入口 / 分享立牌入口」找不到 ⇒ 多半是页面被切到别的活动了
+            // （2026-10-23 用户口径：他手动点了列表里别的卡）⇒ 先点「立牌活动入口」把页面切回来
+            rescueActivityEntry(state, input, "第 ${state.step.number} 步")?.let { return it }
+            return waitOrAbort(
                 state,
                 input,
                 "第 ${state.step.number} 步：锚点「${input.anchorLabel(candidate.anchor)}」没定位到" +
                     "（未标定或没命中）",
             )
+        }
 
         // ⑩ 节流
         if (input.nowMs - input.lastClickAtMs < BadgeFlow.CLICK_GAP_MS) {

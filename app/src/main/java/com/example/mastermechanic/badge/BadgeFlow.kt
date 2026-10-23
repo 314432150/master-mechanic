@@ -124,6 +124,14 @@ object BadgeFlow {
          */
         val entryAttempts: Int = 0,
         /**
+         * 本步"页面被切到别的活动 ⇒ 点「立牌活动入口」切回来"**已经点了几次**（2026-10-23）。
+         *
+         * 用户口径：打开活动后本来就在立牌活动里，他**故意快速点了别的活动入口** ⇒ 页面被切走。
+         * 这类"人工干预"任何一步都可能遇到，所以每步都给一条自救路；但不能无限点
+         * （点不动就是别的问题）⇒ 到 [com.example.mastermechanic.badge.BadgeRunner.MAX_ENTRY_RESCUES] 就只等。
+         */
+        val entryRescues: Int = 0,
+        /**
          * 第 1 步在「活动中心」上**开始等「获取立牌」的时刻**（0 = 还不在等）。
          *
          * 2026-10-22 两屏合并后，`活动中心` 标志（左上返回）只证明"进了活动窗口"——立牌活动与其他
@@ -303,6 +311,10 @@ object BadgeFlow {
         return enter(state.copy(cardsRead = state.cardsRead + 1), next, nowMs)
     }
 
+    /** 记一次"点「立牌活动入口」把页面切回立牌活动"（自救，见 [State.entryRescues]）。 */
+    fun entryRescued(state: State): State =
+        if (!state.isRunning) state else state.copy(entryRescues = state.entryRescues + 1)
+
     /** 进入新一步：清掉"已动手"标记与停更状态（上一步的击不能带到下一步，口径 A）。 */
     private fun enter(state: State, step: Step, nowMs: Long): State = state.copy(
         step = step,
@@ -310,6 +322,7 @@ object BadgeFlow {
         stepEnteredAtMs = nowMs,
         emptySlotAbsentRounds = 0,
         entryAttempts = 0,
+        entryRescues = 0,
         centerSinceMs = 0L,
         lastActionAtMs = 0L,
         stateAtLastAction = null,
