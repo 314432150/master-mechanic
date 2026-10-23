@@ -4411,10 +4411,21 @@ class CaptureService : Service() {
      */
     private fun stepPatrol(result: RoundResult, gray: GrayImage) {
         // **立牌任务在跑 ⇒ 走另一条编排**（temp/badge-share-1021，2026-10-21）：两条流程互斥
-        // （启动时由 `BadgeTask` 校验并 stop 巡查），所以这里只可能是"有 badge 就没有 patrol"。
-        if (BadgeSession.current != null) {
-            stepBadge(result, gray)
-            return
+        // （启动时由 `BadgeTask` 校验并 stop 巡查），所以"在跑"的时候只可能是 badge。
+        //
+        // ⚠ **已经结束（完成 / 中止）的立牌快照仍挂在 [BadgeSession] 上**（菜单要能回看"停在第几步、
+        // 为什么停"）⇒ 不能因为它存在就把巡查整段吞掉：2026-10-23 真机报障"立牌跑完后发起换号，
+        // 卡在「退出登录」一动不动"—— 就是这里每轮 `stepBadge` 立刻 return，[PatrolRunner] 一次都没走到。
+        // 现在：先让它收尾（震动一次、收回期望集合），**只有它还在跑才分流**；已结束就继续走下面的巡查。
+        val badge = BadgeSession.current
+        if (badge != null) {
+            if (badge.isRunning) {
+                stepBadge(result, gray)
+                return
+            }
+            // 已结束：只补一次收尾（结束震动，按代次去重），然后继续走巡查 / 待命。
+            // 期望集合不在这里收回 —— 下面巡查那一段会按自己的相位设（没跑流程时给的也是空集）。
+            announceBadgeEndedOnce()
         }
         // **先读代次、再读快照**（顺序有讲究，见 `PatrolSession.currentGeneration`）：
         // 本轮算完写回时对齐它 —— 期间用户按过停止 / 开始，这一轮结论就得作废，
