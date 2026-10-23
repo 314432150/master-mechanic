@@ -157,10 +157,11 @@ class BadgeScenesTest {
 
     @Test
     fun neededAnchorsForJudgmentStepsAreExactlyTheirCriteria() {
-        // 就绪锚点跟着 readyAnchors 走（2026-10-23 起只含「分享立牌」：当日已提交时「获取立牌」不显示）
+        // 就绪锚点跟着 readyAnchors 走（2026-10-23 起只含「分享立牌」：当日已提交时「获取立牌」不显示）；
+        // 判定步还要能点「立牌活动入口」自救（假就绪时唯一出路）
         val branch = BadgeScenes.neededAnchors(BadgeFlow.Step.DECIDE_BRANCH, UiState.ACTIVITY_CENTER)
         assertEquals(
-            BadgeScenes.readyAnchors + BadgeAnchors.BADGE_EMPTY_SLOT,
+            BadgeScenes.readyAnchors + BadgeAnchors.BADGE_EMPTY_SLOT + BadgeAnchors.BADGE_ACTIVITY_ENTRY,
             branch,
         )
         // 画面不是判定步所在的那一屏 ⇒ 一条都不定位（编排器本来也不会在那儿动手）

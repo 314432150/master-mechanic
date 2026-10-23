@@ -204,8 +204,11 @@ object BadgeScenes {
             // 两条入口锚点必须每轮定位，否则就绪判定永远为假、10 秒后必被踢回大厅。
             step == BadgeFlow.Step.ENTER_ACTIVITY && state == UiState.ACTIVITY_CENTER -> readyAnchors
 
+            // 判定步同样要能点「立牌活动入口」（2026-10-23 真机两次踩到）：第 1 步偶发**假就绪**
+            // （切换动画里闪过一帧「分享立牌」）⇒ 进到第 2 步才发现根本没进立牌活动，
+            // 那时唯一的自救就是"在活动列表里点那张卡"，光等只会等满 20 秒中止。
             step == BadgeFlow.Step.DECIDE_BRANCH && state == UiState.ACTIVITY_CENTER ->
-                readyAnchors + BadgeAnchors.BADGE_EMPTY_SLOT
+                readyAnchors + BadgeAnchors.BADGE_EMPTY_SLOT + BadgeAnchors.BADGE_ACTIVITY_ENTRY
 
             step == BadgeFlow.Step.PICK_CARD && state == UiState.BADGE_MY ->
                 setOf(BadgeAnchors.BADGE_SHARE)

@@ -172,6 +172,28 @@ class BadgeRunnerTest {
         assertTrue("点过要记成已动手", (clicked.state?.lastActionAtMs ?: 0L) > 0L)
     }
 
+    /**
+     * 第 2 步的**自救**（2026-10-23 真机两次卡在 20 秒后中止）：第 1 步偶发假就绪 ⇒ 进第 2 步才发现
+     * 没在立牌活动页。这时活动列表里那张卡还在 ⇒ 点它，而不是干等到超时。
+     */
+    @Test
+    fun decideBranchClicksTheActivityEntryWhenNotReady() {
+        val deciding = state(BadgeFlow.Step.DECIDE_BRANCH, nowMs = now)
+        val clicked = BadgeRunner.onRound(
+            deciding,
+            input(
+                UiState.ACTIVITY_CENTER,
+                anchors = listOf(
+                    hit(BadgeAnchors.BADGE_ACTIVITY_ENTRY, 120.0, 900.0),
+                    hit(BadgeAnchors.BADGE_ACTIVITY_EXIT),
+                ),
+                nowMs = now + 1_000,
+            ),
+        )
+        assertEquals("第 2 步发现没就绪就该点活动列表里的入口", BadgeAnchors.BADGE_ACTIVITY_ENTRY, clicked.request?.anchorName)
+        assertEquals("点入口不改变步骤", BadgeFlow.Step.DECIDE_BRANCH, clicked.state?.step)
+    }
+
     /** 已经在立牌活动页（「分享立牌」已定位到）⇒ 就绪放行，**不许**再去点列表里那张卡。 */
     @Test
     fun shareEntryAlreadyPresentSkipsTheActivityListEntry() {
