@@ -49,6 +49,30 @@ class CalibrationCodecTest {
         ),
     )
 
+    /**
+     * **本版不认识的状态名要跳过、不能整份报废**（2026-10-24 用户口径）。
+     *
+     * 背景：标定产物是跨版本共享的一份文件 —— 新版功能（例如立牌流程的 `BADGE_CLAIM`）会往里写
+     * 自己的状态。旧版（`stage/m6`）照着解析会"未知状态名"整份拒绝 ⇒ 回退未标定 ⇒ 所有画面都认不出
+     * （真机就这么踩过）。正确做法：跳过那一屏的规则并回报名字，其余照常加载。
+     */
+    @Test
+    fun unknownStateIsSkippedInsteadOfFailingTheWholeArtifact() {
+        val text = CalibrationCodec.encode(sampleData()) +
+            "\nstate=BADGE_CLAIM|farm_qr\n" +
+            "anchor=BADGE_CLAIM|hall_entry\n"
+        val skipped = mutableListOf<String>()
+
+        val decoded = CalibrationCodec.decode(text) { skipped += it }
+
+        assertEquals("两个未知状态名都回报给调用方", listOf("BADGE_CLAIM", "BADGE_CLAIM"), skipped)
+        assertEquals(
+            "已知状态照常解析",
+            listOf(UiState.FARM, UiState.HALL),
+            decoded.stateRules.map { it.state },
+        )
+    }
+
     @Test
     fun roundTripPreservesAllFields() {
         val original = sampleData()
@@ -320,13 +344,20 @@ class CalibrationCodecTest {
     }
 
     @Test
-    fun rejectsUnknownStateOrUnknownAsTarget() {
+    fun unknownStateIsToleratedButOtherFieldErrorsAreStillRejected() {
+        // 2026-10-24 口径变更：**未知状态名不再整份报废**（标定结果跨版本共享，新版功能会写新状态），
+        // 改成"跳过该行 + 回报名字"；其余格式/取值错误照旧严格拒绝（那是文件本身坏了，不能猜）。
         val good = CalibrationCodec.encode(sampleData())
+        val skipped = mutableListOf<String>()
+        val decoded = CalibrationCodec.decode(
+            good.replace("state=FARM|", "state=NO_SUCH_STATE|"),
+        ) { skipped += it }
+        assertEquals(listOf("NO_SUCH_STATE"), skipped)
+        assertEquals("只丢掉那一屏，其余照常", listOf(UiState.HALL), decoded.stateRules.map { it.state })
+
+        // 坏行仍然要拒：角色名不认识不是"新版本写的状态"，而是文件被改坏了
         assertThrows(IllegalArgumentException::class.java) {
-            CalibrationCodec.decode(good.replace("state=FARM|", "state=NO_SUCH_STATE|"))
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            CalibrationCodec.decode(good.replace("state=FARM|", "state=UNKNOWN|"))
+            CalibrationCodec.decode(good.replace("|marker|", "|no_such_role|"))
         }
     }
 

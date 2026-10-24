@@ -59,7 +59,14 @@ object CalibrationStore {
         if (!file.isFile) return null
         val text = file.readText(Charsets.UTF_8)
         val decoded = try {
-            CalibrationCodec.decode(text)
+            // 本版不认识的状态（例如新版功能写的）⇒ 跳过该行并留一行日志，其余照常加载
+            CalibrationCodec.decode(text) { unknown ->
+                MmLog.w(
+                    TAG,
+                    "标定结果里有本版不认识的状态「$unknown」⇒ 跳过这一屏的规则（其余照常加载；" +
+                        "若需要它，请升级到写入该状态的版本）",
+                )
+            }
         } catch (e: OutOfMemoryError) {
             // **内存不足要变成"读不出来"，不能让它把调用方打死**（2026-09-29 真机崩溃）：
             // 产物里如果有一条**很大的模板**（例如把整屏 / 整个列表区域框进去，产物 5.4MB），
