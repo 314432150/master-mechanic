@@ -44,78 +44,33 @@ class OrtRecEngine(
     private val inputName: String get() = engine().inputNames.iterator().next()
 
     /** 读一块已经裁好的图（一整行名字 / 一个分数块），返回识别到的**原文**。 */
-    fun recognize(bitmap: Bitmap): String = recognizeBatch(listOf(bitmap)).first()
-
-    /**
-     * **一次跑一批**（同一区域的多条行带），返回顺序与入参一致。
-     *
-     * ## 为什么值得批
-     *
-     * rec 模型**一次只能读一行**（2026-10-23 桌面实测：把两行一起喂进去读出空串、五行读出「器」），
-     * 所以"选服务器"那一步一屏 26 行就得调用 26 次。而每次调用的**固定开销**（JNI + `session.run`
-     * + 张量创建）在真机上占大头；批起来只付一次。
-     *
-     * 桌面实测（同一份 ONNX、同一批裁块）：**逐条 4 次 24.0ms vs 批量 1 次 20.7ms**，输出逐条相同
-     * （`_tmp_check/ocr/probe_rec.py`）。模型输入的第 0 维是动态的（`['p2o.DynamicDimension.0', 3, '?', '?']`），
-     * 因此可以直接喂 N 条。
-     *
-     * ## 补零口径
-     *
-     * 同一批里每条的宽度按长宽比各算一次，张量宽度取最大值、**右侧补 0**（归一化后的 0 = 中灰）。
-     * 离线验证过"补零不影响结果"；宽度相差很大时多算的也只有极少数时间步。
-     */
-    fun recognizeBatch(bitmaps: List<Bitmap>): List<String> {
-        if (bitmaps.isEmpty()) return emptyList()
-        if (bitmaps.size == 1) {
-            val bitmap = bitmaps[0]
-            val width = RecInput.width(bitmap.width, bitmap.height)
-            val scaled = Bitmap.createScaledBitmap(bitmap, width, RecInput.HEIGHT, true)
-            try {
-                val pixels = IntArray(width * RecInput.HEIGHT)
-                scaled.getPixels(pixels, 0, width, 0, 0, width, RecInput.HEIGHT)
-                return runBatch(toBgrFloat(pixels, width, width), 1, width)
-            } finally {
-                if (scaled !== bitmap) scaled.recycle()
-            }
+    fun recognize(bitmap: Bitmap): String {
+        val width = RecInput.width(bitmap.width, bitmap.height)
+        val scaled = Bitmap.createScaledBitmap(bitmap, width, RecInput.HEIGHT, true)
+        try {
+            val pixels = IntArray(width * RecInput.HEIGHT)
+            scaled.getPixels(pixels, 0, width, 0, 0, width, RecInput.HEIGHT)
+            return run(toBgrFloat(pixels, width), width)
+        } finally {
+            if (scaled !== bitmap) scaled.recycle()
         }
-        val widths = bitmaps.map { RecInput.width(it.width, it.height) }
-        val maxWidth = widths.maxOrNull() ?: return emptyList()
-        val plane = maxWidth * RecInput.HEIGHT
-        val data = FloatArray(bitmaps.size * 3 * plane)
-        for (i in bitmaps.indices) {
-            val w = widths[i]
-            val scaled = Bitmap.createScaledBitmap(bitmaps[i], w, RecInput.HEIGHT, true)
-            val pixels = IntArray(w * RecInput.HEIGHT)
-            try {
-                scaled.getPixels(pixels, 0, w, 0, 0, w, RecInput.HEIGHT)
-            } finally {
-                if (scaled !== bitmaps[i]) scaled.recycle()
-            }
-            val item = toBgrFloat(pixels, w, maxWidth)
-            System.arraycopy(item, 0, data, i * 3 * plane, item.size)
-        }
-        return runBatch(data, bitmaps.size, maxWidth)
     }
 
-    private fun runBatch(data: FloatArray, batch: Int, width: Int): List<String> {
-        val shape = longArrayOf(batch.toLong(), 3, RecInput.HEIGHT.toLong(), width.toLong())
+    private fun run(data: FloatArray, width: Int): String {
+        val shape = longArrayOf(1, 3, RecInput.HEIGHT.toLong(), width.toLong())
         OnnxTensor.createTensor(env, FloatBuffer.wrap(data), shape).use { tensor ->
             engine().run(mapOf(inputName to tensor)).use { output ->
                 @Suppress("UNCHECKED_CAST")
                 val logits = output[0].value as Array<Array<FloatArray>>
-                return logits.map { decode(it) }
+                val steps = logits[0].size
+                val classes = logits[0][0].size
+                val flat = FloatArray(steps * classes)
+                for (t in 0 until steps) {
+                    System.arraycopy(logits[0][t], 0, flat, t * classes, classes)
+                }
+                return CtcDecode.greedy(flat, steps, classes) { index -> labelOf(index) }
             }
         }
-    }
-
-    private fun decode(sequence: Array<FloatArray>): String {
-        val steps = sequence.size
-        val classes = sequence[0].size
-        val flat = FloatArray(steps * classes)
-        for (t in 0 until steps) {
-            System.arraycopy(sequence[t], 0, flat, t * classes, classes)
-        }
-        return CtcDecode.greedy(flat, steps, classes) { index -> labelOf(index) }
     }
 
     /**
@@ -129,24 +84,16 @@ class OrtRecEngine(
         else -> null
     }
 
-    /**
-     * 灰度块 → `[3, H, planeWidth]` 的 BGR 归一化浮点（通道在外、像素在内）。
-     *
-     * @param bitmapWidth 这张图自己的宽度（像素数组按它排）
-     * @param planeWidth 张量里的宽度（批量时 = 本批最大宽度；右侧补 0 = 归一化后的中灰）
-     */
-    private fun toBgrFloat(pixels: IntArray, bitmapWidth: Int, planeWidth: Int): FloatArray {
-        val plane = planeWidth * RecInput.HEIGHT
+    /** 灰度块 → `[3, H, W]` 的 BGR 归一化浮点（通道在外、像素在内）。 */
+    private fun toBgrFloat(pixels: IntArray, width: Int): FloatArray {
+        val plane = width * RecInput.HEIGHT
         val out = FloatArray(3 * plane)
-        for (y in 0 until RecInput.HEIGHT) {
-            for (x in 0 until bitmapWidth) {
-                val color = pixels[y * bitmapWidth + x]
-                val dst = y * planeWidth + x
-                // 通道 0/1/2 = B/G/R（模型按 BGR 训练）
-                out[dst] = normalize(color and 0xFF)
-                out[plane + dst] = normalize((color shr 8) and 0xFF)
-                out[2 * plane + dst] = normalize((color shr 16) and 0xFF)
-            }
+        for (i in pixels.indices) {
+            val color = pixels[i]
+            // 通道 0/1/2 = B/G/R（模型按 BGR 训练）
+            out[i] = normalize(color and 0xFF)
+            out[plane + i] = normalize((color shr 8) and 0xFF)
+            out[2 * plane + i] = normalize((color shr 16) and 0xFF)
         }
         return out
     }

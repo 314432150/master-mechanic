@@ -27,27 +27,20 @@ import com.example.mastermechanic.recognition.RowBands
  * 一行读不出字就跳过那一行（不猜、不补）。整体异常由调用方按"未找到"处理（与 ML Kit 版一致）。
  */
 class PaddleNameReader(
-    /**
-     * 一批行带小图 → 逐条原文（顺序一致）。抽成函数是为了单测能塞假的实现；
-     * 真机走 `OrtRecEngine::recognizeBatch`（**一次调用**，理由见那里的注释）。
-     */
-    private val recognizeBatch: (List<Bitmap>) -> List<String>,
+    /** 一行灰度小图 → 原文。抽成函数是为了单测能塞假的实现（真机走 `OrtRecEngine::recognize`）。 */
+    private val recognize: (Bitmap) -> String,
 ) : NameReader {
 
     override fun read(image: GrayImage, region: PixelBounds): List<NameCandidate> {
         val bands = RowBands.split(image, region)
-        if (bands.isEmpty()) return emptyList()
-        // **一次批起来**（2026-10-23）：rec 一次只能读一行，逐条调用要付 N 次固定开销；
-        // 批成一次只付一次（桌面实测 4 条 24.0ms → 20.7ms，真机上省得更多）。
-        val bitmaps = bands.map { toBitmap(image, it) }
-        val texts = try {
-            recognizeBatch(bitmaps)
-        } finally {
-            bitmaps.forEach { it.recycle() }
-        }
         val candidates = ArrayList<NameCandidate>(bands.size)
-        for ((index, band) in bands.withIndex()) {
-            val text = texts.getOrNull(index)?.trim().orEmpty()
+        for (band in bands) {
+            val bitmap = toBitmap(image, band)
+            val text = try {
+                recognize(bitmap)
+            } finally {
+                bitmap.recycle()
+            }.trim()
             if (text.isEmpty()) continue
             candidates += NameCandidate(
                 text = text,
@@ -87,6 +80,6 @@ class PaddleNameReader(
         private const val TAG = "MM-PaddleName"
 
         /** 生产装配：一个引擎（一次装模型）配一个 reader。 */
-        fun of(engine: OrtRecEngine): PaddleNameReader = PaddleNameReader { engine.recognizeBatch(it) }
+        fun of(engine: OrtRecEngine): PaddleNameReader = PaddleNameReader { engine.recognize(it) }
     }
 }
