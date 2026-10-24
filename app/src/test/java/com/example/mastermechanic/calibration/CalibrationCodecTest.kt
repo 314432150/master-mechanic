@@ -58,14 +58,16 @@ class CalibrationCodecTest {
      */
     @Test
     fun unknownStateIsSkippedInsteadOfFailingTheWholeArtifact() {
+        // ⚠ 用例里**不能拿 `BADGE_CLAIM` 当"未知"**：它在立牌分支上是**已知**状态，
+        // 只有本分支（旧版）才不认识。两边用同一个真正不存在的名字，测试文本保持一致。
         val text = CalibrationCodec.encode(sampleData()) +
-            "\nstate=BADGE_CLAIM|farm_qr\n" +
-            "anchor=BADGE_CLAIM|hall_entry\n"
+            "\nstate=NOT_A_STATE|farm_qr\n" +
+            "anchor=NOT_A_STATE|hall_entry\n"
         val skipped = mutableListOf<String>()
 
         val decoded = CalibrationCodec.decode(text) { skipped += it }
 
-        assertEquals("两个未知状态名都回报给调用方", listOf("BADGE_CLAIM", "BADGE_CLAIM"), skipped)
+        assertEquals("两个未知状态名都回报给调用方", listOf("NOT_A_STATE", "NOT_A_STATE"), skipped)
         assertEquals(
             "已知状态照常解析",
             listOf(UiState.FARM, UiState.HALL),
