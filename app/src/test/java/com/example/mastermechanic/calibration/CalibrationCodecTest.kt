@@ -12,6 +12,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Base64
 
 /**
  * 标定产物编解码单测（T1-5a）：文本往返保真、确定性、非法输入严格拒绝，
@@ -48,6 +49,58 @@ class CalibrationCodecTest {
             CalibrationData.StateRule(UiState.HALL, listOf("hall_entry")),
         ),
     )
+
+    /**
+     * **本版不认识的状态名要跳过、不能整份报废**（2026-10-24 用户口径）。
+     *
+     * 背景：标定产物是跨版本共享的一份文件 —— 新版功能（例如立牌流程的 `BADGE_CLAIM`）会往里写
+     * 自己的状态。旧版（`stage/m6`）照着解析会"未知状态名"整份拒绝 ⇒ 回退未标定 ⇒ 所有画面都认不出
+     * （真机就这么踩过）。正确做法：跳过那一屏的规则并回报名字，其余照常加载。
+     */
+    @Test
+    fun unknownStateIsSkippedInsteadOfFailingTheWholeArtifact() {
+        // ⚠ 用例里**不能拿 `BADGE_CLAIM` 当"未知"**：它在立牌分支上是**已知**状态，
+        // 只有本分支（旧版）才不认识。两边用同一个真正不存在的名字，测试文本保持一致。
+        val text = CalibrationCodec.encode(sampleData()) +
+            "\nstate=NOT_A_STATE|farm_qr\n" +
+            "anchor=NOT_A_STATE|hall_entry\n"
+        val skipped = mutableListOf<String>()
+
+        val decoded = CalibrationCodec.decode(text) { skipped += it }
+
+        assertEquals("两个未知状态名都回报给调用方", listOf("NOT_A_STATE", "NOT_A_STATE"), skipped)
+        assertEquals(
+            "已知状态照常解析",
+            listOf(UiState.FARM, UiState.HALL),
+            decoded.stateRules.map { it.state },
+        )
+    }
+
+    /**
+     * **只被未知状态引用的记录要一起丢掉**（2026-10-25 真机撞的第二道）。
+     *
+     * 光跳过状态行不够：它们点名的锚点还留着 ⇒ `CalibrationData` 校验报"锚点缺少归属状态"
+     * ⇒ 整份结果照样报废、回退未标定。这条用例钉住"孤儿记录被丢弃、其余照常"。
+     */
+    @Test
+    fun recordsOnlyReferencedByUnknownStatesAreDropped() {
+        val good = CalibrationCodec.encode(sampleData())
+        val text = good +
+            "\nsignal=only_for_new|marker|0.1,0.1,0.2,0.2|||\n" +
+            "template=only_for_new|marker|12|9|" +
+            Base64.getEncoder().encodeToString(SyntheticImages.pattern(12, 9, 999)) + "\n" +
+            "state=NOT_A_STATE|only_for_new\n"
+        val skipped = mutableListOf<String>()
+
+        val decoded = CalibrationCodec.decode(text) { skipped += it }
+
+        assertEquals(listOf("NOT_A_STATE"), skipped)
+        assertTrue(
+            "只被未知状态引用的记录必须被丢掉",
+            decoded.signals.none { it.id == "only_for_new" },
+        )
+        assertEquals("已知记录不受影响", 2, decoded.signals.size)
+    }
 
     @Test
     fun roundTripPreservesAllFields() {
@@ -320,13 +373,20 @@ class CalibrationCodecTest {
     }
 
     @Test
-    fun rejectsUnknownStateOrUnknownAsTarget() {
+    fun unknownStateIsToleratedButOtherFieldErrorsAreStillRejected() {
+        // 2026-10-24 口径变更：**未知状态名不再整份报废**（标定结果跨版本共享，新版功能会写新状态），
+        // 改成"跳过该行 + 回报名字"；其余格式/取值错误照旧严格拒绝（那是文件本身坏了，不能猜）。
         val good = CalibrationCodec.encode(sampleData())
+        val skipped = mutableListOf<String>()
+        val decoded = CalibrationCodec.decode(
+            good.replace("state=FARM|", "state=NO_SUCH_STATE|"),
+        ) { skipped += it }
+        assertEquals(listOf("NO_SUCH_STATE"), skipped)
+        assertEquals("只丢掉那一屏，其余照常", listOf(UiState.HALL), decoded.stateRules.map { it.state })
+
+        // 坏行仍然要拒：角色名不认识不是"新版本写的状态"，而是文件被改坏了
         assertThrows(IllegalArgumentException::class.java) {
-            CalibrationCodec.decode(good.replace("state=FARM|", "state=NO_SUCH_STATE|"))
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            CalibrationCodec.decode(good.replace("state=FARM|", "state=UNKNOWN|"))
+            CalibrationCodec.decode(good.replace("|marker|", "|no_such_role|"))
         }
     }
 

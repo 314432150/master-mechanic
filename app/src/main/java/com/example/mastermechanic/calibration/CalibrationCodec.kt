@@ -96,7 +96,11 @@ object CalibrationCodec {
     }
 
     /** 文本 → 产物（严格校验；任何非法都抛 [IllegalArgumentException]，消息含行号）。 */
-    fun decode(text: String): CalibrationData {
+    /**
+     * @param onUnknownState 遇到**本版不认识的状态名**时回调（每行一次）。调用方拿去写日志；
+     *   默认空实现，仍保持"纯逻辑、JVM 可测"。
+     */
+    fun decode(text: String, onUnknownState: (String) -> Unit = {}): CalibrationData {
         // 预扫版本：signal 行的段数随版本变化（v4 起多一段「归属好友名」），得先知道版本才能分段
         val declaredVersionInText = text.lineSequence()
             .map { it.trim() }
@@ -129,6 +133,15 @@ object CalibrationCodec {
         val markersByState = LinkedHashMap<UiState, List<String>>()
         val anchorsByState = LinkedHashMap<UiState, List<String>>()
         val windows = LinkedHashMap<EntryKey, SearchWindow>()
+
+        /**
+         * 被**本版不认识的状态**引用过的记录 ID（2026-10-25）。
+         *
+         * 为什么需要：跳过状态行只是第一步 —— 那些行里点名的记录如果还留着，校验会因为
+         * "锚点缺少归属状态"把整份结果打回（真机就这么撞了第二道）。解析完只保留
+         * **仍被已知状态引用**的那些，其余丢弃。
+         */
+        val skippedOwners = LinkedHashSet<String>()
         val templates = LinkedHashMap<EntryKey, MutableList<Template>>()
         val purposes = LinkedHashMap<EntryKey, String>()
         val notes = LinkedHashMap<EntryKey, String>()
@@ -177,35 +190,44 @@ object CalibrationCodec {
                 }
                 "state" -> {
                     val (stateName, signalsText) = splitPair(value) ?: fail(index + 1, "state 行缺少分隔：$value")
-                    val state = try {
-                        UiState.valueOf(stateName)
-                    } catch (_: IllegalArgumentException) {
-                        fail(index + 1, "未知状态名：$stateName")
+                    // **本版不认识的状态 ⇒ 跳过这一行，而不是整份产物报废**（2026-10-24 用户口径）：
+                    // 标定产物是**跨版本共享**的一份文件——新版功能（例如立牌流程的 `BADGE_CLAIM`）
+                    // 会往里写自己的状态；旧版照着解析就会"未知状态名"整份拒绝，回退成未标定，
+                    // 于是所有画面都认不出。跳过 = 只丢那一屏的规则，其余照常可用。
+                    val state = UiState.values().firstOrNull { it.name == stateName }
+                    if (state == null) {
+                        onUnknownState(stateName)
+                        // 它引用的记录也要记账：解析完要把"**只**被未知状态引用"的记录丢掉，
+                        // 否则它们会变成"没有归属状态的锚点" ⇒ 校验失败 ⇒ 整份结果照样报废
+                        // （真机 2026-10-25 就是这么第二道撞上的：跳过状态行只过了一半）。
+                        skippedOwners += signalsText.split(LIST_SEP)
+                    } else {
+                        if (markersByState.containsKey(state)) fail(index + 1, "状态重复定义：$stateName")
+                        val names = signalsText.split(LIST_SEP)
+                        try {
+                            CalibrationData.StateRule(state, names)
+                        } catch (e: IllegalArgumentException) {
+                            fail(index + 1, e.message ?: "规则非法")
+                        }
+                        markersByState[state] = names
                     }
-                    if (markersByState.containsKey(state)) fail(index + 1, "状态重复定义：$stateName")
-                    val names = signalsText.split(LIST_SEP)
-                    try {
-                        CalibrationData.StateRule(state, names)
-                    } catch (e: IllegalArgumentException) {
-                        fail(index + 1, e.message ?: "规则非法")
-                    }
-                    markersByState[state] = names
                 }
                 "anchor" -> {
                     val (stateName, namesText) = splitPair(value) ?: fail(index + 1, "anchor 行缺少分隔：$value")
-                    val state = try {
-                        UiState.valueOf(stateName)
-                    } catch (_: IllegalArgumentException) {
-                        fail(index + 1, "未知状态名：$stateName")
+                    val state = UiState.values().firstOrNull { it.name == stateName }
+                    if (state == null) {
+                        onUnknownState(stateName)
+                        skippedOwners += namesText.split(LIST_SEP)
+                    } else {
+                        if (anchorsByState.containsKey(state)) fail(index + 1, "状态的锚点重复定义：$stateName")
+                        val names = namesText.split(LIST_SEP)
+                        try {
+                            CalibrationData.StateRule(state, emptyList(), names)
+                        } catch (e: IllegalArgumentException) {
+                            fail(index + 1, e.message ?: "锚点声明非法")
+                        }
+                        anchorsByState[state] = names
                     }
-                    if (anchorsByState.containsKey(state)) fail(index + 1, "状态的锚点重复定义：$stateName")
-                    val names = namesText.split(LIST_SEP)
-                    try {
-                        CalibrationData.StateRule(state, emptyList(), names)
-                    } catch (e: IllegalArgumentException) {
-                        fail(index + 1, e.message ?: "锚点声明非法")
-                    }
-                    anchorsByState[state] = names
                 }
                 "signal" -> {
                     val segments = value.split(SEP)
@@ -300,24 +322,6 @@ object CalibrationCodec {
         if (windows.isEmpty()) {
             throw IllegalArgumentException("标定结果没有任何 signal 行")
         }
-        val entries = windows.map { (key, window) ->
-            val own = templates[key]
-                ?: throw IllegalArgumentException("记录「${key.id}」（${key.role.token}）没有任何模板")
-            CalibrationData.SignalEntry(
-                id = key.id,
-                window = window,
-                templates = own,
-                role = key.role,
-                purpose = purposes[key].orEmpty().ifEmpty { null },
-                friend = friends[key].orEmpty().ifEmpty { null },
-                note = notes[key].orEmpty(),
-            )
-        }
-        templates.keys.forEach { key ->
-            if (key !in windows) {
-                throw IllegalArgumentException("template 引用了未定义的记录：${key.id}（${key.role.token}）")
-            }
-        }
         // 标志与锚点分别声明，同一状态可只出现在其中一行：按状态合并成一条规则
         val rulesByState = LinkedHashMap<UiState, CalibrationData.StateRule>()
         markersByState.forEach { (state, names) ->
@@ -325,6 +329,38 @@ object CalibrationCodec {
         }
         anchorsByState.forEach { (state, names) ->
             rulesByState.getOrPut(state) { CalibrationData.StateRule(state, emptyList(), names) }
+        }
+        // **仍被已知状态引用到的记录名**：只有这些名字能活下来
+        val stillReferenced = rulesByState.values
+            .flatMap { rule -> rule.signalNames + rule.anchorNames }
+            .toSet()
+        // 只被"本版不认识的状态"引用的记录 ⇒ 丢掉（否则校验会因为"锚点缺少归属状态"整份打回）
+        val droppedNames = skippedOwners - stillReferenced
+        val entries = windows
+            .filterKeys { key -> key.id !in droppedNames }
+            .map { (key, window) ->
+                val own = templates[key]
+                    ?: throw IllegalArgumentException("记录「${key.id}」（${key.role.token}）没有任何模板")
+                CalibrationData.SignalEntry(
+                    id = key.id,
+                    window = window,
+                    templates = own,
+                    role = key.role,
+                    purpose = purposes[key].orEmpty().ifEmpty { null },
+                    friend = friends[key].orEmpty().ifEmpty { null },
+                    note = notes[key].orEmpty(),
+                )
+            }
+        templates.keys.forEach { key ->
+            if (key !in windows) {
+                throw IllegalArgumentException("template 引用了未定义的记录：${key.id}（${key.role.token}）")
+            }
+        }
+        if (entries.isEmpty()) {
+            throw IllegalArgumentException(
+                "标定结果里没有任何**本版认识**的屏幕（其余状态都属于更新的版本）⇒ 等于未标定；" +
+                    "请用本版重新标注，或升级到写入这些状态的版本",
+            )
         }
         return CalibrationData(
             frameWidth = frameWidth,

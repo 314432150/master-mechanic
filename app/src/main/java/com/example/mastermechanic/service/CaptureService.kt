@@ -357,6 +357,9 @@ class CaptureService : Service() {
     /** 上一次的文字识别结果（间隔内复用，见 [OCR_MIN_INTERVAL_MS]）。仅帧线程访问。 */
     private var lastOcrCandidates: List<NameCandidate> = emptyList()
 
+    /** 产出 [lastOcrCandidates] 时**读的是哪块区域**（"x0,y0,x1,y1|…"）。仅帧线程访问。 */
+    private var lastOcrRegionKey: String = ""
+
     /** 一次文字读取的结果（[readNames]）：[fresh] = 这一轮真的读了（复用的结果不许下结论）。 */
     private data class NameReading(val candidates: List<NameCandidate>, val fresh: Boolean)
 
@@ -398,6 +401,20 @@ class CaptureService : Service() {
 
     /** 上一次"新读"之后是否下发过滑动（只测量用：没有滑动就不必量位移）。仅帧线程访问。 */
     private var serverScrollSinceRead = false
+
+    /** 因为"帧太旧"连续跳过了几轮 OCR（见 [shouldSkipOcrForStaleFrame]）。仅帧线程访问。 */
+    private var staleOcrSkips = 0
+
+    /**
+     * 第 5 步**正在等"两次一致"确认**的那一行中心 y（null = 没有待确认的命中）。
+     *
+     * 只用于一件事：确认轮**只读这一行附近的窄带**（2026-10-23），不必把整屏 28 行再读一遍。
+     * 命中稳定（可点）、下发滑动、或离开这一步时都要清空。仅帧线程访问。
+     */
+    private var pendingServerHitY: Double? = null
+
+    /** 上一次为"帧太旧所以先不读字"写日志的时刻（同一段陈旧只记一行）。仅帧线程访问。 */
+    private var lastStaleSkipNoteAtMs = 0L
 
     // ⚠ **第 9 步曾经有一套"逐屏滑屏找人"**（[ServerListScan] 的第二个实例 `friendScan`、三个好友专属
     //   调参常量 `FRIEND_SCROLL_EDGE_RATIO` / `FRIEND_SCROLL_DRAG_MS` / `FRIEND_SETTLE_MS`、
@@ -1687,6 +1704,10 @@ class CaptureService : Service() {
         if (surfaceRetries >= SURFACE_RETRY_MAX) {
             if (!surfaceRetryGaveUp) {
                 surfaceRetryGaveUp = true
+                // **让界面说同一种话**（2026-10-23 真机）：这时再显示"画面久未更新 + 重新授权"是误导 ——
+                // 同进程重新授权在这台机器上只能撑 1~14 秒（`mm-log-20261020` 00:11~00:31），
+                // 唯一有效的是换进程。置 [FrameFreshness.noteFeedDead]，标签与菜单会改说"退出重开 App"。
+                FrameFreshness.noteFeedDead()
                 MmLog.w(
                     TAG,
                     // 2026-10-20：真机上"同进程重新授权"在这种零回调状态下只能撑 1~14 秒
@@ -2528,6 +2549,11 @@ class CaptureService : Service() {
      */
     private fun namePlanOf(gray: GrayImage, state: UiState): PatrolRunner.NamePlan {
         val current = PatrolSession.current ?: return PatrolRunner.NamePlan.Waiting
+        // **帧太旧就不读字**（2026-10-23 用户口径）：真机日志里常见"这一轮用的是 1480ms 前拍到的画面"
+        // （`兜底重放`，采集队列来不及取新帧）。读这种画面只会：① 白花约 250ms 的 OCR；
+        // ② 命中行的 y 是旧的 ⇒ 下一轮还得再确认一次，等于多付一轮。等一帧新的再读更划算。
+        // ⚠ 不能无限等（万一面板持续陈旧就再也不读字了）⇒ 连续跳 [NAME_OCR_STALE_SKIP_MAX] 轮后强制读一次。
+        if (shouldSkipOcrForStaleFrame()) return PatrolRunner.NamePlan.Waiting
         // **口径 A 在采集层的贯彻**：本步一旦下过击，编排层接下来**只等期望画面**（不重新定位、不补点）
         // ⇒ 这一轮就算读出一堆名字也**没有任何用处**，却要占住帧线程：第 5 步两列 ≈0.5s、第 9 步 ≈0.3s。
         //
@@ -2544,6 +2570,8 @@ class CaptureService : Service() {
             lastServerScanNote = null
             lastServerRowYs = null
             serverScrollSinceRead = false
+            // 待确认的命中同样不跨屏：换了画面 / 换了步骤，那一行的 y 就没有意义了
+            pendingServerHitY = null
         }
         // 第 9 步的跨屏扫描状态：同样只在"正在这一步 + 画面确实是好友列表"时有效
         //（离开列表 / 点完拜访 / 换一步 ⇒ 复位；下次进列表重新从"当前这一屏"开始，再按口径回顶）
@@ -2697,7 +2725,13 @@ class CaptureService : Service() {
             )
         }
         // ② 读文字（两列各读一次后合并；节流 + 复用见 [readNames]）
-        val reading = readNames(gray, PatrolFlow.Step.PICK_SERVER, regions)
+        //
+        // **确认轮只读命中那一行的窄带**（2026-10-23，用户口径"做 A"）：上一轮刚命中、正在等"两次一致"时，
+        // 我们只关心"那一行还在不在原地"，没必要把 28 行整屏再读一遍（真机 ≈1.5s/遍）。
+        // 窄带 = 命中行 y ± [SERVER_CONFIRM_BAND_PX]（两列都取，因为不知道它落哪一列）。
+        val focusY = pendingServerHitY
+        val readRegions = if (focusY != null) confirmRegions(regions, focusY) else regions
+        val reading = readNames(gray, PatrolFlow.Step.PICK_SERVER, readRegions)
         val candidates = reading.candidates
         if (candidates.isEmpty()) {
             // 复用结果读空不算"没读到文字"（这一帧根本没再读）→ 只说"还在找"，不计失败
@@ -2776,6 +2810,8 @@ class CaptureService : Service() {
                         (recheck?.note.orEmpty()) +
                         "｜帧：${frameTag()}",
                 )
+                // 命中但还不稳 ⇒ 下一轮只读这一行附近的窄带（确认不再整屏读）
+                pendingServerHitY = if (stable) null else row.centerY
                 if (!stable) return PatrolRunner.NamePlan.Waiting
                 if (recheck?.allowed == false) {
                     // **拦下 ≠ 失败**：这一枪不发、等下一轮重新读（不 reset 扫描状态、不消耗重试次数、
@@ -2789,6 +2825,8 @@ class CaptureService : Service() {
                 }
                 lastRowFireNote = null
                 serverScan.reset() // 动手：这一段跨屏扫描结束（下次跑第 5 步从头来）
+                pendingServerHitY = null // 已经在点了，没有待确认的命中
+
                 // ④ 点**识别给出的名字框中心**（哪一列读到就点哪一列；不推断另一列、不做左右行配对）
                 PatrolRunner.NamePlan.Click(
                     frameX = row.centerX,
@@ -2799,13 +2837,28 @@ class CaptureService : Service() {
             }
 
             // 复用结果不下结论：重试要花在**新的识别结果**上
-            is RealmPickDecision.Result.Miss -> if (!reading.fresh) {
+            is RealmPickDecision.Result.Miss -> if (pendingServerHitY != null) {
+                // **确认轮读的是窄带**（2026-10-23）：这一轮没读到目标**不能当作"这一屏没有"** ——
+                // 可能只是列表动得比窄带快。丢掉待确认状态、下一轮整屏重读，绝不因此下发滑动。
+                pendingServerHitY = null
+                MmLog.i(TAG, "第 5 步：确认轮在命中行附近没再读到目标（列表可能动了）⇒ 下一轮整屏重读，先不滑")
+                PatrolRunner.NamePlan.Waiting
+            } else if (!reading.fresh) {
                 PatrolRunner.NamePlan.Waiting
             } else {
                 // **这一屏没有 ⇒ 问扫描器：回顶 / 继续往下 / 到底了就停下**（2026-09-29，硬性要求 #4）。
                 // 注意：**不**在这里报 Failed —— 那会走 `PatrolFlow.fail` 计重试，3 屏就把这一步耗成中止；
                 // 真正的"找不到"由 [ServerListScan] 在"滑动后画面不再动"或超上限时给出。
-                val scanStep = serverScan.onMiss(rowKeysOf(candidates), SystemClock.elapsedRealtime())
+                // **几何判据：最上面那一行贴着列表上沿 ⇒ 已在顶部**（2026-10-23）：原来只能靠"滑一下看动没动"
+                // 来试，真机实录已在顶部时仍要滑 2 次 + 白读 3 次屏（≈3.5s）。行 y 本来就在手上，一帧可判。
+                val atTopByGeometry = rowYs.values.minOrNull()
+                    ?.let { it - listArea.y0 <= SERVER_AT_TOP_MARGIN_PX } ?: false
+                val scanStep = serverScan.onMiss(
+                    rowKeysOf(candidates),
+                    SystemClock.elapsedRealtime(),
+                    rowYs,
+                    atTopEvidence = atTopByGeometry,
+                )
                 // 扫描的每一拍都留一句**依据**（用户 2026-09-29 追问："为什么滑到顶后还滑了好多下" ——
                 // 原来只有"目标不在这一屏"这一句，看不出它为什么认为还没到顶）
                 val scanNote = serverScan.lastDecisionNote
@@ -3386,17 +3439,69 @@ class CaptureService : Service() {
      *
      * @param regions 送去识别的区域（第 9 步一块；第 5 步两块 = 两条列竖带各一块），**只在这一轮真读时才用**。
      */
+    /**
+     * 这一轮该不该**因为帧太旧而跳过 OCR**（2026-10-23）。
+     *
+     * 判据只有两条：**本轮是"兜底重放"** 且 **那张画面已经超过 [NAME_OCR_MAX_FRAME_AGE_MS] 毫秒**。
+     * 新帧哪怕内容一样也照读（那种情况 [FrameFingerprint] 会直接复用，不花时间）。
+     *
+     * @return true = 跳过（调用方返回 Waiting）
+     */
+    private fun shouldSkipOcrForStaleFrame(): Boolean {
+        val nowMs = SystemClock.elapsedRealtime()
+        if (!currentFrameReplayed || currentFrameAtMs <= 0L) {
+            staleOcrSkips = 0
+            return false
+        }
+        val age = nowMs - currentFrameAtMs
+        if (age <= NAME_OCR_MAX_FRAME_AGE_MS) {
+            staleOcrSkips = 0
+            return false
+        }
+        if (staleOcrSkips >= NAME_OCR_STALE_SKIP_MAX) {
+            // 一直陈旧 ⇒ 强制读一次（宁可读旧画面，也不要这一步彻底不读字）
+            staleOcrSkips = 0
+            return false
+        }
+        staleOcrSkips++
+        if (nowMs - lastStaleSkipNoteAtMs > STALE_SKIP_NOTE_INTERVAL_MS) {
+            lastStaleSkipNoteAtMs = nowMs
+            MmLog.i(TAG, "本帧 ${age}ms 前的（兜底重放）⇒ 这一轮先不读字，等一帧新的（第 $staleOcrSkips/$NAME_OCR_STALE_SKIP_MAX 次）")
+        }
+        return true
+    }
+
+    /**
+     * **确认轮要读的窄带**（2026-10-23）：沿用每一列的左右边界，只把纵向收成"命中行 ± [SERVER_CONFIRM_BAND_PX]"。
+     *
+     * 返回空列表 ⇒ 调用方退回整屏读（怕的是命中行贴着区域边缘、交集太薄）。
+     */
+    private fun confirmRegions(regions: List<PixelBounds>, centerY: Double): List<PixelBounds> {
+        val narrowed = regions.mapNotNull { region ->
+            val y0 = maxOf(region.y0, (centerY - SERVER_CONFIRM_BAND_PX).toInt())
+            val y1 = minOf(region.y1, (centerY + SERVER_CONFIRM_BAND_PX).toInt())
+            if (y1 - y0 < SERVER_CONFIRM_BAND_PX.toInt()) null else PixelBounds(region.x0, y0, region.x1, y1)
+        }
+        return narrowed.ifEmpty { regions }
+    }
+
     private fun readNames(
         gray: GrayImage,
         step: PatrolFlow.Step,
         regions: List<PixelBounds>,
     ): NameReading {
         val nowMs = SystemClock.elapsedRealtime()
-        if (lastOcrStep == step && nowMs - lastOcrAtMs < OCR_MIN_INTERVAL_MS) {
+        // **区域签名**（2026-10-23）：确认轮会换成"命中行附近的窄带"，与整屏那一份**不能互相复用**
+        // （拿窄带的候选去回答"整屏有没有目标"就是错判）。
+        val regionKey = regions.joinToString("|") { "${it.x0},${it.y0},${it.x1},${it.y1}" }
+        if (lastOcrStep == step && lastOcrRegionKey == regionKey &&
+            nowMs - lastOcrAtMs < OCR_MIN_INTERVAL_MS
+        ) {
             return NameReading(lastOcrCandidates, fresh = false)
         }
         lastOcrAtMs = nowMs
         lastOcrStep = step
+        lastOcrRegionKey = regionKey
         lastOcrCandidates = regions.flatMap { nameReader.read(gray, it) }
         return NameReading(lastOcrCandidates, fresh = true)
     }
@@ -4772,6 +4877,36 @@ class CaptureService : Service() {
          * `滑动下发｜…屏幕点: (x, y) -> (x2, y2)` 与滑完那一屏读到的行，照它调即可。
          */
         private const val SCROLL_EDGE_RATIO = 0.25
+
+        /**
+         * **"最上行贴着列表上沿"的容差**（px，2026-10-23）：行中心离列表区域上沿小于它 ⇒ 判定已在顶部。
+         *
+         * 取一行的高度（真机实测 ≈93px）：行中心在"上沿 + 半行"以内就说明这一行已经顶到边了；
+         * 再放宽会把"上沿上方还有半行没露出来"的中间态误判成顶部。
+         */
+        private const val SERVER_AT_TOP_MARGIN_PX = 96.0
+
+        /**
+         * **确认轮读的窄带半径**（px，2026-10-23）：命中行 y ± 它。
+         *
+         * 取 140（约 1.5 行高，行高真机 ≈93px）：要能容下列表回弹一次（实测 Δ 约 60px）与行高误差，
+         * 又不能大到把整屏装进来（那就退化成整屏读了）。
+         */
+        private const val SERVER_CONFIRM_BAND_PX = 140.0
+
+        /**
+         * "帧太旧就不读字"的门槛（ms，2026-10-23）：兜底重放的画面超过它就不再拿去 OCR。
+         *
+         * 取值依据：真机日志里陈旧重放常见 1000~1500ms，而一轮处理 ≈385ms ⇒ 500ms 已经明显旧；
+         * 再放宽就失去意义（读出来的 y 一定对不上当前画面）。
+         */
+        private const val NAME_OCR_MAX_FRAME_AGE_MS = 500L
+
+        /** 连续跳过几轮后**强制读一次**（防"面板一直陈旧 ⇒ 这一步再也不读字"）。 */
+        private const val NAME_OCR_STALE_SKIP_MAX = 3
+
+        /** "因帧太旧跳过 OCR"这句话的最小记录间隔（ms），避免每轮刷屏。 */
+        private const val STALE_SKIP_NOTE_INTERVAL_MS = 2_000L
 
         /** 一次列表拖动的手势时长（ms），见 [SCROLL_EDGE_RATIO]。 */
         private const val SCROLL_DRAG_MS = 300L

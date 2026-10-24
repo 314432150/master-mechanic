@@ -639,7 +639,14 @@ class FloatingWindow(private val context: Context) {
             )
         }
         val frameAgeMs = FrameFreshness.ageMs()
-        if (frameAgeMs != null && FrameFreshness.isStale()) {
+        // **中途断流且自救无效**（2026-10-23）：这时帧龄是有的，但"久未更新 + 重新授权"是误导 ——
+        // 同进程重新授权救不回来（只有换进程有效）⇒ 单独一句，并且**不再显示**下面那条普通的停更行。
+        val feedDead = FrameFreshness.isFeedDead()
+        if (feedDead) {
+            container.addView(
+                reportRow(context.getString(R.string.floating_frame_feed_dead_notice, (frameAgeMs ?: 0L) / 1000)),
+            )
+        } else if (frameAgeMs != null && FrameFreshness.isStale()) {
             container.addView(
                 reportRow(context.getString(R.string.floating_frame_stalled_notice, frameAgeMs / 1000)),
             )
@@ -1549,8 +1556,11 @@ class FloatingWindow(private val context: Context) {
             ?: PatrolStatus.statusLine(state, PatrolSession.lastNote)
             ?: context.getString(R.string.floating_menu_running)
         val alerted = PatrolStatus.canResume(state)
-        val progressView = statusRow(progress, STATUS_COLOR)
-        val statusView = statusRow(status, if (alerted) REASON_COLOR else STATUS_COLOR)
+        // 进度行**恒定单行**（它每步都变，行数一变面板高度就变，正在点菜单的人会点错行）；
+        // 状态行允许折行（2026-10-23 用户报障："异常中止后原因一行显示不完，被省略了"）：
+        // 中止 / 失败是**终态**，那之后这句话不再变，折行撑高不会被后续刷新带着跳。
+        val progressView = statusRow(progress, STATUS_COLOR, maxLines = 1)
+        val statusView = statusRow(status, if (alerted) REASON_COLOR else STATUS_COLOR, maxLines = STATUS_MAX_LINES)
         // 两行都只作为"上面那个语义节点的一部分"（不分别可聚焦）；中止 / 暂停那一句另有
         // 手柄上的主动播报（[applyHandleAlert]），不依赖这里的 live region。
         progressView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -1571,9 +1581,10 @@ class FloatingWindow(private val context: Context) {
      * - 左内边距与功能行文字**对齐**（8 + 图标槽 + 图标后间距），缩进在图标槽里，
      *   读上去像"这组行的表头"。
      */
-    private fun statusRow(text: String, color: Int): TextView = textView(11f, color).apply {
+    private fun statusRow(text: String, color: Int, maxLines: Int = 1): TextView = textView(11f, color).apply {
         this.text = text
-        maxLines = 1
+        // 多行时仍然限宽（不把面板撑宽去多吞游戏触摸），但**换行**而不是砍掉后半句
+        this.maxLines = maxLines
         ellipsize = TextUtils.TruncateAt.END
         // **限宽用 [STATUS_MAX_WIDTH_DP]，不是 [REASON_MAX_WIDTH_DP]**（2026-09-29 用户报障：
         // "悬浮窗根菜单顶部步骤说明显示不完全"）。原因条那 200dp 是给**异常长句**兜底的；
@@ -3738,5 +3749,17 @@ class FloatingWindow(private val context: Context) {
          * 仍保持**单行 + 省略号**：行数一变菜单高度就变，正在点菜单的人会点错行（见 [statusRow]）。
          */
         const val STATUS_MAX_WIDTH_DP = 260
+
+        /**
+         * 状态行最多几行（2026-10-23 用户报障："异常中止后原因一行显示不完，被省略了"）。
+         *
+         * 只有**状态行**放宽：它是"为什么停"的答案，且中止 / 失败是**终态**（之后不再刷新，
+         * 撑高不会被后续内容带着跳）。上面的进度行仍恒单行 —— 它每步都变，行数一变面板高度就变，
+         * 正在点菜单的人会点错行。
+         *
+         * 取 3：中止原因是"中止：等了 15 秒仍未识别出要等的画面（期望「好友列表」，现在是「大厅」）"
+         * 这种量级，260dp/11sp 约 23 字一行 ⇒ 3 行够。
+         */
+        const val STATUS_MAX_LINES = 3
     }
 }
