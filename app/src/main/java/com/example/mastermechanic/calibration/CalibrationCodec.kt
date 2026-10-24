@@ -155,6 +155,14 @@ object CalibrationCodec {
         val markersByState = LinkedHashMap<UiState, List<String>>()
         val anchorsByState = LinkedHashMap<UiState, List<String>>()
         val windows = LinkedHashMap<EntryKey, SearchWindow>()
+
+        /**
+         * 被**本版不认识的状态**引用过的记录 ID（2026-10-25）。
+         *
+         * 跳过状态行只是第一步 —— 它们点名的记录若还留着，校验会以"锚点缺少归属状态"把整份结果打回
+         * （旧版真机就这么撞了第二道）。解析完只保留仍被已知状态引用的那些。
+         */
+        val skippedOwners = LinkedHashSet<String>()
         val templates = LinkedHashMap<EntryKey, MutableList<Template>>()
         val purposes = LinkedHashMap<EntryKey, String>()
         val notes = LinkedHashMap<EntryKey, String>()
@@ -210,6 +218,9 @@ object CalibrationCodec {
                     val state = parseStateName(stateName)
                     if (state == null) {
                         onUnknownState(stateName)
+                        // 它引用的记录也要记账：只被未知状态引用的记录如果留着，校验会以
+                        // "锚点缺少归属状态"把整份结果打回（2026-10-25 旧版真机撞的第二道）
+                        skippedOwners += signalsText.split(LIST_SEP)
                     } else {
                         if (markersByState.containsKey(state)) fail(index + 1, "状态重复定义：$stateName")
                         val names = signalsText.split(LIST_SEP)
@@ -226,6 +237,7 @@ object CalibrationCodec {
                     val state = parseStateName(stateName)
                     if (state == null) {
                         onUnknownState(stateName)
+                        skippedOwners += namesText.split(LIST_SEP)
                     } else {
                         if (anchorsByState.containsKey(state)) fail(index + 1, "状态的锚点重复定义：$stateName")
                         val names = namesText.split(LIST_SEP)
@@ -330,24 +342,6 @@ object CalibrationCodec {
         if (windows.isEmpty()) {
             throw IllegalArgumentException("标定结果没有任何 signal 行")
         }
-        val entries = windows.map { (key, window) ->
-            val own = templates[key]
-                ?: throw IllegalArgumentException("记录「${key.id}」（${key.role.token}）没有任何模板")
-            CalibrationData.SignalEntry(
-                id = key.id,
-                window = window,
-                templates = own,
-                role = key.role,
-                purpose = purposes[key].orEmpty().ifEmpty { null },
-                friend = friends[key].orEmpty().ifEmpty { null },
-                note = notes[key].orEmpty(),
-            )
-        }
-        templates.keys.forEach { key ->
-            if (key !in windows) {
-                throw IllegalArgumentException("template 引用了未定义的记录：${key.id}（${key.role.token}）")
-            }
-        }
         // 标志与锚点分别声明，同一状态可只出现在其中一行：按状态合并成一条规则
         val rulesByState = LinkedHashMap<UiState, CalibrationData.StateRule>()
         markersByState.forEach { (state, names) ->
@@ -355,6 +349,38 @@ object CalibrationCodec {
         }
         anchorsByState.forEach { (state, names) ->
             rulesByState.getOrPut(state) { CalibrationData.StateRule(state, emptyList(), names) }
+        }
+        // **仍被已知状态引用到的记录名**：只有这些能活下来；只被未知状态点名的记录直接丢弃，
+        // 否则它们会变成"没有归属状态的锚点" ⇒ 校验失败 ⇒ 整份结果照样报废。
+        val stillReferenced = rulesByState.values
+            .flatMap { rule -> rule.signalNames + rule.anchorNames }
+            .toSet()
+        val droppedNames = skippedOwners - stillReferenced
+        val entries = windows
+            .filterKeys { key -> key.id !in droppedNames }
+            .map { (key, window) ->
+                val own = templates[key]
+                    ?: throw IllegalArgumentException("记录「${key.id}」（${key.role.token}）没有任何模板")
+                CalibrationData.SignalEntry(
+                    id = key.id,
+                    window = window,
+                    templates = own,
+                    role = key.role,
+                    purpose = purposes[key].orEmpty().ifEmpty { null },
+                    friend = friends[key].orEmpty().ifEmpty { null },
+                    note = notes[key].orEmpty(),
+                )
+            }
+        templates.keys.forEach { key ->
+            if (key !in windows) {
+                throw IllegalArgumentException("template 引用了未定义的记录：${key.id}（${key.role.token}）")
+            }
+        }
+        if (entries.isEmpty()) {
+            throw IllegalArgumentException(
+                "标定结果里没有任何**本版认识**的屏幕（其余状态都属于更新的版本）⇒ 等于未标定；" +
+                    "请用本版重新标注，或升级到写入这些状态的版本",
+            )
         }
         return CalibrationData(
             frameWidth = frameWidth,
