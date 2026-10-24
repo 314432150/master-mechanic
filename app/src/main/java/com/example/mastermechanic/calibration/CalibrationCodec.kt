@@ -96,7 +96,11 @@ object CalibrationCodec {
     }
 
     /** 文本 → 产物（严格校验；任何非法都抛 [IllegalArgumentException]，消息含行号）。 */
-    fun decode(text: String): CalibrationData {
+    /**
+     * @param onUnknownState 遇到**本版不认识的状态名**时回调（每行一次）。调用方拿去写日志；
+     *   默认空实现，仍保持"纯逻辑、JVM 可测"。
+     */
+    fun decode(text: String, onUnknownState: (String) -> Unit = {}): CalibrationData {
         // 预扫版本：signal 行的段数随版本变化（v4 起多一段「归属好友名」），得先知道版本才能分段
         val declaredVersionInText = text.lineSequence()
             .map { it.trim() }
@@ -177,35 +181,39 @@ object CalibrationCodec {
                 }
                 "state" -> {
                     val (stateName, signalsText) = splitPair(value) ?: fail(index + 1, "state 行缺少分隔：$value")
-                    val state = try {
-                        UiState.valueOf(stateName)
-                    } catch (_: IllegalArgumentException) {
-                        fail(index + 1, "未知状态名：$stateName")
+                    // **本版不认识的状态 ⇒ 跳过这一行，而不是整份产物报废**（2026-10-24 用户口径）：
+                    // 标定产物是**跨版本共享**的一份文件——新版功能（例如立牌流程的 `BADGE_CLAIM`）
+                    // 会往里写自己的状态；旧版照着解析就会"未知状态名"整份拒绝，回退成未标定，
+                    // 于是所有画面都认不出。跳过 = 只丢那一屏的规则，其余照常可用。
+                    val state = UiState.values().firstOrNull { it.name == stateName }
+                    if (state == null) {
+                        onUnknownState(stateName)
+                    } else {
+                        if (markersByState.containsKey(state)) fail(index + 1, "状态重复定义：$stateName")
+                        val names = signalsText.split(LIST_SEP)
+                        try {
+                            CalibrationData.StateRule(state, names)
+                        } catch (e: IllegalArgumentException) {
+                            fail(index + 1, e.message ?: "规则非法")
+                        }
+                        markersByState[state] = names
                     }
-                    if (markersByState.containsKey(state)) fail(index + 1, "状态重复定义：$stateName")
-                    val names = signalsText.split(LIST_SEP)
-                    try {
-                        CalibrationData.StateRule(state, names)
-                    } catch (e: IllegalArgumentException) {
-                        fail(index + 1, e.message ?: "规则非法")
-                    }
-                    markersByState[state] = names
                 }
                 "anchor" -> {
                     val (stateName, namesText) = splitPair(value) ?: fail(index + 1, "anchor 行缺少分隔：$value")
-                    val state = try {
-                        UiState.valueOf(stateName)
-                    } catch (_: IllegalArgumentException) {
-                        fail(index + 1, "未知状态名：$stateName")
+                    val state = UiState.values().firstOrNull { it.name == stateName }
+                    if (state == null) {
+                        onUnknownState(stateName)
+                    } else {
+                        if (anchorsByState.containsKey(state)) fail(index + 1, "状态的锚点重复定义：$stateName")
+                        val names = namesText.split(LIST_SEP)
+                        try {
+                            CalibrationData.StateRule(state, emptyList(), names)
+                        } catch (e: IllegalArgumentException) {
+                            fail(index + 1, e.message ?: "锚点声明非法")
+                        }
+                        anchorsByState[state] = names
                     }
-                    if (anchorsByState.containsKey(state)) fail(index + 1, "状态的锚点重复定义：$stateName")
-                    val names = namesText.split(LIST_SEP)
-                    try {
-                        CalibrationData.StateRule(state, emptyList(), names)
-                    } catch (e: IllegalArgumentException) {
-                        fail(index + 1, e.message ?: "锚点声明非法")
-                    }
-                    anchorsByState[state] = names
                 }
                 "signal" -> {
                     val segments = value.split(SEP)
