@@ -12,6 +12,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Base64
 
 /**
  * 标定产物编解码单测（T1-5a）：文本往返保真、确定性、非法输入严格拒绝，
@@ -73,6 +74,32 @@ class CalibrationCodecTest {
             listOf(UiState.FARM, UiState.HALL),
             decoded.stateRules.map { it.state },
         )
+    }
+
+    /**
+     * **只被未知状态引用的记录要一起丢掉**（2026-10-25 真机撞的第二道）。
+     *
+     * 光跳过状态行不够：它们点名的锚点还留着 ⇒ `CalibrationData` 校验报"锚点缺少归属状态"
+     * ⇒ 整份结果照样报废、回退未标定。这条用例钉住"孤儿记录被丢弃、其余照常"。
+     */
+    @Test
+    fun recordsOnlyReferencedByUnknownStatesAreDropped() {
+        val good = CalibrationCodec.encode(sampleData())
+        val text = good +
+            "\nsignal=only_for_new|marker|0.1,0.1,0.2,0.2|||\n" +
+            "template=only_for_new|marker|12|9|" +
+            Base64.getEncoder().encodeToString(SyntheticImages.pattern(12, 9, 999)) + "\n" +
+            "state=NOT_A_STATE|only_for_new\n"
+        val skipped = mutableListOf<String>()
+
+        val decoded = CalibrationCodec.decode(text) { skipped += it }
+
+        assertEquals(listOf("NOT_A_STATE"), skipped)
+        assertTrue(
+            "只被未知状态引用的记录必须被丢掉",
+            decoded.signals.none { it.id == "only_for_new" },
+        )
+        assertEquals("已知记录不受影响", 2, decoded.signals.size)
     }
 
     @Test
