@@ -22,11 +22,12 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         /**
-         * M6 换 OCR 引擎的 A/B 开关（计划 §7 步骤 4）：`mlkit`（默认）/ `paddle`。
-         * 用 `-PocrEngine=paddle` 打包即可切到 PP-OCRv4 rec，**不改一行代码**就得到对照构建。
-         * 默认保持 mlkit，是为了守住验收项「开关切回 ML Kit 时行为与改前一致」。
+         * OCR 引擎开关（2026-10-24 用户口径）：
+         * - `hybrid`（**本条线默认**）：名称走 ML Kit，**只有立牌分数**走 Paddle rec（花体 999 只有它能读对）；
+         * - `mlkit`：名称与分数都走 ML Kit（最保守，999 会读成 666）；
+         * - `paddle`：名称也走 Paddle（只作 A/B 对照，实测比 ML Kit 慢）。
          */
-        val ocrEngine = (project.findProperty("ocrEngine") as String?) ?: "mlkit"
+        val ocrEngine = (project.findProperty("ocrEngine") as String?) ?: "hybrid"
         buildConfigField("String", "OCR_ENGINE", "\"$ocrEngine\"")
 
         /**

@@ -306,8 +306,14 @@ class CaptureService : Service() {
      * （纯立牌流程），那时分数仍要能用 Paddle 读。
      */
     private val paddleReader: PaddleOcrReader? by lazy {
-        if (BuildConfig.OCR_ENGINE.lowercase() == "paddle") PaddleOcrReader(OrtRecEngine(assets)) else null
+        if (ocrEngine == "paddle" || ocrEngine == "hybrid") PaddleOcrReader(OrtRecEngine(assets)) else null
     }
+
+    /** 构建开关的小写形式（`mlkit` / `hybrid` / `paddle`）。 */
+    private val ocrEngine: String get() = BuildConfig.OCR_ENGINE.lowercase()
+
+    /** 名称读取是不是走 Paddle（只有 `paddle` 档是；`hybrid` 与 `mlkit` 都走 ML Kit）。 */
+    private val namesFromPaddle: Boolean get() = ocrEngine == "paddle"
 
     /**
      * 按构建开关装配**名称**读取引擎（M6，计划 `m6-ocr-engine.md` §7 步骤 4）。
@@ -319,8 +325,21 @@ class CaptureService : Service() {
      * 剩下要补的是**让 Paddle 自带检测器**（像 ML Kit 那样整块进、行自己出），见计划文档。
      */
     private fun createNameReader(): NameReader {
-        if (BuildConfig.OCR_ENGINE.lowercase() != "paddle") return MlKitNameReader()
-        MmLog.i(TAG, "文字识别引擎：Paddle（PP-OCRv4 mobile rec，rec-only）")
+        // **2026-10-24 用户口径：立牌这条线改成"混合"** —— 名称一律交回 ML Kit（整块一次读、自带切行、
+        // 低频字更准），Paddle 只负责**立牌分数**那一格（花体 999 只有它能读对）。
+        // `paddle` 档保留下来只作 A/B 对照，不再是默认。
+        if (!namesFromPaddle) {
+            MmLog.i(
+                TAG,
+                if (ocrEngine == "hybrid") {
+                    "文字识别引擎：混合（名称 ML Kit / 分数 Paddle rec）"
+                } else {
+                    "文字识别引擎：ML Kit（名称与分数都走 ML Kit）"
+                },
+            )
+            return MlKitNameReader()
+        }
+        MmLog.i(TAG, "文字识别引擎：Paddle（PP-OCRv4 mobile rec，rec-only；A/B 对照档）")
         val reader = paddleReader ?: PaddleOcrReader(OrtRecEngine(assets))
         return FallbackNameReader(primary = reader) { MlKitNameReader() }
     }
@@ -2895,7 +2914,9 @@ class CaptureService : Service() {
         // **第一遍只读「微信XXX区」那一段**（2026-10-23 A 方案）：rec 的成本 ≈ 行数 × 行宽，
         // 区号永远是行首那段 ⇒ 横向裁到 45% 就能判"这一屏有没有目标"，单列 0.70s → ≈0.3s。
         // 判定仍用 [RealmPickDecision]（**区号为主**，平台内唯一）。
-        val stripRegions = if (focusY == null) baseRegions.map { leftStripOf(it) } else baseRegions
+        // ⚠ 裁窄**只在名称走 Paddle 时**用（2026-10-24）：ML Kit 是整块读、名字要完整（好友/区服名
+        // 都要拿全等去比），横着裁一半会把名字切掉 ⇒ 混合方案下必须整宽读。
+        val stripRegions = if (focusY == null && namesFromPaddle) baseRegions.map { leftStripOf(it) } else baseRegions
         var reading = readNames(gray, PatrolFlow.Step.PICK_SERVER, stripRegions)
         // **兜底：裁窄后一个数字都没读到 ⇒ 这一刀没裁对**（列宽/字符起点与预想不同）⇒ 本轮退回整列读。
         // 这样最坏也就是今天的速度，不会因为裁窄而"看不见"。
@@ -2905,7 +2926,7 @@ class CaptureService : Service() {
         val looksComplete = reading.candidates.any { candidate -> candidate.text.contains('区') }
         val noDigits = reading.candidates.isEmpty() ||
             reading.candidates.none { candidate -> candidate.text.any(Char::isDigit) }
-        if (focusY == null && reading.fresh && (noDigits || !looksComplete)) {
+        if (focusY == null && namesFromPaddle && reading.fresh && (noDigits || !looksComplete)) {
             MmLog.w(
                 TAG,
                 "第 5 步：裁窄（左 ${(SERVER_NUMBER_STRIP_RATIO * 100).toInt()}%）后" +
