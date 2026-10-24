@@ -27,7 +27,6 @@ import com.example.mastermechanic.log.MmLog
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
-import com.example.mastermechanic.BuildConfig
 import com.example.mastermechanic.MainActivity
 import com.example.mastermechanic.R
 import com.example.mastermechanic.action.ClickDispatch
@@ -270,33 +269,12 @@ class CaptureService : Service() {
     private var lastOcrTryTick: Long = FriendListOcrSignal.tick
 
     /**
-     * 名称读取通道（M4-T4-3）：按名称定位那两步的**眼睛**。
+     * 名称读取通道（M4-T4-3）：按名称定位那两步的**眼睛**，安卓侧实现是 ML Kit 中文识别。
      *
      * 只在第 5 / 9 步 + 对应的列表画面才会被调用（[namePlanOf]）—— 引擎初始化是懒的，
      * 不跑流程就不会付出这份代价。
-     *
-     * 2026-10-23（M6 换 OCR 引擎）：具体装哪套引擎由 [createNameReader] 按 `BuildConfig.OCR_ENGINE` 决定，
-     * 默认仍是 ML Kit；切到 `paddle` 时外面套一层 [FallbackNameReader]（模型缺失 / 初始化失败 ⇒ 回退并写日志）。
-     * 用 `by lazy` 而不是直接初始化：Paddle 那条路要读 `assets`，而 Service 的 Context 在构造期还没挂上。
      */
-    private val nameReader: NameReader by lazy { createNameReader() }
-
-    /**
-     * 按构建开关装配文字识别引擎（M6，计划 `m6-ocr-engine.md` §7 步骤 4）。
-     *
-     * - `mlkit`（默认）：与改前**完全一致**，用于"回退时行为不变"这条验收；
-     * - `paddle`：PP-OCRv4 mobile rec（rec-only，逐行带），外面套 [FallbackNameReader]。
-     *
-     * `-PocrEngine=paddle` 打出来的包才走新引擎 ⇒ 同一份代码可作 A/B 对照，不需要两次改动。
-     */
-    private fun createNameReader(): NameReader {
-        val choice = BuildConfig.OCR_ENGINE.lowercase()
-        if (choice != "paddle") return MlKitNameReader()
-        MmLog.i(TAG, "文字识别引擎：Paddle（PP-OCRv4 mobile rec，rec-only）")
-        return FallbackNameReader(primary = PaddleNameReader.of(OrtRecEngine(assets))) {
-            MlKitNameReader()
-        }
-    }
+    private val nameReader: NameReader = MlKitNameReader()
 
     /**
      * ~~本次预设要拜访的好友名~~（2026-09-21 起改由 [PatrolSession.targetFriend] 承载）——

@@ -17,11 +17,6 @@ mlkitTextRecognitionChinese = "16.0.1"
 # 用**字符串路由**（不用 2.8+ 的 type-safe routes）：那需要 kotlinx-serialization 插件，
 # 为一张"换壳"卡不值得再加一个插件（U1 的验收是行为不变、仅换壳）。
 navigationCompose = "2.9.0"
-# 换 OCR 引擎（M6，2026-10-23 用户拍板「全部改为 Paddle」）：ONNX Runtime Android 跑 PP-OCRv4 mobile rec。
-# 为什么是它而不是计划里的 ncnn：ncnn 要 NDK + CMake + 自写 C++ JNI，且本机没装 NDK；
-# ORT 是 Maven 依赖 + Java API，`abiFilters` 只留 arm64 后原生库 gzip 约 6MB，
-# 与「删掉 ML Kit 的 10.55MB」相抵。体积账见 docs/verification/m6/t6-1-ocr-offline-gate.md。
-onnxruntimeAndroid = "1.20.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -44,7 +39,6 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 androidx-compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
 mlkit-text-recognition-chinese = { group = "com.google.mlkit", name = "text-recognition-chinese", version.ref = "mlkitTextRecognitionChinese" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
-onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntimeAndroid" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
