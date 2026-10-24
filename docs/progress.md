@@ -10933,3 +10933,15 @@
 - **回迁 `stage/m6`**：8 笔 cherry-pick（通用 OCR/巡查/采集）+ 2 笔手工移植（滑动回告护栏、菜单状态行折行），
   立牌专属 12 笔**不动**；`CaptureService` 只有 `namePlanOf` 开头一处冲突（取 m6 的 `PatrolSession.current` +
   新判据）。`:app:test -PfastTests` 全绿、`assembleDebug -PocrEngine=paddle` 通过。
+
+### 2026-10-24（M6 回退：OCM 引擎换回 ML Kit）
+
+- **用户口径**：对 Paddle 的识别速度与准确率都不满意，且立牌活动是短期需求 ⇒ **`stage/m6` 整体换回 ML Kit**
+  （撤掉 ORT / 模型 / 依赖 / 开关 / 行带与批量那套），立牌线改成**混合**（名称 ML Kit、只有分数走 Paddle）。
+- **做法**：8 笔 OCR 相关提交逐笔 revert（裁窄 → 窄带 → 几何判顶 → 帧龄跳过 → Miss 节拍 → 批量 → 指纹 → 引擎本体），
+  与 OCR 无关的保留：采集断流提示、滑动回告护栏、菜单状态行折行、标定结果容错（未知状态名跳过）。
+- **连带恢复**：`NFR-03` 回到 **≤25MB**（32MB 是为装 ≈13MB 的模型放宽的；引擎撤了就不该留着这条豁免），
+  debug APK **47.96MB**（此前 paddle 版 60.16MB）。
+- **保留的历史**：`docs/plans/m6-ocr-engine.md` 仍在（记录方案与实测），但其 §4.7 的性能结论**不再适用**；
+  离线验证证据文档随引擎一起删除。
+- 验证：`:app:test -PfastTests` 全绿、`:app:assembleDebug` 通过（默认即 ML Kit，没有引擎开关了）。
