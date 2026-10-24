@@ -298,19 +298,7 @@ class ServerListScan(
      * @param rowKeys 这一屏读到的行键（调用方生成；**优先取数字**，见类注释）
      * @param nowMs 单调时钟（与 [onScrollDispatched] 同一来源）
      */
-    fun onMiss(
-        rowKeys: Set<String>,
-        nowMs: Long,
-        rowYs: Map<String, Double> = emptyMap(),
-        /**
-         * **几何判据：这一屏的最上面一行已经贴着「列表区域」上沿**（2026-10-23，调用方算好传进来）。
-         *
-         * 为什么加它：原来判"在不在顶部"只能**滑一下看它动没动**，而且要滑两次确认
-         * （真机实录：已经在顶部时仍滑 2 次 + 白读 3 次屏 ≈3.5 秒，用户报"第二屏的服务器还是很慢"）。
-         * 而每一行的 y 本来就在手上 —— 最上行贴着上沿，一帧就能判定，不必用滑动去试。
-         */
-        atTopEvidence: Boolean = false,
-    ): Step {
+    fun onMiss(rowKeys: Set<String>, nowMs: Long, rowYs: Map<String, Double> = emptyMap()): Step {
         if (awaitingOutcome) {
             val pendingMs = nowMs - awaitingSinceMs
             if (pendingMs < OUTCOME_PENDING_TIMEOUT_MS) {
@@ -404,12 +392,6 @@ class ServerListScan(
                         proposeDown("刚登录进来，列表本来就在顶部 ⇒ 跳过回顶，直接往下找")
                     }
 
-                    // **几何判据**（2026-10-23）：最上面那一行已经贴着列表上沿 ⇒ 就是顶部，不必滑一下试
-                    atTopEvidence -> {
-                        learnTop(rowKeys)
-                        proposeDown("最上面那一行已经贴着列表区域上沿（几何判据）⇒ 判定已在顶部，跳过回顶")
-                    }
-
                     else -> {
                         phase = Phase.TO_TOP
                         proposeTowardsTop(overlap)
@@ -434,15 +416,6 @@ class ServerListScan(
                         "回顶已达额度（滑 $topScrolls 下 / 累计上移 ${moved}px，上限 ${MAX_TO_TOP_PX.toInt()}px）" +
                             "⇒ 当作已到顶，转为往下找",
                     )
-                }
-
-                // **几何判据：回顶途中已经看到最上行贴上沿** ⇒ 直接认定到顶（省掉"再滑一次确认"那一来一回）
-                atTopEvidence -> {
-                    phase = Phase.DOWN
-                    topMovedPx = 0.0
-                    noMovementStreak = 0
-                    learnTop(rowKeys)
-                    proposeDown("最上面那一行已经贴着列表区域上沿（几何判据）⇒ 判定已到顶，不必再滑一次确认")
                 }
 
                 // **只"没动"一次不算到顶**（可能是手势被吞 / 被拒）：再滑一次确认（见 [EDGE_PROBE_MAX]）
