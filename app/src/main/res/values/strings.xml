@@ -478,12 +478,14 @@
          与 `calibration_annotate_hint_icon` 已删）⇒ 入口改成「用法」二字按钮，正文拆成下面六条
          （一条一句、每条 ≤60 字），工作台右上角常驻 1 行要点由 `calibration_browse_hint_short` 承担。 -->
     <string name="calibration_usage">用法</string>
-    <string name="calibration_browse_hint_short">左右滑换帧 · 点「框选」建框 · 双指缩放</string>
-    <string name="calibration_usage_gestures">浏览：左右滑换帧。框选：拖空白建框、拖框内移动、拖白线缩放、点左上 ✕ 清除重画。</string>
+    <!-- 2026-10-25 用户新增：首尾循环换帧 + 双指捏合直接进框选 ⇒ 浏览态这行要点同步改口径
+         （仍是一行、≤24 字；「点框选建框」不再写，底部那颗按钮自解释）。 -->
+    <string name="calibration_browse_hint_short">左右滑换帧（首尾循环）· 双指捏合直接进框选</string>
+    <string name="calibration_usage_gestures">浏览：左右滑换帧（首尾循环），双指捏合直接进框选。框选：拖空白建框、拖框内移动、拖白线缩放、点 ✕ 清除。</string>
     <string name="calibration_usage_write">「所属界面」选这个元素属于谁；「记录类型」可多选 —— 标志判界面、锚点定点击位置。</string>
     <string name="calibration_usage_purpose">勾了锚点、而该界面有多个可点控件时，还要选「锚点用途」；两样都要就两个都勾。</string>
     <string name="calibration_usage_color">框线颜色：标志红、锚点青、两个都勾是红青双线、都没勾是琥珀黄（还没决定写什么）。</string>
-    <string name="calibration_usage_zoom">双指缩放 / 平移画面，点下方倍数回到适应大小；尽量只框目标本身与稳定背景。</string>
+    <string name="calibration_usage_zoom">框选里双指缩放 / 平移画面，点下方倍数回到适应大小；尽量只框目标本身与稳定背景。</string>
     <string name="calibration_usage_delete">帧条上滑或下滑删掉这一帧（会先问一次，删错点「撤销」找回）。</string>
     <string name="calibration_hint_close">知道了</string>
     <string name="calibration_zoom_value">画面 ×%1$s</string>

@@ -193,8 +193,22 @@ internal fun CalibrationWorkbench(
     // 写入条件不足 → 弹窗列缺项（用户 2026-09-13：从顶部条文案改为弹窗提示）
     var missingWrite by remember { mutableStateOf<List<Int>?>(null) }
     var loaded by remember(selectedFrame) { mutableStateOf(false) }
-    val listState = rememberLazyListState()
+    val frameCount = frames.size
     val frameIndex = frames.indexOf(selectedFrame)
+    // 帧条走**虚拟索引**（见 [FrameLoop]）：条目数取大值、下标取模 ⇒ 滑过最后一帧自然接上第一帧
+    // （2026-10-25 用户需求："帧列表支持最后一帧和第一帧滑动时循环切换"）。
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = FrameLoop.pageOf(frameIndex.coerceAtLeast(0), frameCount),
+    )
+    /**
+     * 浏览态双指捏合带进框选的倍数 / 焦点（null = 从 1 倍开始框）。
+     *
+     * 随帧重置：种子说的是"这一帧的哪儿要放大"，换帧之后就没有意义了。
+     */
+    var pinchSeed by remember(selectedFrame) { mutableStateOf<PinchSeed?>(null) }
+    // 离开框选的路径不止一条（✕ / 写入成功后自动回浏览 / 关掉整个工作台）⇒ 统一在这里清，
+    // 否则下次从「框选」按钮进来会莫名其妙停在放大状态。
+    LaunchedEffect(selectMode) { if (!selectMode) pinchSeed = null }
     val preview by produceState<CalibrationFrames.Preview?>(null, selectedFrame) {
         loaded = false
         value = selectedFrame?.let {
@@ -202,12 +216,18 @@ internal fun CalibrationWorkbench(
         }
         loaded = true
     }
-    // 选中帧随动：滑到缩略图条对应位置
-    LaunchedEffect(selectedFrame) {
-        if (frameIndex >= 0 &&
-            listState.layoutInfo.visibleItemsInfo.none { it.index == frameIndex }
-        ) {
-            listState.animateScrollToItem(frameIndex)
+    // 选中帧随动：滑到缩略图条对应位置。
+    // 条是**环形**的（虚拟索引）⇒ 找"离当前位置最近的那一份"：否则首尾相接时会倒着划过整条。
+    LaunchedEffect(selectedFrame, frameCount) {
+        if (frameIndex >= 0 && frameCount > 0) {
+            val visible = listState.layoutInfo.visibleItemsInfo.any {
+                FrameLoop.indexOf(it.index, frameCount) == frameIndex
+            }
+            if (!visible) {
+                listState.animateScrollToItem(
+                    FrameLoop.nearestPage(listState.firstVisibleItemIndex, frameIndex, frameCount),
+                )
+            }
         }
     }
     Dialog(
@@ -245,6 +265,8 @@ internal fun CalibrationWorkbench(
                                 selection = selection,
                                 roles = selectedRoles,
                                 onSelectionChange = onSelectionChange,
+                                // 捏合进来就按捏合的位置放大到位（不用再捏第二次才框得准）
+                                seed = pinchSeed,
                                 // 画布占满全屏（用户 2026-09-13 撤销上一条"只准画在两条之间"的限制）：
                                 // 顶/底条只是半透明浮层，压住的部分仍能看见框线，限制可画区域反而少了一截可用画面。
                                 modifier = Modifier.fillMaxSize(),
@@ -254,29 +276,68 @@ internal fun CalibrationWorkbench(
                         }
                     }
                     else -> {
-                        // 浏览：滑页切帧，过半即同步缩略图（T1-5h/j 口径回填，T1-5m ③）
+                        // 浏览：滑页切帧，过半即同步缩略图（T1-5h/j 口径回填，T1-5m ③）。
+                        // **首尾循环**（2026-10-25 用户需求）：页数取虚拟大值、页码取模（见 [FrameLoop]），
+                        // "最后一帧再往后滑"与"普通翻页"走的是同一条路径，手感完全一致。
                         val frameList by rememberUpdatedState(frames)
+                        val count = frameList.size
                         val pagerState = rememberPagerState(
-                            initialPage = frames.indexOf(selectedFrame).coerceAtLeast(0),
-                        ) { frameList.size }
-                        LaunchedEffect(pagerState.currentPage) {
-                            frameList.getOrNull(pagerState.currentPage)?.let { page ->
+                            initialPage = FrameLoop.pageOf(
+                                frameList.indexOf(selectedFrame).coerceAtLeast(0),
+                                count,
+                            ),
+                            pageCount = { FrameLoop.virtualCount(count) },
+                        )
+                        LaunchedEffect(pagerState.currentPage, count) {
+                            val index = FrameLoop.indexOf(pagerState.currentPage, count)
+                            frameList.getOrNull(index)?.let { page ->
                                 if (page != selectedFrame) onSelectFrame(page)
                             }
                         }
-                        LaunchedEffect(selectedFrame) {
+                        LaunchedEffect(selectedFrame, count) {
                             if (!pagerState.isScrollInProgress) {
                                 val idx = frameList.indexOf(selectedFrame)
-                                if (idx >= 0 && idx != pagerState.currentPage) {
-                                    pagerState.scrollToPage(idx)
+                                // 走"离当前页最近的那一份"：跨首尾时只挪一格，不会倒着翻回整圈
+                                if (idx >= 0 &&
+                                    idx != FrameLoop.indexOf(pagerState.currentPage, count)
+                                ) {
+                                    pagerState.scrollToPage(
+                                        FrameLoop.nearestPage(pagerState.currentPage, idx, count),
+                                    )
                                 }
                             }
                         }
                         HorizontalPager(
                             state = pagerState,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                // 双指捏合 = 直接进框选（2026-10-25 用户需求）；捏到哪儿就从那儿放大
+                                .pinchToSelect { viewport, centroid, scale ->
+                                    val info = preview
+                                    val focusX: Float
+                                    val focusY: Float
+                                    if (info != null && viewport.width > 0 && viewport.height > 0) {
+                                        // 与浏览态大图同一套几何（`ContentScale.Fit` = fitRect），
+                                        // 焦点换成"画面内 0..1"再交给画布（画布自己量视口、自己减偏移）
+                                        val fit = FrameEditMath.fitRect(
+                                            viewport.width.toFloat(),
+                                            viewport.height.toFloat(),
+                                            info.frameWidth.toFloat() / info.frameHeight,
+                                        )
+                                        focusX = ((centroid.x - fit.left) / fit.width)
+                                            .coerceIn(0f, 1f)
+                                        focusY = ((centroid.y - fit.top) / fit.height)
+                                            .coerceIn(0f, 1f)
+                                    } else {
+                                        // 预览还没解码出来：只能按画面正中放大（总比"捏了没反应"好）
+                                        focusX = 0.5f
+                                        focusY = 0.5f
+                                    }
+                                    pinchSeed = PinchSeed(scale, focusX, focusY)
+                                    onEnterSelect()
+                                },
                         ) { page ->
-                            FramePage(file = frameList.getOrNull(page))
+                            FramePage(file = frameList.getOrNull(FrameLoop.indexOf(page, count)))
                         }
                     }
                 }
@@ -552,12 +613,15 @@ internal fun CalibrationWorkbench(
                         // （每位好友一条模板），用途撤销后它再也没有触发条件。
                         // 数据层的 `SignalEntry.friend` 与产物 v4 的 `friend` 段**保留** —— 旧产物还要能读。
                     } else {
+                        // 帧条同样走虚拟索引（首尾循环，2026-10-25）：条目按 modulo 取帧 ⇒
+                        // 滑过最后一格自然接上第一格，方向与手感都是普通滚动。
                         LazyRow(
                             state = listState,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         ) {
-                            items(frames, key = { it.name }) { frame ->
+                            items(count = FrameLoop.virtualCount(frameCount)) { index ->
+                                val frame = frames[FrameLoop.indexOf(index, frameCount)]
                                 FrameThumb(
                                     file = frame,
                                     selected = frame == selectedFrame,
@@ -647,7 +711,11 @@ internal fun CalibrationWorkbench(
                                 icon = R.drawable.ic_frame_select,
                                 label = stringResource(R.string.calibration_workbench_select),
                                 enabled = selectedFrame != null,
-                                onClick = onEnterSelect,
+                                // 点按钮进来 = 老老实实从 1 倍开始（把上一次捏合留下的种子清掉）
+                                onClick = {
+                                    pinchSeed = null
+                                    onEnterSelect()
+                                },
                             )
                             Spacer(modifier = Modifier.weight(1f))
                         }
