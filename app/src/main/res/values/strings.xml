@@ -450,7 +450,9 @@
     <string name="calibration_frame_restore_failed">恢复失败：这一帧已不在暂存里（暂存只留最近 20 帧）</string>
     <string name="calibration_workbench_open">打开标定工作台</string>
     <string name="calibration_workbench_title">标定工作台</string>
-    <string name="calibration_workbench_done">完成</string>
+    <!-- 2026-10-25 用户口径：这颗按钮**只负责关掉工作台**，真正的"完成"是顶部那条「✓ 写入 xxx」
+         （写完就已经落盘了）。叫「完成」会让人以为还有点一下才算保存 ⇒ 改叫「返回」。 -->
+    <string name="calibration_workbench_back">返回</string>
     <string name="calibration_workbench_frame_index">%1$d / %2$d 帧</string>
     <string name="calibration_workbench_select">框选</string>
     <string name="calibration_workbench_cancel">✕</string>

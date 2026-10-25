@@ -406,8 +406,10 @@ internal fun CalibrationWorkbench(
                                     color = Color.White,
                                 )
                             }
+                            // 只关工作台，**不是**"保存/完成"：写入走顶部那条「✓ 写入 xxx」，写完整条即落盘。
+                            // 文案叫「完成」会让人以为还得点一下才算存下来（2026-10-25 用户口径 ⇒ 改「返回」）。
                             Button(onClick = onClose) {
-                                Text(text = stringResource(R.string.calibration_workbench_done))
+                                Text(text = stringResource(R.string.calibration_workbench_back))
                             }
                         }
                     }

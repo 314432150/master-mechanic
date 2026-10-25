@@ -10978,6 +10978,15 @@
   `app-release-unsigned.apk` = **16.64MB** ⇒ 距 **≤25MB** 还有 ≈8.4MB 余量（OCR 换回 ML Kit 后 Paddle 那 ≈13MB 不在包里）。
   ⚠ 这是**未签名**的 release 包；签名不会显著改变体积，但 NFR-03 的验收口径仍以交付包为准。
 
+### 2026-10-25（工作台右上角「完成」改「返回」）
+
+- **用户口径**："实际『写入标定』就是已经完成操作了，完成按钮只有返回功能" ⇒ 那颗按钮**只负责关掉工作台**，
+  真正的"完成"是框选态顶部那条「✓ 写入 xxx」（点完就落盘了）。
+- 实现：`calibration_workbench_done`（"完成"）→ `calibration_workbench_back`（"返回"）；
+  全仓只有 `CalibrationWorkbench` 顶部条这一处引用，改完无死文案（`StringResourcesTest` 仍绿）。
+  ⚠ 历史证据文档里"工作台自带的「完成」按钮"这类描述**没改**（`verification/m5`、旧 progress 条目是当时的记录）。
+- 验证：`:app:test -PfastTests` 全绿、`assembleDebug` 通过、真机 `install -r` = `Success` + `am start`。
+
 ### 2026-10-25（N6-3 关闭：4 条每轮参与的标志已无法再框小）
 
 - **用户口径**："4 条 100% 每轮参与的标志已经没办法更小了" ⇒ 档 2（重框模板）**到此为止**，N6-3 关闭
