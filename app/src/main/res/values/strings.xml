@@ -169,20 +169,65 @@
     <string name="auth_row_action_enable">去开启</string>
     <string name="auth_row_action_authorize">去授权</string>
     <string name="auth_row_action_battery">去加入</string>
+    <!-- **命令授权**弹窗（2026-10-25 用户口径："应当引导用户可以选择手动授权和进行 adb WRITE_SECURE_SETTINGS 授权"，
+         形态照 GKD 那一版：一条命令、可复制）。没有这条权限时，无障碍那颗开关点了就弹这个。 -->
+    <string name="auth_grant_title">命令授权</string>
+    <string name="auth_grant_step1">1. 有一台装了 adb 的电脑（Windows / macOS / Linux 都行）</string>
+    <string name="auth_grant_step2">2. 手机开启「开发者选项 → USB 调试」，用数据线连上电脑</string>
+    <string name="auth_grant_step3">3. 在电脑终端里运行下面这条命令</string>
+    <string name="auth_grant_note">授权后 App 能自己开关无障碍；覆盖安装仍然有效，只有卸载重装才需再跑一次。</string>
+    <string name="auth_grant_copy">复制命令</string>
+    <string name="auth_grant_copied">已复制</string>
+    <string name="auth_grant_manual">去手动授权</string>
+    <string name="auth_grant_close">关闭</string>
+    <!-- 弹窗开着时一直在轮询权限；这句告诉用户"不用回来点，检测到就自动继续" -->
+    <string name="auth_grant_waiting">正在等待授权…检测到后会自动继续</string>
+    <!-- 权限"从无到有"的那一刻给一句回执（2026-10-25 用户实测："成功了，但是手机上一点提示都没有"） -->
+    <string name="auth_toast_grant_ok">命令授权已生效：无障碍现在可以直接开关</string>
+    <!-- **开关的回执**（2026-10-25 用户："打开关闭权限要加一个 toast 提示"）：
+         那颗开关改的是**系统设置**，界面上只有颜色/位置变化，一句 Toast 才算"真回执"。
+         失败也要说（多半是系统没采纳），否则用户会以为开关卡住了。 -->
+    <string name="auth_toast_accessibility_on">无障碍已开启</string>
+    <string name="auth_toast_accessibility_off">无障碍已关闭</string>
+    <string name="auth_toast_accessibility_failed">没能修改，请在系统设置里手动处理</string>
+    <!-- 守护 / 采集的开关回执（2026-10-25 用户："启动/停止权限都应该有 toast 提示"）：
+         这两项是我们自己的服务，状态变化在界面上只有开关位置变化，一句 Toast 才算办完的回执。 -->
+    <string name="auth_toast_resident_on">常驻守护已启动</string>
+    <string name="auth_toast_resident_off">常驻守护已停止</string>
+    <string name="auth_toast_capture_on">屏幕采集已启动</string>
+    <string name="auth_toast_capture_off">屏幕采集已停止</string>
+    <!-- 通知 / 后台运行没有开关，只能在系统页里改 ⇒ 用"状态变化即提示"补回执
+         （2026-10-26 用户："为什么通知权限和后台运行权限状态变化没有提示"）。 -->
+    <string name="auth_toast_notifications_on">通知已开启</string>
+    <string name="auth_toast_notifications_off">通知已关闭</string>
+    <string name="auth_toast_battery_on">后台运行已允许</string>
+    <string name="auth_toast_battery_off">后台运行已取消</string>
     <!-- **电池优化白名单**（2026-10-25 用户口径："加入电池优化白名单，保持后台运行"）。
          vivo 的省电策略会在后台把进程整段冻结 —— 用户看到的是"程序还在、但一动不动"，
          所以它必须和授权并列在引导里，而不是藏在设置页。 -->
-    <string name="auth_battery_label">电池优化白名单</string>
+    <!-- 2026-10-25 改名为「后台运行」：用户视角要的是"别被冻结"，不是"进某个白名单"。
+         ⚠ 界面标题与步进条短名同步改（步进条那格只有 ~66dp，用两字「后台」）。 -->
+    <string name="auth_battery_label">后台运行</string>
     <!-- **步进条专用短名**（2026-10-25）：五列时每列只有 ~66dp，「电池优化白名单」会折成
          "电池优化白 / 名单" 两行、把整条撑高一倍。步进条只用来认位置，行内仍用全名。 -->
     <string name="auth_step_accessibility">无障碍</string>
     <string name="auth_step_resident">守护</string>
     <string name="auth_step_notifications">通知</string>
-    <string name="auth_step_battery">电池</string>
+    <string name="auth_step_battery">后台</string>
     <string name="auth_step_capture">采集</string>
     <string name="auth_battery_desc">省电策略会在后台冻结进程，表现为「程序还在、但整段不动」。加入白名单后后台才稳。</string>
-    <string name="auth_battery_action">加入白名单</string>
-    <string name="auth_chip_whitelisted">已加入</string>
+    <string name="auth_battery_action">允许后台运行</string>
+    <!-- 2026-10-25 改写：这行显示的**只是 AOSP 那一层**（`isIgnoringBatteryOptimizations`），
+         所以文案必须说清"系统层"，否则和 vivo「后台耗电管理」的"智能控制"对不上时会误导。 -->
+    <string name="auth_chip_whitelisted">已允许</string>
+    <string name="auth_battery_missing">未允许</string>
+    <string name="auth_row_action_settings">去设置</string>
+    <!-- 2026-10-25 真机实测后改写：把 vivo「后台耗电管理」设为「允许后台耗电」**会同时写进系统白名单**
+         （`dumpsys deviceidle whitelist` 里出现了本应用）⇒ 两个入口是联动的、一次动作两层都设好。
+         原句"要到系统设置里另设一遍"是错的（当时还没验证），会在界面上误导。
+         仍然写清"我们读不到厂商层"这个事实，但不该再暗示"要设两遍"。 -->
+    <string name="auth_battery_vendor_hint">厂商「后台耗电管理」那一层 App 读不到，但在那边设为「允许后台耗电」后，这里会自动同步成「已允许」。</string>
+    <string name="auth_battery_no_settings">没找到系统的电池设置页，请手动打开「设置 → 电池」</string>
     <!-- 状态文本（2026-10-25）：
          - 未授权：只有**当前步骤那张卡**会显示（行内未授权由按钮/开关表达）；
          - 已开启：系统权限那两项（无障碍 / 通知）已授权时**只显示这一句**，没有动作。 -->
@@ -201,7 +246,6 @@
     <!-- 常驻服务（M0-T0-4；2026-09-20 起为**必备项**，走与其他授权同一张卡；标签上不再标"（必需）"） -->
     <string name="auth_resident_label">常驻守护</string>
     <string name="resident_desc">换号 / 拜访请求由它接收、点击由它放行；不启动时整个自动化都不动作。切后台或熄屏不会中断。</string>
-    <string name="resident_notify_warning">通知不可见：通知权限未开启，运行状态将仅在本页可见。</string>
     <string name="resident_action_start">启动守护</string>
     <string name="resident_channel_name">运行状态</string>
     <string name="resident_channel_desc">常驻展示后台守护是否在运行，便于随时确认程序未被中止</string>
@@ -521,7 +565,7 @@
          （换号 = 切换当前账号所在区服，添加服务器 = 维护清单数据）⇒ 放一级，不藏在「换号 → 选服务器」里。 -->
     <string name="floating_menu_glyph_capture">＋</string>
     <string name="floating_menu_capture_servers">添加这一屏的服务器</string>
-    <string name="capture_servers_wrong_screen">当前画面不是选服页（现在识别到「%1$s」）—— 请停在服务器列表页（能看见那几行区服名），等状态显示「服务器列表」后再点一次。这一次**一个字节都没写**。</string>
+    <string name="capture_servers_wrong_screen">当前画面不是选服页（现在识别到「%1$s」）—— 请停在服务器列表页（能看见那几行区服名），等状态显示「服务器列表」后再点一次。这一次一个字节都没写。</string>
     <!-- 「读当前屏幕」只有**一个**按钮（用户 2026-09-25 口径："重读这一屏"与"继续添加"是同一个功能，
          统一成一个、名字也要说清它读的是**当前屏幕**）：滚没滚都由用户决定，程序不区分。 -->
     <string name="floating_menu_capture_more">再读一屏</string>

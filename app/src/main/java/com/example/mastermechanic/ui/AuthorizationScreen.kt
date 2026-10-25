@@ -5,11 +5,20 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
-import android.net.Uri
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -31,9 +40,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -45,11 +56,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -57,16 +73,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
+
 import com.example.mastermechanic.R
 import com.example.mastermechanic.auth.AUTHORIZATION_DISPLAY_ORDER
+import com.example.mastermechanic.auth.AccessibilitySelfHeal
 import com.example.mastermechanic.auth.AuthGuide
+import com.example.mastermechanic.auth.AuthRecheckPending
 import com.example.mastermechanic.auth.AuthItem
 import com.example.mastermechanic.auth.AuthState
 import com.example.mastermechanic.auth.AuthStatus
 import com.example.mastermechanic.auth.AuthorizationChecks
 import com.example.mastermechanic.auth.CaptureSessionState
+import com.example.mastermechanic.auth.PrivilegedGrant
 import com.example.mastermechanic.capture.CaptureSessionSignal
 import com.example.mastermechanic.capture.CaptureSessionStatus
 import com.example.mastermechanic.log.MmLog
@@ -75,7 +93,10 @@ import com.example.mastermechanic.service.ResidentService
 import com.example.mastermechanic.ui.theme.MasterMechanicTheme
 import com.example.mastermechanic.ui.theme.Success40
 import com.example.mastermechanic.ui.theme.Warning40
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 /**
@@ -144,8 +165,19 @@ fun AuthorizationRoute(
     var captureActive by remember { mutableStateOf(CaptureSessionSignal.isActive) }
     var refreshTick by remember { mutableStateOf(0) }
     var residentRunning by remember { mutableStateOf(false) }
-    var notificationsEnabled by remember { mutableStateOf(true) }
     var reconcileTick by remember { mutableStateOf(0) }
+
+    /**
+     * **我们能不能自己开关无障碍**（= 是否持有 `WRITE_SECURE_SETTINGS`）。
+     *
+     * 这条权限是用户在**电脑上**跑 adb 授予的，App 里没有任何回调 ⇒ 必须主动"再查一次"：
+     * ① 回到前台（[resumeTick] 变）；② 命令授权弹窗里点「我已运行，检测」（[grantTick] 变）。
+     * 不能只在进入页面时查一次 —— 用户是"看着弹窗去电脑上跑命令"的，跑完回来必须立刻可用。
+     */
+    var grantTick by remember { mutableStateOf(0) }
+    val canSelfControlAccessibility = remember(resumeTick, grantTick) {
+        AccessibilitySelfHeal.canSelfControl(context)
+    }
 
     /**
      * **页面可见期间的轻量轮询**（2026-10-19 补）。
@@ -174,18 +206,33 @@ fun AuthorizationRoute(
      */
     var blockedNote by remember { mutableStateOf<String?>(null) }
 
+    /**
+     * 读一次四项的真实状态（几次 binder 调用，都是毫秒级）。
+     *
+     * ⚠ 2026-10-26 改了取数方式：原来用 `remember(resumeTick, …, pollTick)` 在**组合期**同步重算 ——
+     * `pollTick` 每秒变一次 ⇒ **整页每秒重建一次**；从系统设置页返回时又会连着触发几次
+     * （resumeTick + 3 次延迟刷新 + 一次 reconcile）⇒ 用户看到"一闪，像刷新了 UI"。
+     * 现在放进状态里、按**等值不重画**更新：轮询照旧，但只有真的变了才重建。
+     */
+    fun collectStatuses(): List<AuthStatus> = AuthorizationChecks.collect(
+        context,
+        if (captureActive) CaptureSessionState.GRANTED else CaptureSessionState.NOT_GRANTED,
+    )
+
     // residentRunning 也在 key 里：守护起停会改变"是否全部就绪"（2026-09-20 起它是必备项）；
-    // pollTick = 每秒一次的自愈，见上方注释
-    val statuses = remember(resumeTick, captureActive, refreshTick, residentRunning, pollTick) {
-        AuthorizationChecks.collect(
-            context,
-            if (captureActive) CaptureSessionState.GRANTED else CaptureSessionState.NOT_GRANTED,
-        )
+    // pollTick = 每秒一次的自愈，见上方注释。
+    //
+    // ⚠ 2026-10-26 第二版：**不能再把这些计数当 key 读**。`LaunchedEffect(…, pollTick)` 会在**组合期**
+    // 读 pollTick ⇒ 每秒让整个 route 失效一次（"看起来像刷新了 UI"的第二个来源）。
+    // 改用 `snapshotFlow`：在快照系统里监听这几个值，**不进组合期**；读到的列表等值时也不重画。
+    var statuses by remember { mutableStateOf(collectStatuses()) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { listOf<Any>(resumeTick, captureActive, refreshTick, residentRunning, pollTick) }
+            .collect { statuses = collectStatuses() }
     }
 
     fun refreshRuntime() {
         residentRunning = ResidentService.isRunning(context)
-        notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
         captureActive = CaptureSessionSignal.isActive
     }
 
@@ -224,6 +271,43 @@ fun AuthorizationRoute(
         }
     }
 
+    /**
+     * **一句 Toast 回执**（2026-10-25 用户："启动/停止权限都应该有 toast 提示"）。
+     *
+     * 守护 / 采集 / 无障碍这几个开关改的都是**服务或系统状态**，界面上只有开关位置变化；
+     * 一句"已启动 / 已停止"才是"这一下真的办完了"的凭据（失败的情形各自另有说明）。
+     */
+    fun toast(@StringRes res: Int) {
+        Toast.makeText(context, context.getString(res), Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * **"刚把用户送去系统页改 X" 的回执**（2026-10-26）。
+     *
+     * 挂在**回到前台**这个时机（`resumeTick`）上，而不是"statuses 变了"：后者可能在状态还没刷新完就触发，
+     * 拿旧值一比对就判成"没变" ⇒ Toast 被静默吞掉（正是用户报的"取消通知还是没有提示"）。
+     * 等到 400ms 后再用 [collectStatuses] 读**当下**的真值，和离开时落盘的值比。
+     */
+    // 用 `resumeTick` 当 key（它就是"回到前台"的计数）：每次变都会重启这个效应，
+    // 而 `resumeTick` 是**参数**、不是快照状态 —— 放进 snapshotFlow 只会在组合那一刻读一次，永远不会再触发。
+    LaunchedEffect(resumeTick) {
+        if (resumeTick == 0) return@LaunchedEffect
+        delay(400) // 等一次状态刷新落地，再读**当下**的真值（不用缓存里的 statuses）
+        val pending = AuthRecheckPending.consume(context) ?: return@LaunchedEffect
+        val now = collectStatuses().firstOrNull { it.item == pending.first }?.state ?: return@LaunchedEffect
+        if (now == pending.second) return@LaunchedEffect
+        val granted = now == AuthState.GRANTED
+        toast(
+            when (pending.first) {
+                AuthItem.NOTIFICATIONS ->
+                    if (granted) R.string.auth_toast_notifications_on else R.string.auth_toast_notifications_off
+
+                else ->
+                    if (granted) R.string.auth_toast_battery_on else R.string.auth_toast_battery_off
+            },
+        )
+    }
+
     val captureScope = rememberCoroutineScope()
     val captureLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -244,6 +328,8 @@ fun AuthorizationRoute(
             captureScope.launch {
                 delay(CAPTURE_START_HOLD_MS)
                 CaptureService.start(context, code, data)
+                // 会话建立后给一句回执：此时画面多半已切到游戏，Toast 仍会浮在上面
+                toast(R.string.auth_toast_capture_on)
             }
         }
         refreshTick++
@@ -309,43 +395,92 @@ fun AuthorizationRoute(
         statuses = statuses,
         // 自动拉起被挡住的说明（null = 没有这回事）——页面上要当场说清，不许静默
         blockedNote = blockedNote,
-        notificationsEnabled = notificationsEnabled,
+
         onOpenAccessibilitySettings = {
             context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        },
+        // 拨关**通知** → 本应用的通知设置页（这一半 App 写不了：撤销运行时权限要 signature 级权限）。
+        onOpenNotificationSettings = {
+            runCatching {
+                context.startActivity(
+                    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+                )
+            }
+        },
+        // **无障碍开关**（2026-10-25）：持有 `WRITE_SECURE_SETTINGS` 就**当场开 / 关**（只动自己那一项），
+        // 否则给 null ⇒ 那颗开关点了只把你送到系统设置页（形态不变，避免"有没有权限"变成两套界面）。
+        // 写设置是 binder + 落盘，放 IO 线程；写完立刻刷新一次读数（乐观值在下一轮 400ms 校正也会兜）。
+        // 「命令授权」弹窗里那颗「我已运行，检测」/ 回到前台都会拨这个 tick ⇒ 重新判断一次权限
+        // （权限是用户在电脑上改的，App 这边只有"再查一次"才知道）。
+        onRecheckAccessibilityGrant = { grantTick++ },
+        onSetAccessibilityEnabled = if (canSelfControlAccessibility) {
+            { want ->
+                captureScope.launch {
+                    val ok = withContext(Dispatchers.IO) {
+                        AccessibilitySelfHeal.setEnabled(context, want)
+                    }
+                    // **回执**（2026-10-25 用户："打开关闭权限要加一个 toast 提示"）：
+                    // 那颗开关改的是系统设置，界面上只有颜色变化；成功与失败都要说一句。
+                    toast(
+                        when {
+                            !ok -> R.string.auth_toast_accessibility_failed
+                            want -> R.string.auth_toast_accessibility_on
+                            else -> R.string.auth_toast_accessibility_off
+                        },
+                    )
+                    refreshTick++
+                    reconcileTick++
+                }
+            }
+        } else {
+            null
         },
         onRequestCapture = { requestCapture() },
         onRequestNotifications = {
             // minSdk 34 起通知权限始终需要运行时申请（不再有"低版本无需申请"那条分支）
             notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         },
+        // 开关落点（2026-10-25）：走 [ResidentService.start] / [ResidentService.stop] ——
+        // 它们会顺手记下"用户是否要求它开着"，App 重启后由 `Application.onCreate` 自动恢复。
         onStartResident = {
-            ContextCompat.startForegroundService(
-                context,
-                Intent(context, ResidentService::class.java),
-            )
+            ResidentService.start(context)
+            toast(R.string.auth_toast_resident_on)
             residentRunning = true // 乐观更新，400ms 后由 reconcileTick 校正
             reconcileTick++
         },
         onStopResident = {
-            context.stopService(Intent(context, ResidentService::class.java))
+            ResidentService.stop(context)
+            toast(R.string.auth_toast_resident_off)
             residentRunning = false // 乐观更新，400ms 后由 reconcileTick 校正
             reconcileTick++
         },
         onStopCapture = {
             context.stopService(Intent(context, CaptureService::class.java))
+            toast(R.string.auth_toast_capture_off)
             reconcileTick++ // 服务停止后本页状态延迟校正
         },
-        // 加入电池优化白名单（2026-10-25）：先试**直达确认框**（需要清单里的 REQUEST_IGNORE_BATTERY_OPTIMIZATIONS），
-        // 有些 ROM / 策略下这个 Intent 会被拦 ⇒ 退回"电池优化列表"，让用户自己找到本应用。
+        // **后台运行 → 直接打开系统的耗电管理页**（2026-10-25 用户口径）。
+        //
+        // 不再先弹 AOSP 那个「是否允许应用始终在后台运行？」：
+        // ① 它只写系统层，而 vivo 真正会冻结进程的是厂商层（「智能控制 / 允许后台耗电」）；
+        // ② 真机实测：在厂商页设为「允许后台耗电」后，**系统层会自动同步**（`dumpsys deviceidle whitelist`
+        //    里出现了本应用）⇒ 一次动作两层都设好，那个弹框纯属多一层；
+        // ③ 系统层已豁免时那个弹框什么都不弹（用户报的"点了没反应"就是它）。
+        //
+        // `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS` 在本机落到「后台耗电管理」；
+        // 在原生 Android 上落到「电池优化」列表（用户找到本应用选"不优化"），语义一致。
         onRequestBatteryWhitelist = {
-            val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                .setData(Uri.parse("package:${context.packageName}"))
-            val ok = runCatching { context.startActivity(direct) }.isSuccess
-            if (!ok) {
-                runCatching {
-                    context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                }
-                MmLog.w(AUTH_LOG_TAG, "电池白名单：直达确认框不可用，已退回到电池优化列表页")
+            val opened = runCatching {
+                context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            }.isSuccess
+            MmLog.i(AUTH_LOG_TAG, "后台运行：打开系统耗电管理页（${if (opened) "成功" else "失败"}）")
+            if (!opened) {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.auth_battery_no_settings),
+                    Toast.LENGTH_LONG,
+                ).show()
             }
         },
     )
@@ -354,8 +489,30 @@ fun AuthorizationRoute(
 @Composable
 fun AuthorizationScreen(
     statuses: List<AuthStatus>,
-    notificationsEnabled: Boolean,
     onOpenAccessibilitySettings: () -> Unit,
+    /**
+     * 「命令授权」弹窗里那颗**「我已运行，检测」**的落点：重新判断一次我们有没有 `WRITE_SECURE_SETTINGS`。
+     *
+     * 这条权限是用户在**电脑上**授予的，App 里没有回调；不给一颗"检测"按钮的话，用户跑完命令回到
+     * 弹窗会以为没生效（2026-10-25 用户实测："成功了，但是手机上一点提示都没有"）。
+     */
+    onRecheckAccessibilityGrant: () -> Unit,
+    /**
+     * **拨关通知时去哪**（2026-10-25）：通知是运行时权限，App 只能"请求开"、关不了
+     * （撤销要 signature 级 `REVOKE_RUNTIME_PERMISSIONS`）⇒ 开关的关向做成一次**明确的导航**。
+     *
+     * ⚠ 电池白名单**不走这条**：那一层只能是「状态 + 去设置」按钮（见 [disableOf] 的说明）。
+     */
+    onOpenNotificationSettings: () -> Unit,
+    /**
+     * **无障碍那一行是开关**（2026-10-25 用户口径）：
+     * - 非 null ⇒ 我们持有 `WRITE_SECURE_SETTINGS`，拨一下就**真的**开 / 关（只动自己那一项）；
+     * - null ⇒ 没这条权限，拨它只是把你送到**系统设置的无障碍页**（状态仍由系统读回来）。
+     *
+     * 为什么不做成"没权限就不给开关"：用户要的是**同一件东西**在两处表现一致；
+     * 给不给开关取决于我们能不能代办，用户不该为此学两套界面。
+     */
+    onSetAccessibilityEnabled: ((Boolean) -> Unit)?,
     onRequestCapture: () -> Unit,
     onRequestNotifications: () -> Unit,
     onStartResident: () -> Unit,
@@ -383,36 +540,143 @@ fun AuthorizationScreen(
     val next = AuthGuide.nextStep(statuses)
     val byItem = statuses.associateBy { it.item }
     // 两句话先取出来：下面 `hintOf` 是普通函数，非组合上下文里不能调 `stringResource`。
-    val residentNotifyWarning = stringResource(R.string.resident_notify_warning)
     val captureLastHint = stringResource(R.string.auth_capture_last_hint, blockerLabels)
 
+    /**
+     * **当前步办完之后去哪儿了**（2026-10-26 用户："卡片一换就闪一下，很突兀；而且我还要找刚办的那项在哪一行"）。
+     *
+     * 两件事一起做：
+     * ① 卡片内容用 `AnimatedContent` 交叉淡入 + 轻微竖向位移（不再是硬切）；
+     * ② 刚办完那一项在下方列表里**高亮 1.6 秒**（主色容器淡入再淡出），一眼能看到它落在哪一行。
+     */
+    var justMoved by remember { mutableStateOf<AuthItem?>(null) }
+    var lastNext by remember { mutableStateOf(next) }
+    LaunchedEffect(next) {
+        val moved = lastNext
+        if (moved != null && moved != next) {
+            justMoved = moved
+            delay(1600)
+            if (justMoved == moved) justMoved = null
+        }
+        lastNext = next
+    }
+    val batteryVendorHint = stringResource(R.string.auth_battery_vendor_hint)
+
+    // **命令授权弹窗**（2026-10-25）：没有 WRITE_SECURE_SETTINGS 时，无障碍那颗开关点了先弹这个，
+    // 让用户二选一 —— 电脑上跑一条 adb（一劳永逸），或去系统设置手点（当下就能用）。
+    var showGrantDialog by remember { mutableStateOf(false) }
+
+    // **授权被"检测到"时要有回执**（2026-10-25 用户："成功了，但是手机上一点提示都没有"）：
+    // 权限从"没有"变成"有"的那一刻（回到前台 / 点了「我已运行，检测」）给一句 Toast，
+    // 否则用户只能靠"开关是否变灰"猜。
+    val selfControl = onSetAccessibilityEnabled != null
+    var wasSelfControl by remember { mutableStateOf(selfControl) }
+    // 命令授权弹窗轮询到权限时置 true ⇒ 下面那条效应会**顺手把无障碍打开**（用户不必再点一次）
+    var autoEnableOnGrant by remember { mutableStateOf(false) }
+    val toastContext = LocalContext.current
+    LaunchedEffect(selfControl) {
+        if (selfControl && !wasSelfControl) {
+            if (autoEnableOnGrant) {
+                autoEnableOnGrant = false
+                // 主动开启：它会自己弹「无障碍已开启」（这里不再叠一条"授权已生效"，免得两条挤在一起）
+                onSetAccessibilityEnabled?.invoke(true)
+            } else {
+                Toast.makeText(
+                    toastContext,
+                    toastContext.getString(R.string.auth_toast_grant_ok),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+        wasSelfControl = selfControl
+    }
+
+    /**
+     * **通知 / 后台运行的状态变化回执**（2026-10-26 用户："为什么通知权限和后台运行权限状态变化没有提示"）。
+     *
+     * 这两项没有开关（只能在系统页里改），拿不到"点击"时机。而且这一趟**很容易把 Activity 重建**
+     * （用户同时报告"没有提示"和"白屏/灰屏"）—— 内存里记"上一次状态"会随进程一起丢掉。
+     * ⇒ 用 [AuthRecheckPending] 把"离开时它是什么状态"**落盘**，回来比对：变了就弹一句，没变就静默、读完即清。
+     */
     fun actionOf(item: AuthItem): () -> Unit = when (item) {
-        AuthItem.ACCESSIBILITY -> onOpenAccessibilitySettings
+        // 无障碍：能自控就**直接开**；没权限则弹「命令授权 / 手动授权」让用户自己选
+        // （2026-10-25 用户口径：不能只把人扔去系统设置）。行内开关与展开卡共用同一个落点。
+        AuthItem.ACCESSIBILITY -> {
+            {
+                if (onSetAccessibilityEnabled != null) {
+                    onSetAccessibilityEnabled(true)
+                } else {
+                    showGrantDialog = true
+                }
+            }
+        }
         AuthItem.SCREEN_CAPTURE -> onRequestCapture
         AuthItem.RESIDENT -> onStartResident
-        AuthItem.NOTIFICATIONS -> onRequestNotifications
-        AuthItem.BATTERY -> onRequestBatteryWhitelist
+        // **离开前记一笔"它现在是什么状态"**（2026-10-26）：这两项要跳系统页，回来时若能对上变化就弹一句。
+        // 记在盘上而不是内存里 —— 这一趟很可能把 Activity 重建（用户同时报了"没有提示"）。
+        AuthItem.NOTIFICATIONS -> {
+            {
+                AuthRecheckPending.mark(toastContext, AuthItem.NOTIFICATIONS, byItem[AuthItem.NOTIFICATIONS]?.state ?: AuthState.MISSING)
+                onRequestNotifications()
+            }
+        }
+
+        AuthItem.BATTERY -> {
+            {
+                AuthRecheckPending.mark(toastContext, AuthItem.BATTERY, byItem[AuthItem.BATTERY]?.state ?: AuthState.MISSING)
+                onRequestBatteryWhitelist()
+            }
+        }
     }
 
     /** 附加提醒：琥珀色（用户 2026-10-01 口径"提示类信息不该用红色"）。 */
     fun hintOf(status: AuthStatus): String? = when {
-        status.item == AuthItem.RESIDENT &&
-            status.state == AuthState.GRANTED &&
-            !notificationsEnabled -> residentNotifyWarning
-
+        // ⚠ 2026-10-26 删掉「守护已运行但通知不可见」那条提示（用户："很容易造成误解"）：
+        // 通知本身就在上面单独占一步，状态写得清清楚楚；再在守护下面说一句，等于同一件事说两遍，
+        // 而且容易被读成"守护有问题"。
         status.item == AuthItem.SCREEN_CAPTURE &&
             status.state == AuthState.MISSING &&
             blockers.isNotEmpty() -> captureLastHint
+
+        // **厂商层说明只在"未允许"时出现**（2026-10-25 用户口径）：
+        // 已允许后这句话就是噪音 —— 用户已经办对了（厂商页设完会自动同步到系统层，实测过），
+        // 再提醒"我们读不到厂商层"只会让人以为还有一步没做。
+        status.item == AuthItem.BATTERY &&
+            status.state == AuthState.MISSING -> batteryVendorHint
 
         else -> null
     }
 
     /**
      * **能由我们停**的两项（守护 / 采集）—— 它们行内是开关，这就是"关"那一半的落点。
-     *
-     * 非 null 同时也意味着"这一项的两个方向都由我们写" ⇒ [AuthRowTrailing] 据此决定用开关。
      * 无障碍 / 通知**没有**这一项：系统权限 App 内撤不了（只能去系统设置），给个按了不生效的控制更糟。
      */
+    /**
+     * **"关"只能指路**的那一项（2026-10-25）。
+     *
+     * 只有**通知**保留开关形态：它是标准运行时权限，开=系统弹窗、关=跳系统页，语义准确。
+     *
+     * ⚠ **电池白名单不做开关**（用户 2026-10-25 决定改回「状态 + 去设置」）：我们只能读到
+     * AOSP 的 `isIgnoringBatteryOptimizations`，而 vivo 那层「后台耗电管理（智能控制 / 允许后台高耗电）」
+     * 是厂商私有、**没有公开 API** ⇒ 开关必然出现"我们显示已加入、厂商页面写着智能控制"这种对不上的情况。
+     * 一块只会骗人的开关，不如一颗诚实的「去设置 / 已加入」。
+     */
+    fun disableOf(item: AuthItem): (() -> Unit)? = when (item) {
+        // **拨"关"这一半也要记一笔**（2026-10-26 用户报："取消通知还是没有提示"）：
+        // 上一版只给「去授权」那条路打了标记，而"关"走的是这里 —— 没标记 ⇒ 回来没得比，自然不弹。
+        AuthItem.NOTIFICATIONS -> {
+            {
+                AuthRecheckPending.mark(
+                    toastContext,
+                    AuthItem.NOTIFICATIONS,
+                    byItem[AuthItem.NOTIFICATIONS]?.state ?: AuthState.GRANTED,
+                )
+                onOpenNotificationSettings()
+            }
+        }
+        AuthItem.ACCESSIBILITY, AuthItem.BATTERY, AuthItem.RESIDENT, AuthItem.SCREEN_CAPTURE -> null
+    }
+
     fun stopOf(item: AuthItem): (() -> Unit)? = when (item) {
         AuthItem.SCREEN_CAPTURE -> onStopCapture
         AuthItem.RESIDENT -> onStopResident
@@ -472,12 +736,23 @@ fun AuthorizationScreen(
                 // **当前步**：展开卡（描述 + 该办什么 + 唯一的主按钮）。
                 // 当前步必然是 MISSING（`next` 的定义）⇒ 这张卡不需要"停止"。
                 val current = next?.let { byItem[it] }
-                if (current != null) {
-                    AuthorizationCard(
-                        status = current,
-                        onAction = actionOf(current.item),
-                        hint = hintOf(current),
-                    )
+                AnimatedContent(
+                    targetState = current,
+                    transitionSpec = {
+                        // 新卡从下方微微推上来 + 淡入；旧卡向上收走 + 淡出。
+                        // 时长刻意短（200~240ms）：这是一次"确认完成"，不该让人等动画。
+                        (fadeIn(tween(200)) + slideInVertically(tween(240)) { it / 8 }) togetherWith
+                            (fadeOut(tween(120)) + slideOutVertically(tween(160)) { -it / 8 })
+                    },
+                    label = "authCurrentStep",
+                ) { animated ->
+                    if (animated != null) {
+                        AuthorizationCard(
+                            status = animated,
+                            onAction = actionOf(animated.item),
+                            hint = hintOf(animated),
+                        )
+                    }
                 }
                 // **其余三步**：同一张卡里用分隔线排（它们是一张表的行，不是三张独立的卡）。
                 // 行尾控件的形态由 `AuthRowTrailing` 按"这一项的两端是不是都由我们写"决定。
@@ -485,31 +760,209 @@ fun AuthorizationScreen(
                     .filter { it != next }
                     .mapNotNull { byItem[it] }
                 if (others.isNotEmpty()) {
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    // 行数变化（当前步办完会多出一行）时，卡的高度平滑过渡，不硬跳
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .animateContentSize(),
+                    ) {
                         Column {
                             others.forEachIndexed { index, status ->
                                 if (index > 0) {
+                                    // **分隔线走通栏**（2026-10-26 用户："白线没填满整行，加上高亮有种断裂感"）：
+                                    // 行高亮是整行的，线却内缩 16dp ⇒ 一条"断掉的线"＋"有边界的色块"同时出现。
+                                    // 要么都通栏、要么都内缩；行高亮更有用，所以让线通栏。
                                     HorizontalDivider(
-                                        modifier = Modifier.padding(horizontal = 16.dp),
                                         thickness = 1.dp,
                                         color = MaterialTheme.colorScheme.outlineVariant,
                                     )
                                 }
-                                AuthStepRow(
-                                    status = status,
-                                    hint = hintOf(status),
-                                    onAction = actionOf(status.item),
-                                    // **不做"已就绪才给"**：开关的两个方向都要有落点
-                                    // （关→开 = 启动 / 拉采集弹窗；开→关 = 停止）。系统权限这里是 null。
-                                    onStop = stopOf(status.item),
+                                // **刚办完那一项高亮 1.6 秒**（2026-10-26 用户："还要找一下当前操作的权限在哪一行"）。
+                                // ⚠ 颜色第一版用 `primaryContainer`，真机截图里是一整块深蓝 —— 太抢眼（用户："太突兀"）。
+                                // 改成主色的低透明度薄染：够指出"是这一行"，又不改变行的明度。
+                                val rowBackground by animateColorAsState(
+                                    targetValue = if (status.item == justMoved) {
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                                    } else {
+                                        Color.Transparent
+                                    },
+                                    animationSpec = tween(300),
+                                    label = "authRowHighlight",
                                 )
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(rowBackground),
+                                ) {
+                                    AuthStepRow(
+                                        status = status,
+                                        hint = hintOf(status),
+                                        onAction = actionOf(status.item),
+                                        // **不做"已就绪才给"**：开关的两个方向都要有落点
+                                        // （关→开 = 启动 / 拉采集弹窗；开→关 = 停止）。系统权限这里是 null。
+                                        onStop = stopOf(status.item),
+                                        // 无障碍那一行的开关：有特权权限就真开关，没有就只指路
+                                        onToggle = if (status.item == AuthItem.ACCESSIBILITY) {
+                                            onSetAccessibilityEnabled
+                                        } else {
+                                            null
+                                        },
+                                        // 通知 / 电池白名单：拨关只能送你去系统页（我们写不了 OFF）
+                                        onDisable = disableOf(status.item),
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
         }
+        // 命令授权 / 手动授权：二选一（没有 WRITE_SECURE_SETTINGS 时才会打开）
+        if (showGrantDialog) {
+            GrantCommandDialog(
+                onGrantDetected = {
+                    // 轮询到权限了：关弹窗、让父层重算，并**自动把无障碍打开**（用户不用再点一次）
+                    showGrantDialog = false
+                    autoEnableOnGrant = true
+                    onRecheckAccessibilityGrant()
+                },
+                onManual = {
+                    showGrantDialog = false
+                    onOpenAccessibilitySettings()
+                },
+                onDismiss = { showGrantDialog = false },
+            )
+        }
     }
+}
+
+/**
+ * **「命令授权」弹窗**（2026-10-25，照 GKD 那一版的形态）：
+ * 一条可复制的 adb 命令 + 两条出口（**我已运行，检测** / 去手动授权）。
+ *
+ * 为什么要给三个动作：不是每个人都愿意接线跑 adb（但跑过一次之后**覆盖安装都有效**）；
+ * 也不想让只想赶紧用起来的人被拦在"必须有电脑"这一条上 —— 手动授权慢一点，但眼下就能用；
+ * 而跑完命令的人**需要一个立刻可点的"检测"**，否则回到弹窗会以为没生效
+ * （2026-10-25 用户实测："成功了，但是手机上一点提示都没有"）。
+ */
+@Composable
+private fun GrantCommandDialog(
+    onGrantDetected: () -> Unit,
+    onManual: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    // **轮询检测**（2026-10-25 用户口径）：用户去电脑上跑命令期间，这里每秒查一次权限；
+    // 一旦拿到就**自动关弹窗 + 自动开启无障碍**，不需要他再回来点任何东西。
+    // 只在弹窗开着时跑（关了 LaunchedEffect 就取消）—— 这是本页唯一"看着外部世界变化"的地方。
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            if (AccessibilitySelfHeal.canSelfControl(context)) {
+                onGrantDetected()
+                break
+            }
+        }
+    }
+    // 打开时才生成脚本（写文件放这里，不占首屏；写不出来就退化成只给那一条最关键的命令）
+    val command = remember {
+        PrivilegedGrant.ensureScript(context)
+            ?.let { PrivilegedGrant.commandFor(it) }
+            ?: PrivilegedGrant.fallbackCommand(context.packageName)
+    }
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1500)
+            copied = false
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(R.string.auth_grant_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = stringResource(R.string.auth_grant_step1),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = stringResource(R.string.auth_grant_step2),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = stringResource(R.string.auth_grant_step3),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    // 命令 + 复制放在同一个块里：复制的对象就是旁边这行字，不用再去屏幕底部找按钮
+                    Row(
+                        modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = command,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(vertical = 4.dp),
+                        )
+                        TextButton(
+                            onClick = {
+                                clipboard.setText(AnnotatedString(command))
+                                copied = true
+                            },
+                        ) {
+                            Text(
+                                text = stringResource(
+                                    if (copied) R.string.auth_grant_copied else R.string.auth_grant_copy,
+                                ),
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = stringResource(R.string.auth_grant_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // **正在等授权**：用户去电脑上跑命令的这段时间里，这里要一直显示"在等"，
+                // 否则他不知道 App 到底有没有在看（2026-10-25 用户："应该轮询检测…而不是由用户去点"）
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Text(
+                        text = stringResource(R.string.auth_grant_waiting),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            Row {
+                TextButton(onClick = onManual) {
+                    Text(text = stringResource(R.string.auth_grant_manual))
+                }
+                TextButton(onClick = onDismiss) {
+                    Text(text = stringResource(R.string.auth_grant_close))
+                }
+            }
+        },
+    )
 }
 
 @Composable
@@ -676,18 +1129,15 @@ private fun AuthStepHeader(
 }
 
 /**
- * **行尾控件的分配规则**（2026-10-25 用户定稿）—— 判据是「**这个状态的两端是不是都由我们写**」：
+ * **行尾控件的分配规则**（2026-10-25 定稿）：
  *
  * | 项 | 未授权 | 已授权 | 为什么 |
  * | --- | --- | --- | --- |
+ * | 无障碍 | **`Switch` 关** | **`Switch` 开** | 2026-10-25 用户口径：改成开关。持有 `WRITE_SECURE_SETTINGS` 时**拨一下就真的开 / 关**（只动自己那一项）；没有这条权限时拨它只把你送到系统设置页 —— 开关的形态不因权限而变，只是"这一拨能不能当场生效"不同 |
  * | 常驻守护 / 屏幕采集 | **`Switch` 关**（拨到开 = 启动守护 / 拉采集弹窗） | **`Switch` 开**（拨到关 = 停止） | 两个方向都由我们执行 ⇒ 真开关；停的入口也留在这儿 |
- * | 无障碍 / 通知 | **按钮「去开启 / 去授权」** | **纯状态文本「已开启」**（绿、无控件） | 系统持有：App 既撤不了也开不了；已授权时确实**无事可做**，再摆一颗按钮就是骗人手滑 |
+ * | 通知 / 电池白名单 | **按钮「去授权 / 去加入」** | **纯状态文本「已开启 / 已加入」**（绿、无控件） | 这两项我们**没有**代办能力（通知要走系统弹窗、白名单只能跳设置页且撤不掉）⇒ 给开关必有一端是假的，已授权时也确实无事可做 |
  *
- * 系统权限**未授权**为什么用按钮而不是开关：开关的关态是"**邀请你去打开**"，而这一拨只会把人带到
- * 系统设置页/权限弹窗（App 自己开不了）—— 预期当场落空。按钮（"去开启"）没有这个歧义：
- * 它承诺的就是"带你去"。
- *
- * ⚠ 2026-10-25 曾把「守护已开启」也改成只报状态（与系统权限一致），用户随即要求改回 ——
+ * ⚠ 2026-10-25 曾把「守护已开启」改成只报状态（与系统权限一致），用户当即要求改回 ——
  * 因为那样**这一页就没有停守护的入口**了（只能「设置 → 退出 App」）。别再把那条"一致性"改回来。
  */
 @Composable
@@ -695,10 +1145,47 @@ private fun AuthRowTrailing(
     status: AuthStatus,
     onAction: () -> Unit,
     onStop: (() -> Unit)?,
+    /** 无障碍专用：非 null = 我们能直接改这个开关（持有特权权限）；null = 只指路。 */
+    onToggle: ((Boolean) -> Unit)? = null,
+    /**
+     * **"关"这一半只能指路**的那两项（通知 / 电池白名单）：拨关时把用户送到对应系统页。
+     * 非 null 即表示"我们写不了 OFF"，此时开关的关向 = 导航，不是执行。
+     */
+    onDisable: (() -> Unit)? = null,
 ) {
     val granted = status.state == AuthState.GRANTED
     when {
-        // ① 我们能起停的两项：开关即状态，也即动作（含"停"这个出口）
+        // ① 电池白名单：**状态 + 去设置**（两段都在），永不隐藏那一颗按钮。
+        //    为什么不给开关：我们只能读到 AOSP 那层，厂商层（vivo 后台耗电管理）读不到 —— 开关必然对不上。
+        //    为什么已加入时仍留按钮：用户要改的是**厂商层**，而那一层只能从系统页进去
+        //    （若按"已加入就只给文字"处理，这里就成了死路，正是 2026-10-25 用户指出的问题）。
+        status.item == AuthItem.BATTERY -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(
+                    if (granted) R.string.auth_chip_whitelisted else R.string.auth_battery_missing,
+                ),
+                style = MaterialTheme.typography.labelLarge,
+                color = if (granted) Success40 else MaterialTheme.colorScheme.error,
+                maxLines = 1,
+            )
+            TextButton(onClick = onAction) {
+                Text(
+                    text = stringResource(R.string.auth_row_action_settings),
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                )
+            }
+        }
+
+        // ② 无障碍：开关（能自控就真开关，不能就把你送到系统设置页）
+        status.item == AuthItem.ACCESSIBILITY -> Switch(
+            checked = granted,
+            onCheckedChange = { want ->
+                if (onToggle != null) onToggle(want) else onAction()
+            },
+        )
+
+        // ② 我们能起停的两项：开关即状态，也即动作（含"停"这个出口）
         onStop != null -> Switch(
             checked = granted,
             onCheckedChange = { want ->
@@ -706,13 +1193,21 @@ private fun AuthRowTrailing(
             },
         )
 
-        // ② 系统权限已授权：只报一句状态（没有可做的事）。
-        // 电池白名单用「已加入」——"已开启"配"白名单"读不通
+        // ③ 通知 / 电池白名单：也是开关，但**只有"开"这一半我们真的能执行**
+        //    （通知=系统权限弹窗；电池白名单=直达确认框）。"关"只能把用户送到对应系统页 ——
+        //    拨关不是"什么都不做"，而是一次**明确的导航**（回来时状态由系统读数决定）。
+        onDisable != null -> Switch(
+            checked = granted,
+            onCheckedChange = { want ->
+                if (want) onAction() else onDisable()
+            },
+        )
+
+        // ④ 兜底：没有可执行动作时只报一句状态（电池白名单用「已加入」——"已开启"配"白名单"读不通）
         granted && status.item == AuthItem.BATTERY -> StatusText(R.string.auth_chip_whitelisted)
 
         granted -> StatusText(R.string.auth_chip_enabled)
 
-        // ③ 系统权限未授权：一颗"带你去"的按钮
         else -> TextButton(onClick = onAction) {
             Text(
                 text = stringResource(systemActionRes(status.item)),
@@ -771,6 +1266,8 @@ private fun AuthStepRow(
     hint: String?,
     onAction: () -> Unit,
     onStop: (() -> Unit)?,
+    onToggle: ((Boolean) -> Unit)? = null,
+    onDisable: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier
@@ -781,7 +1278,15 @@ private fun AuthStepRow(
         AuthStepHeader(
             status = status,
             nameStyle = MaterialTheme.typography.titleSmall,
-            trailing = { AuthRowTrailing(status = status, onAction = onAction, onStop = onStop) },
+            trailing = {
+                AuthRowTrailing(
+                    status = status,
+                    onAction = onAction,
+                    onStop = onStop,
+                    onToggle = onToggle,
+                    onDisable = onDisable,
+                )
+            },
         )
         if (hint != null) {
             Text(
@@ -823,8 +1328,10 @@ private fun AuthorizationScreenPreview() {
                 AuthStatus(AuthItem.NOTIFICATIONS, AuthState.GRANTED),
                 AuthStatus(AuthItem.SCREEN_CAPTURE, AuthState.MISSING),
             ),
-            notificationsEnabled = true,
             onOpenAccessibilitySettings = {},
+            onRecheckAccessibilityGrant = {},
+            onOpenNotificationSettings = {},
+            onSetAccessibilityEnabled = {},
             onRequestCapture = {},
             onRequestNotifications = {},
             onStartResident = {},

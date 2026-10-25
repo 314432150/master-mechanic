@@ -11074,6 +11074,215 @@
   ④ 冷启动缺授权时自动落在这页（把无障碍关掉再冷启动最容易复现）；⑤ **字号调到 1.3× / 1.5× 看有无裁字**；
   ⑥ 守护/采集的开关：拨开能起、拨关能停（采集拨开是系统弹窗，取消后应保持关）；⑦ 无障碍/通知已授权时只有一句绿字。
 
+### 2026-10-25（否决 Shizuku 方案：本机实测无法程序化开关无障碍）
+
+用户提议用 **Shizuku** 替代/代办无障碍（本机已装 Shizuku）。结论：**不加**，依据是实测不是推断。
+
+- **最值钱的那一项，`adb shell` 直接写做不到**：`settings put secure enabled_accessibility_services`
+  —— 服务未开启时写入被改回；用户**手动开启之后再写**（先试去掉、再试加回）**仍被忽略**。
+  ⚠ **最初归因错了**（以为是"用户同意"机制）——**真正的原因见下方 GKD 机制那一节**：
+  `SettingsProvider` 对这类**受限设置**要求调用方持有 app-op `ACCESS_RESTRICTED_SETTINGS`，
+  而 `shell` 的这个 op 是 `default` 且**设不上去**（`appops set com.android.shell ... allow` 后回读仍是 default）。
+- **能代办的两项，adb 已经够了**（Shizuku 没有额外价值）：`pm grant ... POST_NOTIFICATIONS` = `granted=true`、
+  `dumpsys deviceidle whitelist +pkg` = `Added`。这两条我装机后顺手跑就行，不需要给产品加依赖。
+- **采集永远要手点**：`MediaProjection` 必须用户在系统弹窗里确认（安全设计），Shizuku 也绕不过。
+- ⇒ 引入 Shizuku 的收益只剩"少点两下"，代价却是架构级第三方依赖 + 每次重启手动启动 Shizuku + 双模式回落
+  + 测试抽象 ⇒ **不值得**。真要继续这条路，前提是"把点击/文字/前台/悬浮窗整体迁出无障碍"，
+  那是另一个量级的工程（且 shell 注入的"合成事件"痕迹与无障碍一样在）。
+- **GKD 是怎么做到的（用户追问后查明，读的是它自己的脚本）**：`/storage/emulated/0/Android/data/li.songe.gkd/files/sh/start.sh`
+  一次性做四类事（原文见该文件），关键三条是：
+  ```
+  pm grant li.songe.gkd android.permission.WRITE_SECURE_SETTINGS
+  appops set li.songe.gkd ACCESS_ACCESSIBILITY allow
+  appops set li.songe.gkd ACCESS_RESTRICTED_SETTINGS allow
+  ```
+  ⇒ 拿到这三样之后，**它在自己进程里**写 `enabled_accessibility_services` 就会被系统接受
+  （`ACCESS_RESTRICTED_SETTINGS` 正是"受限设置"的闸门）。实测对照：
+  | | WRITE_SECURE_SETTINGS | ACCESS_ACCESSIBILITY | ACCESS_RESTRICTED_SETTINGS |
+  | --- | --- | --- | --- |
+  | GKD | `granted=true` | `allow` | **`allow`** |
+  | 本应用 | 未声明 | `allow`（用户开无障碍时给的） | **`default`**（我曾试着 `appops set` 上去，回读仍是 default，说明得先声明那条权限/不能单设） |
+  ⚠ 另一个关键事实：**GKD 不是 debuggable**（`pkgFlags` 里没有 DEBUGGABLE）却拿到了 `WRITE_SECURE_SETTINGS`
+  ⇒ `pm grant` 对这条 `development` 级权限在**普通应用**上也生效，这条路对 release 包同样可用。
+  ⇒ 结论修正：**不需要 Shizuku**，一次 adb「命令授权」（与 GKD 同款）即可让**我们自己的 App**
+  自动开关无障碍 / 被系统关掉后自愈。真正的限制只剩"重装后要再跑一次脚本"（这一步我装机时顺手做）。
+- **探针真机结果（2026-10-25 20:24，`auth/AccessibilityProbe.kt` + 清单里那条 `WRITE_SECURE_SETTINGS`）**：
+  **能力成立**，而且比 GKD 那套更简单 —— **只要 `WRITE_SECURE_SETTINGS`，不需要任何 app-op**：
+  ```
+  20:24:01.005 无障碍查询 → 未开启（系统返回 1 项：gkd）        ← 装机后我们的确实掉了
+  20:24:01.099 自愈探针: 权限=GRANTED app-op=null｜写入无异常｜写入前=共 1 项｜写入后=共 2 项｜系统采纳=true
+  20:24:01.168 无障碍查询 → 已开启（命中本应用组件）            ← 同一进程内立刻生效
+  ```
+  `dumpsys accessibility` 里 `Bound services` 出现 `Service[label=MasterMechanic …]`、`Enabled services` 含本应用；
+  强杀重启后仍在（第二次启动探针只打"已在列表里"）。
+  - **app-op 不需要**：本机 `appops set` 对任何包都无效（连 `com.android.shell` 都设不动），但**应用进程内**写
+    `Settings.Secure` 被系统接受 —— 所以之前"shell 写被忽略"的原因不是"用户同意"、也不是 app-op，
+    而是 **vivo 只拦 shell 这个调用方**。GKD 脚本里那两条 app-op 在本机其实没起作用。
+  - **`pm grant` 会随 `install -r` 保留**（本次探针就是在上一次 grant 之后覆盖安装的，权限仍是 GRANTED）
+    ⇒ 一次性授权之后，后续每次装机都不必再授；只有卸载重装才需要重跑一次。
+  - 下一步（待用户点头）：把探针转成正式能力 `无障碍自愈`（冷启动时若发现被关掉就自己开；无权限则静默回落），
+    同时**删掉探针里"摘掉自己再放回"那段危险动作**（它只用于验证写入是否被采纳，不能进正式路径）。
+- **已转成正式能力（同日，用户"开干"）**：`auth/AccessibilitySelfHeal.kt` + `ADR-010`（接受）。
+  - 触发点：**冷启动一次**（`MasterMechanicApp` 的 `LaunchedEffect(Unit)`，在自动跳转之前）；
+  - 四条边界：**只开不关**（只追加自己，绝不动别人的无障碍服务）｜**只在冷启动**（用户主动关掉后切回来不抢）｜
+    **无权限完全静默**（授权页照旧手点）｜写失败如实记、不重试；
+  - 探针已删（连同"摘掉自己再放回"那段危险动作）；单测 `AccessibilitySelfHealTest` 4 例钉住
+    "只追加不删除 / 只比包名判存在 / 脏分隔符要修剪"；
+  - **实测（20:32，正式路径）**：装完机冷启动 → `无障碍查询 → 未开启（系统返回 1 项）` →
+    `无障碍自愈: 已自动开启无障碍服务（写入前 1 项 → 现在 2 项）` → `无障碍查询 → 已开启（命中本应用组件）`。
+  - ⇒ 从此装机只需 **`adb shell pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS` 跑一次**（我代跑；
+    覆盖安装保留），**不再需要手点无障碍**；屏幕采集仍必须手点（系统弹窗）。
+
+### 2026-10-26 补（两处漏的：拨"关"没打标记 + pollTick 每秒重画）
+
+- **"取消通知还是没有提示"**：上一版只给「去授权」那条路打了标记，而**拨"关"**走的是 `disableOf`
+  → `onOpenNotificationSettings`，那里**没有**打标记 ⇒ 回来没得比。已在 `disableOf(NOTIFICATIONS)` 里补上。
+- **"看起来还是触发重绘"**：`LaunchedEffect(resumeTick, …, pollTick)` 会在**组合期**读 `pollTick`，
+  而它每秒变一次 ⇒ 整条 route 每秒失效一次。改成 `snapshotFlow { listOf(...) }` 在快照系统里监听，
+  **不进组合期**；再配合"列表等值不重画"，只有当某项状态真的变了才会重绘。
+- **回执的时机**也改了：原先挂在"statuses 变了"上，可能在状态还没刷新完就比对（拿旧值 ⇒ 判成没变）；
+  现在挂在 `LaunchedEffect(resumeTick)`（回到前台）+ 400ms 后**重新读真值**再比。
+- **实测**（不经手点）：强停进程 → 写入 `item=NOTIFICATIONS / state=GRANTED` → 启动 → 截图出现「通知已关闭」。
+  ⚠ 中途踩过一次自己的测试坑：进程活着时用 `run-as cp` 改 prefs 文件，SharedPreferences 有内存缓存，
+  读不到新值 —— 必须先 `am force-stop` 再写文件。
+
+### 2026-10-26（当前步办完后的过渡：卡片交叉淡入 + 那一行高亮）
+
+- **用户口径**："操作完当前步骤的卡片时，它会转移到下方的步骤列表里，然后当前卡片变成另一张卡，
+  目前是闪烁一下，没有过渡动画，很突兀。我还要找一下当前操作的权限在哪一行 ⇒ 希望增加过渡动效。"
+- 两件事一起做（`AuthorizationScreen`）：
+  1. **当前步卡片**用 `AnimatedContent`（`targetState = current`）：新卡从下方 1/8 高度推上来 + 淡入（240ms），
+     旧卡向上收走 + 淡出（160ms）—— 时长刻意短，这是"确认完成"，不该让人等；
+  2. **刚办完那一项**在下方列表里**高亮 1.6 秒**（`animateColorAsState`，primaryContainer 淡入 300ms 再淡出），
+     解决"还要找它落在哪一行"。
+  3. 列表卡加 `animateContentSize()`：多出一行时高度平滑，不硬跳。
+- **同日按反馈调柔**（用户："高亮颜色太突兀，而且行底的白线没填满整行，有种断裂感"）：
+  ① 高亮从 `primaryContainer`（深色主题下是一整块深蓝）改成 `primary.copy(alpha = 0.10f)` 薄染；
+  ② 行分隔线去掉 16dp 内缩、改**通栏**——行高亮是整行的，线却内缩 ⇒ 一断一接的观感。
+- 实现细节：`justMoved` / `lastNext` 两个状态记住"上一张卡是谁"，`LaunchedEffect(next)` 在切换时置高亮并延时清除；
+  行背景包了一层 `Column(background(...))`（原来的 `AuthStepRow` 不动，避免影响对齐与语义）。
+- 验证：`:app:test -PfastTests` 全绿、`assembleDebug` 通过、`install -r` = `Success`（动画需真机目视，未截图取证）。
+
+### 2026-10-26（删掉「守护下通知不可见」提示；返回时整页重画的闪烁）
+
+- **用户口径 1**："为什么要在守护权限下面显示通知不可见，很容易造成误解吧" ⇒ 删。
+  - 通知本来就单独占一步、状态写得很清楚；在守护下面再说一句等于同一件事说两遍，还容易被读成"守护有问题"。
+  - 连带删：`resident_notify_warning` 文案、`AuthorizationScreen.notificationsEnabled` 参数
+    （以及 route 里 `refreshRuntime` 的那次 `areNotificationsEnabled()` 调用、预览里的实参）。
+- **用户口径 2**："关闭通知返回后还是闪烁了一下，看起来像是刷新了 ui" ⇒ 找到真因：
+  `statuses` 原来用 `remember(resumeTick, captureActive, refreshTick, residentRunning, pollTick)` 在**组合期**同步重算，
+  而 `pollTick` **每秒**变一次 ⇒ 整页每秒重建；从系统页返回时还会连着触发几次
+  （resumeTick + 3 次延迟刷新 + 一次 reconcile）⇒ 看起来就是"闪了一下"。
+  - 改法：改成 `var statuses by remember { mutableStateOf(collectStatuses()) }` +
+    `LaunchedEffect(同样的 key) { statuses = collectStatuses() }` ——
+    轮询照旧，但 `AuthStatus` 是 data class、列表等值时**不触发重组**，只有真的变了才重画。
+
+### 2026-10-26（通知 / 后台运行的状态变化补回执；返回 App 的一帧白屏）
+
+- **用户报障 1**："通知权限和后台运行权限状态变化没有提示"。
+  - 这两项**没有开关**（只能在系统页里改），所以拿不到"点击"这个时机；能观察到的只有**状态变了**。
+  - 改法（第二版，**第一版用内存里的"上一次状态"失效了**）：这一趟很容易把 Activity 重建
+    （用户同时报"没有提示"和"白屏"）⇒ 进程一重建，内存里的 prev 就没了，首次填表被当成"没变化"。
+    现在改成**落盘**（`auth/AuthRecheckPending`）：跳转前记一笔"离开时它是什么状态"，
+    回到页面时读出来比对，**读完即清**；变了就弹一句，没变（用户取消）就静默。
+  - 实测：手工写入 `item=NOTIFICATIONS / state=GRANTED` → `pm revoke POST_NOTIFICATIONS` → 冷启动，
+    截图里出现「通知已关闭」，且 `shared_prefs/auth_recheck.xml` 被清成 `<map />`（消费生效）。
+- **用户报障 2**："关闭通知后返回 app 会先出现一帧白屏"。
+  - 成因：主题 `Theme.Material.Light.NoActionBar` **没设 `windowBackground`** ⇒ 系统给纯白；
+    而界面是**动态取色**（Material You），surface 往往不是纯白 ⇒ "窗口已显示、Compose 还没画第一帧"
+    的那一瞬就是一块白底。
+  - 改法：① `values/colors.xml` + `values-night/colors.xml` 定义 `mm_window_background`
+    （#FFFBFE / #1C1B1F，夜间必须有，否则夜间闪白更刺眼），主题里挂上；
+    ② `MainActivity.onCreate` 里按**本机动态色**再覆盖一次 `window.background`。
+  - ⚠ **第一版取的是 `surface`，用户随即报"白屏变灰屏"**：`Scaffold` 的默认容器色是
+    `colorScheme.background`，而 surface 在动态取色下**更深一点** ⇒ 已改成 `background`。
+
+### 2026-10-25（守护 / 采集的开关也补上 Toast 回执）
+
+- **用户口径**："启动/停止权限都应该有 toast 提示"。
+- 新增 `auth_toast_resident_on/off`、`auth_toast_capture_on/off`；route 里抽了一个 `toast(@StringRes)`
+  小函数（无障碍那三条也改用它，避免三处重复写 `Toast.makeText`）。
+- 采集那条的时机：**会话建立之后**才弹（`CaptureService.start` 之后）—— 此时画面已经切到游戏，
+  Toast 仍会浮在上面；提前弹会与"先把 App 移出屏幕"那段抢时序。
+
+### 2026-10-25（常驻守护的"开关"会记住：进程被杀 / 覆盖安装后自动恢复）
+
+- **用户报障**：`常驻守护` 每次重启 App 后都变回"关闭"，每天要手动拨一次。
+- **原因**：服务是 `START_STICKY`，被系统回收时**会**自己回来；但进程被明确杀掉 / 覆盖安装 / 用户强停之后
+  没有任何人再拉起它 ⇒ 界面按 `isRunning` 读，自然一律显示关闭。
+- **改法**：记住"用户是否要求它开着"（`resident_service` 偏好里的 `desired_running`），
+  `ResidentService.start/stop` 负责写；`Application.onCreate` 调 `restoreIfDesired`：
+  期望开 && 没在跑 ⇒ 补一次 `startForegroundService`。
+  - 开关落点改成 `ResidentService.start/stop`（原来直接 `startForegroundService` / `stopService`，
+    没有记忆点）。
+  - **从后台启动前台服务在 Android 12+ 可能被拒**（`ForegroundServiceStartNotAllowedException`）⇒
+    整体 `runCatching`，失败只记日志（"被系统拒绝：…"），界面照旧报"关闭"，不假装成功。
+  - 日志两支都写（"已发起" / "无需恢复（期望=…，运行中=…）"），下次不用再猜为什么不恢复。
+- **实测**：手工把 `desired_running=true` 写进私有偏好（模拟用户上次拨开）→ `force-stop` → 冷启动，
+  日志出现 `常驻守护：启动时恢复（已发起`，`dumpsys activity services` 里出现 `ResidentService` 记录。
+- ⏳ 待用户复验：把开关拨开 → 强杀 App → 重开，应当自己变回"运行中"；拨关 → 重开应当保持关闭。
+
+### 2026-10-25（无障碍那一行改成开关：能代办就真开关，不能就指路）
+
+- **用户口径**："无障碍服务改为开关控件，如果已经授予「写入安全设置权限」时直接开关无障碍权限，
+  如果还没有获得无障碍权限则引导用户到系统设置页去开关"。
+- 实现：`AuthRowTrailing` 里给 `AuthItem.ACCESSIBILITY` 单开一条分支 —— **始终是 `Switch`**
+  （形态不因权限而变，用户不该为此学两套界面）：
+  - 持有 `WRITE_SECURE_SETTINGS` ⇒ `onSetAccessibilityEnabled` 非 null，拨一下**真的开 / 关**；
+  - 没有 ⇒ 传 null，拨它只把用户送到**系统设置 → 无障碍**，状态仍由系统读回来（下次读数会把它拨回真实值）。
+- `AccessibilitySelfHeal` 扩成"开关 + 自愈"两个入口：
+  - **新增 `setEnabled(enabled)`（双向）**：开 = 追加自己；关 = **只摘自己**（`withoutSelf` 纯函数，别人的服务原样保留、顺序不变，有单测）；
+  - **新增"用户主动关闭"标记**（`accessibility_switch` 偏好）：拨关写入、拨开清除；`ensureEnabled` 见到它就跳过 ——
+    **用户亲手关掉的，冷启动自愈不会偷偷打开**（这是"别跟用户对着干"的落点，拔掉它会变成每隔一次启动就抢回来）。
+- 边界修正：`ADR-010` 原来写"只开不关"，已改成"**只动自己**"——"关"只能由用户拨开关触发，自愈仍只开不关。
+- 顺带修掉一处不一致：无障碍**是当前步**时页面给的是展开卡（「去开启」按钮），那颗按钮原来只会把人送去系统设置；
+  现在同样走 `onSetAccessibilityEnabled(true)` ⇒ **有权限就直接开**，没权限才跳系统页（与行内开关同一落点）。
+- 验证：`:app:test -PfastTests` 全绿（`AccessibilitySelfHealTest` 新增 `withoutSelfRemovesOnlyUs` 一例）、
+  `assembleDebug` 通过、真机 `install -r` = `Success`，并做了**端到端走查**（`adb shell input tap` 点那颗开关）：
+  | 步骤 | 实测 |
+  | --- | --- |
+  | 拨关 | `无障碍开关: 已关闭（列表 1 项）`；`settings get` 只剩 gkd ⇒ **别人的服务原样保留** |
+  | 标记 | `shared_prefs/accessibility_switch.xml` 出现 `user_disabled=true` |
+  | 冷启动 | `无障碍自愈: 跳过 —— 上次是用户主动关闭的开关`，无障碍**保持关闭** ⇒ 不跟用户对着干 |
+  | 清标记 + 冷启动 | `无障碍自愈: 已自动开启（写入前 1 项 → 现在 2 项）` ⇒ 自愈仍有效 |
+  | 覆盖安装 | 装完无障碍掉了，冷启动自愈自动恢复（同 20:46 那条日志） |
+- **没有特权权限时的引导（同日，用户拿 GKD 截图对标）**：原来那颗开关只会把人扔去系统设置，现在改成弹
+  **「命令授权」对话框**（`auth/PrivilegedGrant` + `GrantCommandDialog`），照 GKD 的形态：
+  ① 有台装了 adb 的电脑 ② 开 USB 调试连上 ③ 在终端跑一条命令 —— 命令由 App **现场生成**到
+  `/storage/emulated/0/Android/data/<pkg>/files/sh/grant.sh`（内容：`pm grant WRITE_SECURE_SETTINGS`
+  + 两条 `appops`；后两条在本机无效但别的 ROM 需要），弹窗里显示 `adb shell sh <路径>` 并有**复制**按钮；
+  另有「去手动授权」出口（跳系统无障碍页）—— 不想接电脑的人当下也能用。
+  - **端到端实测**：撤掉权限 → 点「去开启」弹出该对话框（截图核对文案与命令）→ 照抄命令跑一次 →
+    `WRITE_SECURE_SETTINGS: granted=true` 且脚本自报"授权完成" → 冷启动
+    `无障碍自愈: 已自动开启（写入前 1 项 → 现在 2 项）`。
+  - 单测 `PrivilegedGrantTest` 3 例：脚本含且仅含本包的授权命令 / 那一条 `pm grant` 必须在 / 复制的那行格式固定。
+- **"跑完命令手机上一点提示都没有"（用户实测反馈）⇒ 补两处回执**：
+  1. **弹窗里加「我已运行，检测」**（确认键）：点它重新查一次权限，成功立刻 Toast 并关掉弹窗；
+     命令与「复制命令」合成一块（复制按钮就贴在命令右边，不用去底部找）。
+  2. **权限"从无到有"的那一刻自动回执**：`canSelfControlAccessibility` 改成
+     `remember(resumeTick, grantTick)` —— 回到前台也会重查；从 false→true 时弹
+     「命令授权已生效：无障碍现在可以直接开关」。没有这两处，用户只能靠"开关是否变灰"猜。
+  - **提示语只在"未允许"时出现**（2026-10-25 用户口径）：`hintOf(BATTERY)` 加了 `state == MISSING` 条件 ——
+    已允许后那句"厂商层 App 读不到"就是噪音，会让人以为还有一步没做（而实测厂商页设完会自动同步）。
+  - **"去设置"改为直达耗电管理页**（同日用户口径）：不再先弹 AOSP 的「是否允许应用始终在后台运行？」——
+    ① 那个框只写系统层，真正会冻结进程的是厂商层；② 实测在厂商页设「允许后台耗电」后系统层自动同步
+    （`dumpsys deviceidle whitelist` 出现本应用）⇒ 一次动作两层都设好，弹框纯属多一层；
+    ③ 系统层已豁免时那个框**什么都不弹**（用户报的"点了没反应"就是它）。
+    现在直接 `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS`（vivo 落到「后台耗电管理」，原生落到电池优化列表），
+    清单里 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 随之删除（不再需要）。
+  - **实测链路**：撤权限 → 点「去开启」→ 弹窗（截图核过三项与命令）→ 电脑侧 `pm grant` →
+    点「我已运行，检测」→ Toast「命令授权已生效」→ 再点「去开启」→ **直接开启**（不再跳系统设置）+
+    Toast「无障碍已开启」，同一秒 `无障碍开关: 已开启（列表 2 项）`。
+  - **顺带修两个界面里的 Markdown 残留**：`auth_grant_note` 与 `capture_servers_wrong_screen` 里写着
+    `**加粗**`，Compose 不解析 Markdown ⇒ 界面上会原样显示星号（截图里看到的）。
+- **改为轮询检测（用户口径："不应该由用户去点"）**：弹窗打开期间**每秒**查一次
+  `WRITE_SECURE_SETTINGS`；一拿到就**自动关弹窗 + 自动开启无障碍**（`autoEnableOnGrant`），
+  用户全程不用回 App 点任何东西。弹窗底部改成一行"⏳ 正在等待授权…检测到后会自动继续"，
+  原来那颗「我已运行，检测」删除（`auth_grant_recheck` 一并删，零死文案守卫盯着）。
+  自动开启时**不叠**"授权已生效"那条 Toast —— `setEnabled` 自己会弹「无障碍已开启」，两条挤在一起反而吵。
+- 顺带结论（回答用户另一个问题）：**悬浮窗权限（SYSTEM_ALERT_WINDOW）不需要加** —— 三个悬浮窗都是
+  `TYPE_ACCESSIBILITY_OVERLAY`，已由无障碍授权覆盖（见上一条条目）。
+
 ### 2026-10-25（授权页第 5 项：电池优化白名单；并确认"悬浮窗权限"不需要加）
 
 用户问"悬浮窗权限是否也该放进来"，并要求新增"加入电池优化白名单，保持后台运行"。两件事结论相反：

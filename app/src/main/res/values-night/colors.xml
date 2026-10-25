@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 夜间版窗口底色：默认深色 surface（浅色 #FFFBFE 在夜间会出现"白一下"，正是用户报的那一帧）。 -->
+    <color name="mm_window_background">#1C1B1F</color>
+</resources>

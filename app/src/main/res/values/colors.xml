@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="purple_200">#FFBB86FC</color>
-    <color name="purple_500">#FF6200EE</color>
-    <color name="purple_700">#FF3700B3</color>
-    <color name="teal_200">#FF03DAC5</color>
-    <color name="teal_700">#FF018786</color>
-    <color name="black">#FF000000</color>
-    <color name="white">#FFFFFFFF</color>
+    <!--
+      **窗口底色**（2026-10-25 用户报："关闭通知后返回 app 会先出现一帧白屏"）。
+
+      成因：主题是 `Theme.Material.Light.NoActionBar`，没设 `windowBackground` ⇒ 系统给的是纯白；
+      而界面用的是**动态取色**（Material You），surface 往往不是纯白 ⇒ 在"窗口已显示、Compose 还没画第一帧"
+      的那一瞬间，看到的就是这块白底。把它改成与默认 surface 接近的值，并把**夜间**也给上深色，
+      就不再有"白一下"的观感（运行期还会在 `MainActivity` 里按动态色再覆盖一次，见那里的注释）。
+    -->
+    <color name="mm_window_background">#FFFBFE</color>
 </resources>

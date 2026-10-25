@@ -43,6 +43,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.mastermechanic.R
+import com.example.mastermechanic.auth.AccessibilitySelfHeal
 import com.example.mastermechanic.auth.AuthGuide
 import com.example.mastermechanic.auth.AuthorizationChecks
 import com.example.mastermechanic.auth.CaptureSessionState
@@ -166,6 +167,10 @@ fun MasterMechanicApp(
     var autoAuthDone by rememberSaveable { mutableStateOf(false) }
     val appContext = LocalContext.current
     LaunchedEffect(Unit) {
+        // **无障碍自愈**（2026-10-25）：冷启动时若发现无障碍被关掉（装机 / 系统清理 / 用户手动关），
+        // 自己能开就自己开。只在**冷启动**做一次 —— 用户主动关掉后切回来，我们不抢（见 `AccessibilitySelfHeal`）。
+        // 放在自动跳转之前：若它成功了，紧接着那次授权检查就会看到「已开启」。
+        AccessibilitySelfHeal.ensureEnabled(appContext)
         if (autoAuthDone) return@LaunchedEffect
         autoAuthDone = true
         val statuses = AuthorizationChecks.collect(

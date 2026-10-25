@@ -11,9 +11,11 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.example.mastermechanic.MainActivity
 import com.example.mastermechanic.R
 import com.example.mastermechanic.action.ClickDispatch
+import com.example.mastermechanic.log.MmLog
 import com.example.mastermechanic.patrol.PatrolRequestConsumer
 import com.example.mastermechanic.patrol.PatrolSession
 
@@ -102,6 +104,10 @@ class ResidentService : Service() {
         private const val CHANNEL_ID = "resident"
         private const val NOTIFICATION_ID = 1
 
+        /** 「用户希望守护开着」的标记（2026-10-25）：进程被杀 / App 重启后据此自动恢复。 */
+        private const val PREFS = "resident_service"
+        private const val KEY_DESIRED = "desired_running"
+
         /** 查询常驻服务是否在运行（仅查询本应用自身服务，无需额外权限）。 */
         @Suppress("DEPRECATION")
         fun isRunning(context: Context): Boolean {
@@ -110,5 +116,68 @@ class ResidentService : Service() {
             return activityManager.getRunningServices(Int.MAX_VALUE)
                 .any { it.service.className == ResidentService::class.java.name }
         }
+
+        /** 用户是否**要求**守护开着（开关拨开 = true，拨关 = false）。 */
+        fun isDesired(context: Context): Boolean =
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(KEY_DESIRED, false)
+
+        /** 启动守护并记下"用户要求它开着"。 */
+        fun start(context: Context) {
+            setDesired(context, true)
+            runCatching {
+                ContextCompat.startForegroundService(
+                    context,
+                    Intent(context, ResidentService::class.java),
+                )
+            }
+        }
+
+        /** 停止守护并清掉标记（下次启动不再自动拉起）。 */
+        fun stop(context: Context) {
+            setDesired(context, false)
+            context.stopService(Intent(context, ResidentService::class.java))
+        }
+
+        /**
+         * **冷启动恢复**（2026-10-25 用户报障："常驻守护每次重启 app 后都会重置"）。
+         *
+         * 服务本身是 `START_STICKY`，被系统回收时会自己回来；但**进程被明确杀掉 / 覆盖安装 / 用户强停**
+         * 之后没人再拉起它 —— 界面于是一律显示"关闭"，用户还得每天手动拨一次。
+         * 这里按"用户上次是否要求它开着"补一次。
+         *
+         * ⚠ 只在**进程启动**时调；从后台启动前台服务在 Android 12+ 可能被拒
+         * （`ForegroundServiceStartNotAllowedException`）⇒ 失败只记日志、不抛，界面照旧报"关闭"。
+         */
+        fun restoreIfDesired(context: Context) {
+            // 两个条件都打进日志：这条只在启动时出现一次，写清"为什么没恢复"省得下次再猜
+            val desired = isDesired(context)
+            val running = isRunning(context)
+            if (!desired || running) {
+                MmLog.i(TAG, "常驻守护：启动时无需恢复（期望=$desired，运行中=$running）")
+                return
+            }
+            val result = runCatching {
+                ContextCompat.startForegroundService(
+                    context,
+                    Intent(context, ResidentService::class.java),
+                )
+            }
+            MmLog.i(
+                TAG,
+                "常驻守护：启动时恢复（" +
+                    if (result.isSuccess) "已发起" else "被系统拒绝：${result.exceptionOrNull()?.message}" +
+                    "）",
+            )
+        }
+
+        private fun setDesired(context: Context, desired: Boolean) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_DESIRED, desired)
+                .apply()
+        }
+
+        private const val TAG = "MM-Auth"
     }
 }
