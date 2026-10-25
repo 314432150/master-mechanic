@@ -5,26 +5,34 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -39,19 +47,25 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.mastermechanic.R
+import com.example.mastermechanic.auth.AUTHORIZATION_DISPLAY_ORDER
 import com.example.mastermechanic.auth.AuthGuide
 import com.example.mastermechanic.auth.AuthItem
 import com.example.mastermechanic.auth.AuthState
 import com.example.mastermechanic.auth.AuthStatus
 import com.example.mastermechanic.auth.AuthorizationChecks
-import com.example.mastermechanic.auth.AuthorizationSummary
 import com.example.mastermechanic.auth.CaptureSessionState
 import com.example.mastermechanic.capture.CaptureSessionSignal
 import com.example.mastermechanic.capture.CaptureSessionStatus
@@ -59,6 +73,7 @@ import com.example.mastermechanic.log.MmLog
 import com.example.mastermechanic.service.CaptureService
 import com.example.mastermechanic.service.ResidentService
 import com.example.mastermechanic.ui.theme.MasterMechanicTheme
+import com.example.mastermechanic.ui.theme.Success40
 import com.example.mastermechanic.ui.theme.Warning40
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -115,18 +130,15 @@ private fun Context.hostActivity(): Activity? {
  * @param reauthTick **一键重新授权采集**的待处理请求（>0 = 有一条；见 [MainActivity.EXTRA_REAUTH_CAPTURE]）：
  *   悬浮窗菜单点「⟳ 重新授权采集」⇒ App 被拉到前台并带上它 ⇒ 本页**自动**拉起系统采集授权弹窗。
  * @param onReauthHandled 本页已经把请求兑现（弹窗已拉起）⇒ 通知调用方清零，避免切页回来又弹一次。
- * @param onOpenCalibration 进入「识别标定」页（T1-5b）。
- * @param onOpenServerList 进入「服务器清单」页（M3-T3-9，FR-10）。
- * @param onOpenFriendList 进入「好友清单」页（M3-T3-8，FR-07「拜访」三级列表的数据源）。
+ *
+ * ⚠ 2026-10-25（M5-U6 收口）：本页**不再有**「识别标定 / 服务器清单 / 好友清单」三颗跳转按钮 ——
+ * 换成壳的底栏与抽屉之后，那三颗与导航完全重复（换壳前它们是那些页面**唯一**的入口，所以留了三颗）。
  */
 @Composable
 fun AuthorizationRoute(
     resumeTick: Int,
     reauthTick: Int,
     onReauthHandled: () -> Unit,
-    onOpenCalibration: () -> Unit,
-    onOpenServerList: () -> Unit,
-    onOpenFriendList: () -> Unit,
 ) {
     val context = LocalContext.current
     var captureActive by remember { mutableStateOf(CaptureSessionSignal.isActive) }
@@ -297,7 +309,6 @@ fun AuthorizationRoute(
         statuses = statuses,
         // 自动拉起被挡住的说明（null = 没有这回事）——页面上要当场说清，不许静默
         blockedNote = blockedNote,
-        residentRunning = residentRunning,
         notificationsEnabled = notificationsEnabled,
         onOpenAccessibilitySettings = {
             context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -324,16 +335,25 @@ fun AuthorizationRoute(
             context.stopService(Intent(context, CaptureService::class.java))
             reconcileTick++ // 服务停止后本页状态延迟校正
         },
-        onOpenCalibration = onOpenCalibration,
-        onOpenServerList = onOpenServerList,
-        onOpenFriendList = onOpenFriendList,
+        // 加入电池优化白名单（2026-10-25）：先试**直达确认框**（需要清单里的 REQUEST_IGNORE_BATTERY_OPTIMIZATIONS），
+        // 有些 ROM / 策略下这个 Intent 会被拦 ⇒ 退回"电池优化列表"，让用户自己找到本应用。
+        onRequestBatteryWhitelist = {
+            val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                .setData(Uri.parse("package:${context.packageName}"))
+            val ok = runCatching { context.startActivity(direct) }.isSuccess
+            if (!ok) {
+                runCatching {
+                    context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                }
+                MmLog.w(AUTH_LOG_TAG, "电池白名单：直达确认框不可用，已退回到电池优化列表页")
+            }
+        },
     )
 }
 
 @Composable
 fun AuthorizationScreen(
     statuses: List<AuthStatus>,
-    residentRunning: Boolean,
     notificationsEnabled: Boolean,
     onOpenAccessibilitySettings: () -> Unit,
     onRequestCapture: () -> Unit,
@@ -341,113 +361,152 @@ fun AuthorizationScreen(
     onStartResident: () -> Unit,
     onStopResident: () -> Unit,
     onStopCapture: () -> Unit,
-    onOpenCalibration: () -> Unit,
-    onOpenServerList: () -> Unit,
-    onOpenFriendList: () -> Unit,
+    /**
+     * 把本应用**加进电池优化白名单**（2026-10-25 用户口径："保持后台运行"）。
+     *
+     * 与其它系统权限同一条纪律：我们只能把系统的确认框端到用户面前，真正的开关在系统设置里
+     * （移除更是只能去系统页）⇒ 未授权给「去加入」，已加入只报状态。
+     */
+    onRequestBatteryWhitelist: () -> Unit,
     /** 自动拉起采集被**判据**挡住时的说明（见 [AuthGuide]）；null = 没有这回事。 */
     blockedNote: String? = null,
 ) {
-    // **采集前面还缺哪些项**（2026-10-02）：采集卡上要写清"先办什么"，否则用户在那张卡上按下去
+    // **采集前面还缺哪些项**（2026-10-02）：采集那一行要写清"先办什么"，否则用户点下去
     // 就会离开 App（画面切到游戏），回来还得为上面几项再切一趟。
     // ⚠ 用 `map`（inline）取标签：`joinToString` 不是 inline，里面**不能**调 `stringResource`。
     val blockers = AuthGuide.blockingCapture(statuses)
     val blockerLabels = blockers.map { stringResource(authItemLabelRes(it)) }.joinToString("、")
+
+    // **引导式四步**（M5-U6 收口，2026-10-25）：一屏只说"下一步该办什么"，办完自动推进到下一步。
+    // 顺序口径**不在这里**，在 `AuthGuide.nextStep` / `AUTHORIZATION_DISPLAY_ORDER`（采集永远最后）——
+    // 那两份有单测钉着，页面只负责照它渲染（别在这儿再抄一份顺序）。
+    val next = AuthGuide.nextStep(statuses)
+    val byItem = statuses.associateBy { it.item }
+    // 两句话先取出来：下面 `hintOf` 是普通函数，非组合上下文里不能调 `stringResource`。
+    val residentNotifyWarning = stringResource(R.string.resident_notify_warning)
+    val captureLastHint = stringResource(R.string.auth_capture_last_hint, blockerLabels)
+
+    fun actionOf(item: AuthItem): () -> Unit = when (item) {
+        AuthItem.ACCESSIBILITY -> onOpenAccessibilitySettings
+        AuthItem.SCREEN_CAPTURE -> onRequestCapture
+        AuthItem.RESIDENT -> onStartResident
+        AuthItem.NOTIFICATIONS -> onRequestNotifications
+        AuthItem.BATTERY -> onRequestBatteryWhitelist
+    }
+
+    /** 附加提醒：琥珀色（用户 2026-10-01 口径"提示类信息不该用红色"）。 */
+    fun hintOf(status: AuthStatus): String? = when {
+        status.item == AuthItem.RESIDENT &&
+            status.state == AuthState.GRANTED &&
+            !notificationsEnabled -> residentNotifyWarning
+
+        status.item == AuthItem.SCREEN_CAPTURE &&
+            status.state == AuthState.MISSING &&
+            blockers.isNotEmpty() -> captureLastHint
+
+        else -> null
+    }
+
+    /**
+     * **能由我们停**的两项（守护 / 采集）—— 它们行内是开关，这就是"关"那一半的落点。
+     *
+     * 非 null 同时也意味着"这一项的两个方向都由我们写" ⇒ [AuthRowTrailing] 据此决定用开关。
+     * 无障碍 / 通知**没有**这一项：系统权限 App 内撤不了（只能去系统设置），给个按了不生效的控制更糟。
+     */
+    fun stopOf(item: AuthItem): (() -> Unit)? = when (item) {
+        AuthItem.SCREEN_CAPTURE -> onStopCapture
+        AuthItem.RESIDENT -> onStopResident
+        AuthItem.ACCESSIBILITY, AuthItem.NOTIFICATIONS, AuthItem.BATTERY -> null
+    }
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         // 与清单页同一套：**inset 只由壳消费一次**（这个 `Scaffold` 只为给页面一个落脚容器，
         // 系统栏若再算一遍 ⇒ 顶部多出一段空白 ✗；2026-10-02 全库排查时补齐）。
         contentWindowInsets = WindowInsets(0.dp),
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(innerPadding),
+            // 折叠屏展开 / 平板上别把一行拉成一米宽（UX 评审 2026-10-25）
+            contentAlignment = Alignment.TopCenter,
         ) {
-            Text(
-                text = stringResource(R.string.auth_title),
-                style = MaterialTheme.typography.headlineSmall,
-            )
-            Text(
-                text = stringResource(R.string.auth_subtitle),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            // 用户刚点了「去授权与权限 / ⟳ 重新授权采集」，而采集被**判据**挡住 ⇒ 当场说清为什么不弹窗
-            // （2026-10-02：把"点了没反应"变成"一句话告诉你先办什么"）
-            if (blockedNote != null) {
+            Column(
+                modifier = Modifier
+                    .widthIn(max = MAX_CONTENT_WIDTH)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                // 16 → 12（2026-10-25 收紧）：五步之后总高要留出余量，
+                // 间距按段收 4dp，肉眼几乎看不出，但四段就是 16dp
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                // 页内**不再有大标题**（2026-10-25，M5-U6 收口）：标题由壳出（`nav_auth` = 授权与权限），
+                // 再写一行「授权状态」就是双层标题（U1 那次过渡态的口径正好反过来）。
+                // 步数**从顺序表算**，不写死在文案里（加电池白名单时"四步"当场过期过一次）。
                 Text(
-                    text = blockedNote,
+                    text = stringResource(R.string.auth_subtitle, AUTHORIZATION_DISPLAY_ORDER.size),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Warning40,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-            statuses.forEach { status ->
-                AuthorizationCard(
-                    status = status,
-                    onAction = when (status.item) {
-                        AuthItem.ACCESSIBILITY -> onOpenAccessibilitySettings
-                        AuthItem.SCREEN_CAPTURE -> onRequestCapture
-                        // 常驻守护（2026-09-20 起为必备项）：未启动时这张卡的按钮就是"启动守护"
-                        AuthItem.RESIDENT -> onStartResident
-                        AuthItem.NOTIFICATIONS -> onRequestNotifications
-                    },
-                    hint = when {
-                        // 守护在跑但通知不可见（2026-10-01 口径：提示类信息用琥珀，不用红）
-                        status.item == AuthItem.RESIDENT &&
-                            status.state == AuthState.GRANTED &&
-                            !notificationsEnabled -> stringResource(R.string.resident_notify_warning)
-
-                        // **采集留到最后**（2026-10-02）：前面还有缺项 ⇒ 这张卡自己说清"先办什么"，
-                        // 免得用户在这里按下去就直接离开 App，回来还得为上面几项再切一趟。
-                        status.item == AuthItem.SCREEN_CAPTURE &&
-                            status.state == AuthState.MISSING &&
-                            blockers.isNotEmpty() ->
-                            stringResource(R.string.auth_capture_last_hint, blockerLabels)
-
-                        else -> null
-                    },
-                    trailing = when {
-                        status.item == AuthItem.SCREEN_CAPTURE && status.state == AuthState.GRANTED -> {
-                            {
-                                OutlinedButton(onClick = onStopCapture) {
-                                    Text(text = stringResource(R.string.auth_capture_action_stop))
+                // 用户刚点了「去授权与权限 / ⟳ 重新授权采集」，而采集被**判据**挡住 ⇒ 当场说清为什么不弹窗
+                // （2026-10-02：把"点了没反应"变成"一句话告诉你先办什么"）
+                if (blockedNote != null) {
+                    Text(
+                        text = blockedNote,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Warning40,
+                    )
+                }
+                AuthStepper(statuses = statuses, next = next)
+                // 摘要行**只在全部就绪时**出现（UX 评审 2026-10-25）：之前那句「下一步：屏幕采集」
+                // 与进度条 + 展开卡说的是同一件事，一屏里把步骤名说了三遍。四个都好了才值得说一句，
+                // 因为那时页面没有主按钮、需要一句"确实没事可办了"。
+                if (next == null) {
+                    Text(
+                        text = stringResource(R.string.auth_summary_ready),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                // **当前步**：展开卡（描述 + 该办什么 + 唯一的主按钮）。
+                // 当前步必然是 MISSING（`next` 的定义）⇒ 这张卡不需要"停止"。
+                val current = next?.let { byItem[it] }
+                if (current != null) {
+                    AuthorizationCard(
+                        status = current,
+                        onAction = actionOf(current.item),
+                        hint = hintOf(current),
+                    )
+                }
+                // **其余三步**：同一张卡里用分隔线排（它们是一张表的行，不是三张独立的卡）。
+                // 行尾控件的形态由 `AuthRowTrailing` 按"这一项的两端是不是都由我们写"决定。
+                val others = AUTHORIZATION_DISPLAY_ORDER
+                    .filter { it != next }
+                    .mapNotNull { byItem[it] }
+                if (others.isNotEmpty()) {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column {
+                            others.forEachIndexed { index, status ->
+                                if (index > 0) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(horizontal = 16.dp),
+                                        thickness = 1.dp,
+                                        color = MaterialTheme.colorScheme.outlineVariant,
+                                    )
                                 }
+                                AuthStepRow(
+                                    status = status,
+                                    hint = hintOf(status),
+                                    onAction = actionOf(status.item),
+                                    // **不做"已就绪才给"**：开关的两个方向都要有落点
+                                    // （关→开 = 启动 / 拉采集弹窗；开→关 = 停止）。系统权限这里是 null。
+                                    onStop = stopOf(status.item),
+                                )
                             }
                         }
-
-                        status.item == AuthItem.RESIDENT && status.state == AuthState.GRANTED -> {
-                            {
-                                OutlinedButton(onClick = onStopResident) {
-                                    Text(text = stringResource(R.string.resident_action_stop))
-                                }
-                            }
-                        }
-
-                        else -> null
-                    },
-                )
-            }
-            SummaryText(statuses = statuses)
-            OutlinedButton(
-                onClick = onOpenCalibration,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(text = stringResource(R.string.auth_open_calibration))
-            }
-            OutlinedButton(
-                onClick = onOpenServerList,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(text = stringResource(R.string.auth_open_server_list))
-            }
-            OutlinedButton(
-                onClick = onOpenFriendList,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(text = stringResource(R.string.auth_open_friend_list))
+                    }
+                }
             }
         }
     }
@@ -459,31 +518,31 @@ private fun AuthorizationCard(
     onAction: () -> Unit,
     /** 附加提醒（如"常驻守护在跑但通知不可见"）：红字，排在描述之后。 */
     hint: String? = null,
-    trailing: (@Composable () -> Unit)? = null,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
+        // 内边距 16 → 12、段距 6 → 4（2026-10-25 收紧）：这一步是"最占地"的一块，
+        // 五步之后它决定了最后一行会不会被挤到第二屏
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(authItemLabelRes(status.item)),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    text = stringResource(itemStatusText(status)),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = when (status.state) {
-                        AuthState.GRANTED -> MaterialTheme.colorScheme.primary
-                        AuthState.MISSING -> MaterialTheme.colorScheme.error
-                    },
-                )
-            }
+            // 展开卡的首行与下面那些行**共用同一个部件**：名字 + 行尾状态。
+            // 当前步必然是 MISSING ⇒ 行尾就是一句「未授权」（红色 = L1）；动作由下面那颗通栏主按钮承担。
+            // 卡内没有可点控件（动作在下面的通栏按钮）⇒ 首行不需要 48dp 的点击区，40 够
+            AuthStepHeader(
+                status = status,
+                nameStyle = MaterialTheme.typography.titleMedium,
+                minHeight = CARD_HEADER_MIN_HEIGHT,
+                trailing = {
+                    Text(
+                        text = stringResource(R.string.auth_chip_missing),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 1,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                },
+            )
             Text(
                 text = stringResource(itemDescription(status.item)),
                 style = MaterialTheme.typography.bodySmall,
@@ -504,30 +563,233 @@ private fun AuthorizationCard(
                     Text(text = stringResource(itemActionText(status.item)))
                 }
             }
-            if (trailing != null) {
-                Spacer(modifier = Modifier.height(2.dp))
-                trailing()
+        }
+    }
+}
+
+/**
+ * **四步进度条**（M5-U6 收口，2026-10-25）：四个圆点从左到右 = 屏幕采集永远在最后。
+ *
+ * 办完的打勾并染主色、当前这步描浅色底、后面的保持灰 —— 用户一眼看出"一共四步、我在第几步"，
+ * 而不是面对四张平铺的卡自己判断先后。**顺序不在这里写死**：取 `AUTHORIZATION_DISPLAY_ORDER`。
+ */
+@Composable
+private fun AuthStepper(statuses: List<AuthStatus>, next: AuthItem?) {
+    val byItem = statuses.associateBy { it.item }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        AUTHORIZATION_DISPLAY_ORDER.forEachIndexed { index, item ->
+            val granted = byItem[item]?.state == AuthState.GRANTED
+            val current = item == next
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(
+                            when {
+                                granted -> MaterialTheme.colorScheme.primary
+                                current -> MaterialTheme.colorScheme.primaryContainer
+                                else -> MaterialTheme.colorScheme.surfaceVariant
+                            },
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = if (granted) "✓" else "${index + 1}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (granted) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+                Text(
+                    // **短名**（无障碍 / 守护 / 通知 / 电池 / 采集）：五列时每列只有 ~66dp，
+                    // 全名"电池优化白名单"会折成"电池优化白 / 名单"、把整条撑高一倍（2026-10-25 实测截图）
+                    text = stringResource(stepperLabelRes(item)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = when {
+                        granted -> MaterialTheme.colorScheme.primary
+                        current -> MaterialTheme.colorScheme.onSurface
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    // 短名在 2.0× 字号下仍需换行兜底（宁可两行，不可硬切）
+                    maxLines = 2,
+                    textAlign = TextAlign.Center,
+                )
             }
         }
     }
 }
 
+/** 行高下限：行内可能是开关（48dp 点击区）或按钮，统一留够高度。 */
+private val STEP_ROW_MIN_HEIGHT = 48.dp
+
+/** 展开卡首行的下限：卡内**没有**可点控件（动作在下面的通栏按钮），40dp 足够，省 8dp。 */
+private val CARD_HEADER_MIN_HEIGHT = 40.dp
+
+/** 折叠屏展开 / 平板上别把一行拉成一米宽。 */
+private val MAX_CONTENT_WIDTH = 600.dp
+
+/**
+ * **行首**：名字（占满剩余）｜行尾控件槽（[trailing]，靠右）。展开卡与其余行都走它。
+ *
+ * 语义：整行**合并成一个读屏节点** ⇒ 念作「常驻守护，开关，已开启」/「通知，已开启」，
+ * 而不是先念一个孤立的名字、再念一个不知道属于谁的状态。
+ */
 @Composable
-private fun SummaryText(statuses: List<AuthStatus>) {
-    if (AuthorizationSummary.isAllReady(statuses)) {
+private fun AuthStepHeader(
+    status: AuthStatus,
+    nameStyle: TextStyle,
+    /** 行高下限：行内有开关/按钮时用 [STEP_ROW_MIN_HEIGHT]（保 48dp 点击区），卡内用 [CARD_HEADER_MIN_HEIGHT]。 */
+    minHeight: Dp = STEP_ROW_MIN_HEIGHT,
+    trailing: @Composable () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = minHeight)
+            .semantics(mergeDescendants = true) { },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(
-            text = stringResource(R.string.auth_summary_ready),
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
+            text = stringResource(authItemLabelRes(status.item)),
+            style = nameStyle,
+            // 两行而不是一行 + 省略号（UX 评审：5 字名称在 2.0× 需 140dp，折两行比切成
+            // "无障碍服…" 强；行内明明还有空）
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 8.dp),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
-    } else {
-        val missingLabels = AuthorizationSummary.missingItems(statuses)
-            .map { stringResource(authItemLabelRes(it)) }
-        Text(
-            text = stringResource(R.string.auth_summary_missing, missingLabels.joinToString("、")),
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.error,
+        trailing()
+    }
+}
+
+/**
+ * **行尾控件的分配规则**（2026-10-25 用户定稿）—— 判据是「**这个状态的两端是不是都由我们写**」：
+ *
+ * | 项 | 未授权 | 已授权 | 为什么 |
+ * | --- | --- | --- | --- |
+ * | 常驻守护 / 屏幕采集 | **`Switch` 关**（拨到开 = 启动守护 / 拉采集弹窗） | **`Switch` 开**（拨到关 = 停止） | 两个方向都由我们执行 ⇒ 真开关；停的入口也留在这儿 |
+ * | 无障碍 / 通知 | **按钮「去开启 / 去授权」** | **纯状态文本「已开启」**（绿、无控件） | 系统持有：App 既撤不了也开不了；已授权时确实**无事可做**，再摆一颗按钮就是骗人手滑 |
+ *
+ * 系统权限**未授权**为什么用按钮而不是开关：开关的关态是"**邀请你去打开**"，而这一拨只会把人带到
+ * 系统设置页/权限弹窗（App 自己开不了）—— 预期当场落空。按钮（"去开启"）没有这个歧义：
+ * 它承诺的就是"带你去"。
+ *
+ * ⚠ 2026-10-25 曾把「守护已开启」也改成只报状态（与系统权限一致），用户随即要求改回 ——
+ * 因为那样**这一页就没有停守护的入口**了（只能「设置 → 退出 App」）。别再把那条"一致性"改回来。
+ */
+@Composable
+private fun AuthRowTrailing(
+    status: AuthStatus,
+    onAction: () -> Unit,
+    onStop: (() -> Unit)?,
+) {
+    val granted = status.state == AuthState.GRANTED
+    when {
+        // ① 我们能起停的两项：开关即状态，也即动作（含"停"这个出口）
+        onStop != null -> Switch(
+            checked = granted,
+            onCheckedChange = { want ->
+                if (want) onAction() else onStop()
+            },
         )
+
+        // ② 系统权限已授权：只报一句状态（没有可做的事）。
+        // 电池白名单用「已加入」——"已开启"配"白名单"读不通
+        granted && status.item == AuthItem.BATTERY -> StatusText(R.string.auth_chip_whitelisted)
+
+        granted -> StatusText(R.string.auth_chip_enabled)
+
+        // ③ 系统权限未授权：一颗"带你去"的按钮
+        else -> TextButton(onClick = onAction) {
+            Text(
+                text = stringResource(systemActionRes(status.item)),
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** 行尾的"只有状态"形态：绿字（L4）、不可点、与左侧名称同一基线上。 */
+@Composable
+private fun StatusText(@StringRes res: Int) {
+    Text(
+        text = stringResource(res),
+        style = MaterialTheme.typography.labelLarge,
+        color = Success40,
+        maxLines = 1,
+        modifier = Modifier.padding(end = 4.dp),
+    )
+}
+
+/**
+ * **步进条专用短名**：只用来"认位置"，全名在行内（`authItemLabelRes`）。
+ *
+ * 五列时每列 ~66dp，全名「电池优化白名单」会折两行、把整条撑高一倍（2026-10-25 真机截图实测）。
+ * 两个映射分开放是刻意的：行内需要说得清"是什么"，步进条只需要"第几个"。
+ */
+@StringRes
+private fun stepperLabelRes(item: AuthItem): Int = when (item) {
+    AuthItem.ACCESSIBILITY -> R.string.auth_step_accessibility
+    AuthItem.RESIDENT -> R.string.auth_step_resident
+    AuthItem.NOTIFICATIONS -> R.string.auth_step_notifications
+    AuthItem.BATTERY -> R.string.auth_step_battery
+    AuthItem.SCREEN_CAPTURE -> R.string.auth_step_capture
+}
+
+/** 系统权限的「去办」文案（只有它们会走到按钮分支）。 */
+@StringRes
+private fun systemActionRes(item: AuthItem): Int = when (item) {
+    AuthItem.ACCESSIBILITY -> R.string.auth_row_action_enable
+    AuthItem.NOTIFICATIONS -> R.string.auth_row_action_authorize
+    AuthItem.BATTERY -> R.string.auth_row_action_battery
+    // 守护 / 采集在自己的状态由我们起停 ⇒ 行内是开关，走不到这里（保留分支只为 when 穷尽）
+    AuthItem.RESIDENT, AuthItem.SCREEN_CAPTURE -> R.string.auth_row_action_enable
+}
+
+/**
+ * **非当前步**的一行（外面那张卡由调用方给，这里只排一行内容）。
+ *
+ * 行尾只有一个控件，形态按 [AuthRowTrailing] 的规则决定（开关 / 状态文本 / 去办按钮）。
+ */
+@Composable
+private fun AuthStepRow(
+    status: AuthStatus,
+    hint: String?,
+    onAction: () -> Unit,
+    onStop: (() -> Unit)?,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        AuthStepHeader(
+            status = status,
+            nameStyle = MaterialTheme.typography.titleSmall,
+            trailing = { AuthRowTrailing(status = status, onAction = onAction, onStop = onStop) },
+        )
+        if (hint != null) {
+            Text(
+                text = hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = Warning40,
+            )
+        }
     }
 }
 
@@ -537,6 +799,7 @@ private fun itemDescription(item: AuthItem): Int = when (item) {
     AuthItem.SCREEN_CAPTURE -> R.string.auth_capture_desc
     AuthItem.RESIDENT -> R.string.resident_desc
     AuthItem.NOTIFICATIONS -> R.string.auth_notifications_desc
+    AuthItem.BATTERY -> R.string.auth_battery_desc
 }
 
 @StringRes
@@ -545,42 +808,21 @@ private fun itemActionText(item: AuthItem): Int = when (item) {
     AuthItem.SCREEN_CAPTURE -> R.string.auth_capture_action
     AuthItem.RESIDENT -> R.string.resident_action_start
     AuthItem.NOTIFICATIONS -> R.string.auth_notifications_action
-}
-
-@StringRes
-private fun itemStatusText(status: AuthStatus): Int = when (status.item) {
-    AuthItem.ACCESSIBILITY -> if (status.state == AuthState.GRANTED) {
-        R.string.auth_status_enabled
-    } else {
-        R.string.auth_status_disabled
-    }
-    AuthItem.SCREEN_CAPTURE -> if (status.state == AuthState.GRANTED) {
-        R.string.auth_capture_status_granted
-    } else {
-        R.string.auth_capture_status_missing
-    }
-    AuthItem.RESIDENT -> if (status.state == AuthState.GRANTED) {
-        R.string.resident_status_running
-    } else {
-        R.string.resident_status_stopped
-    }
-    AuthItem.NOTIFICATIONS -> when (status.state) {
-        AuthState.GRANTED -> R.string.auth_notifications_status_granted
-        AuthState.MISSING -> R.string.auth_notifications_status_missing
-    }
+    AuthItem.BATTERY -> R.string.auth_battery_action
 }
 
 @Preview(showBackground = true)
 @Composable
 private fun AuthorizationScreenPreview() {
     MasterMechanicTheme {
+        // 预览取"第二步还没办"的样子：第一步打勾、第二步是当前卡、后两步是一行摘要
         AuthorizationScreen(
             statuses = listOf(
                 AuthStatus(AuthItem.ACCESSIBILITY, AuthState.GRANTED),
+                AuthStatus(AuthItem.RESIDENT, AuthState.MISSING),
+                AuthStatus(AuthItem.NOTIFICATIONS, AuthState.GRANTED),
                 AuthStatus(AuthItem.SCREEN_CAPTURE, AuthState.MISSING),
-                AuthStatus(AuthItem.NOTIFICATIONS, AuthState.MISSING),
             ),
-            residentRunning = false,
             notificationsEnabled = true,
             onOpenAccessibilitySettings = {},
             onRequestCapture = {},
@@ -588,9 +830,7 @@ private fun AuthorizationScreenPreview() {
             onStartResident = {},
             onStopResident = {},
             onStopCapture = {},
-            onOpenCalibration = {},
-            onOpenServerList = {},
-            onOpenFriendList = {},
+            onRequestBatteryWhitelist = {},
         )
     }
 }

@@ -34,6 +34,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
@@ -42,6 +43,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.mastermechanic.R
+import com.example.mastermechanic.auth.AuthGuide
+import com.example.mastermechanic.auth.AuthorizationChecks
+import com.example.mastermechanic.auth.CaptureSessionState
+import com.example.mastermechanic.capture.CaptureSessionSignal
 import com.example.mastermechanic.ui.AuthorizationRoute
 import com.example.mastermechanic.ui.CalibrationRoute
 import com.example.mastermechanic.ui.diagnostics.DiagnosticsRoute
@@ -64,16 +69,13 @@ import kotlinx.coroutines.launch
  *    └─ NavigationBar           ← 一级：运行 / 拜访设置 / 账号与好友 / 标定
  * ```
  *
- * ## 这张卡的口径是"**行为不变，仅换壳**"
+ * ## 口径的演变（写在这里免得被当成 bug）
  *
- * 所以 U1 阶段有两处**有意的过渡态**，都写在这里免得被当成 bug：
- *
- * 1. **壳上的标题栏只出现在 5 个目的地**（占位页 + 账号与好友）：现有四页
- *    （授权与运行 / 标定 / 两个清单）**各自都带着自己的页头**（`Scaffold` 只挂 Snackbar，
- *    标题与返回键是页面内容的一部分）⇒ 壳再套一层标题就是**双层标题栏** ✗。
- *    U2 / U5 / U6 重写那些页面时会把它们的页头**收进壳里**，那时 [SHELL_APP_BAR_ROUTES] 就恒为全集。
- * 2. **`运行` 与抽屉里的 `授权与权限` 现在指向同一个 `AuthorizationRoute`**（旧编号 0 那一页）⇒
- *    两处看起来一样。这是刻意的：U1 不许改页面内容，而"运行"页（U2）与"授权"页（U6）会各自长出来。
+ * 1. U1 换壳时，四个旧页**各自都带着自己的页头** ⇒ 壳再套一层标题就是**双层标题栏** ✗，
+ *    所以 [SHELL_APP_BAR_ROUTES] 当时只给 5 个目的地。**U2 / U4 / U5 / U6 已陆续把页头收进壳里**
+ *    （运行 → 标定 → 清单 → 授权），⇒ **2026-10-25 起它恒为全集**（每个目的地都由壳出标题 + 抽屉按钮）。
+ * 2. U1 时 `运行` 与抽屉 `授权与权限` 指向同一个 `AuthorizationRoute`。U2 起「运行」长成自己的页
+ *    （状态卡 + 停止/继续），两者已经没有关系。
  *
  * ## 返回行为
  *
@@ -94,8 +96,9 @@ fun MasterMechanicApp(
     /**
      * 「账号与好友」当前选中的 Tab（0 = 区服清单 / 1 = 好友清单）。
      *
-     * 提升到壳这一层，是因为**授权页有两个入口按钮**分别要落到不同的 Tab
-     * （`onOpenServerList` / `onOpenFriendList`）—— 换壳前它们就是两个不同的 `screen` 编号。
+     * 提到壳这一层是因为**「新增」按钮的文案随 Tab 变**（`TopAppBar.actions` 里那条）。
+     * ⚠ 2026-10-25 之前它还有一个用途：授权页那两颗「服务器 / 好友」入口按钮要落到各自的 Tab；
+     * 那两颗已随 U6 收口删除 ⇒ 现在只有 TabRow 自己在改它。
      */
     var accountsTab by rememberSaveable { mutableIntStateOf(0) }
 
@@ -147,6 +150,33 @@ fun MasterMechanicApp(
     fun requestReauth() {
         localReauthTick++
         go(Routes.AUTH)
+    }
+
+    /**
+     * **启动时缺授权 ⇒ 直接落在「授权与权限」**（M5-U6 的验收项，2026-10-25 才补上实现 ——
+     * 此前只有计划与 `Routes.AUTH` 的注释写着"首次启动缺授权时自动进这里"，代码里没有）。
+     *
+     * 判据取 [AuthGuide.blockingCapture]（= 无障碍 / 常驻守护 / 通知里还缺的），**刻意不看屏幕采集**：
+     * 采集是**会话制**授权（ADR-001），每次冷启动都必然"缺" ⇒ 拿它当触发条件等于每次打开 App
+     * 都被拽到授权页。而"前面三项缺"才是真的跑不起来，那时把引导页端到用户面前，比让他自己
+     * 去发现左上角那个抽屉按钮有用。
+     *
+     * 只做一次（[autoAuthDone] 存 `rememberSaveable`）：从系统设置页返回、切页回来都不该再拽一次。
+     */
+    var autoAuthDone by rememberSaveable { mutableStateOf(false) }
+    val appContext = LocalContext.current
+    LaunchedEffect(Unit) {
+        if (autoAuthDone) return@LaunchedEffect
+        autoAuthDone = true
+        val statuses = AuthorizationChecks.collect(
+            appContext,
+            if (CaptureSessionSignal.isActive) {
+                CaptureSessionState.GRANTED
+            } else {
+                CaptureSessionState.NOT_GRANTED
+            },
+        )
+        if (AuthGuide.blockingCapture(statuses).isNotEmpty()) navController.navigateTo(Routes.AUTH)
     }
 
     ModalNavigationDrawer(
@@ -241,7 +271,7 @@ fun MasterMechanicApp(
                         onRequestCapture = { requestReauth() },
                     )
                 }
-                // 抽屉：授权与权限 —— 同样先接现有授权页（U6 会拆成引导式四步）
+                // 抽屉：授权与权限 —— U6 收口后是**引导式四步**（标题栏由壳出，页内不再有跳转按钮）
                 composable(Routes.AUTH) {
                     AuthorizationDestination(
                         resumeTick = resumeTick,
@@ -252,8 +282,6 @@ fun MasterMechanicApp(
                             localReauthTick = 0
                             onReauthHandled()
                         },
-                        onOpenCalibration = { go(Routes.CALIBRATION) },
-                        onOpenAccounts = { tab -> accountsTab = tab; go(Routes.ACCOUNTS) },
                     )
                 }
                 // 一级：拜访设置 —— U3 起是本页自己的内容（区服策略 + 好友 ⇒ **只保存，不发起**）
@@ -304,36 +332,26 @@ private fun NavHostController.navigateTo(route: String) {
     }
 }
 
-/** 壳上给标题栏的目的地（见 [MasterMechanicApp] 顶部说明第 1 条）。 */
-private val SHELL_APP_BAR_ROUTES = setOf(
-    // U2 起「运行」是新建的页面（自己不带页头）⇒ 按 ADR-009 决策五，壳给它标题栏（抽屉按钮 + 标题）
-    Routes.RUN,
-    // U5 起「标定」也收编：入口页由壳出标题（用户 2026-10-01："标定页顶部为什么没有标题栏"）＋
-    // 抽屉按钮；页内那行「返回授权页」已删。全屏工作台时壳整体收起（见 [calibrationFullScreen]）。
-    Routes.CALIBRATION,
-    Routes.VISIT_SETTINGS,
-    Routes.ACCOUNTS,
-    Routes.DIAGNOSTICS,
-    Routes.SETTINGS,
-    Routes.HELP,
-)
+/**
+ * 壳上给标题栏的目的地：**2026-10-25 起是全集**（见 [MasterMechanicApp] 顶部说明）。
+ *
+ * 收编顺序（每一步都顺带删掉了页内标题 / 返回按钮，避免双层）：
+ * U2「运行」→ U4「清单」→ U5「标定」→ **U6「授权与权限」**（本次；此前它只剩正文里一行大标题，
+ * 于是那页**没有左上角抽屉按钮** —— 进了那页就打不开抽屉，只能靠底栏或系统返回）。
+ */
+private val SHELL_APP_BAR_ROUTES = Routes.all.toSet()
 
-/** 运行 / 授权两处共用的接线（同一份 `AuthorizationRoute`，参数一模一样）。 */
+/** 抽屉「授权与权限」的接线（U6 收口后它只接采集重授权那条通道）。 */
 @Composable
 private fun AuthorizationDestination(
     resumeTick: Int,
     reauthTick: Int,
     onReauthHandled: () -> Unit,
-    onOpenCalibration: () -> Unit,
-    onOpenAccounts: (Int) -> Unit,
 ) {
     AuthorizationRoute(
         resumeTick = resumeTick,
         reauthTick = reauthTick,
         onReauthHandled = onReauthHandled,
-        onOpenCalibration = onOpenCalibration,
-        onOpenServerList = { onOpenAccounts(0) },
-        onOpenFriendList = { onOpenAccounts(1) },
     )
 }
 

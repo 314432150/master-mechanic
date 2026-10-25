@@ -45,6 +45,17 @@ class AuthGuideTest {
         assertTrue("只剩采集 ⇒ 这是最后一步，可以一键拉起", AuthGuide.captureIsTheOnlyMissing(onlyCapture))
         assertEquals("只剩采集时没有挡路的项", emptyList<AuthItem>(), AuthGuide.blockingCapture(onlyCapture))
 
+        // 电池优化白名单（2026-10-25）：它也在采集**前面**（点采集就跳游戏，这事得先办）
+        assertEquals(
+            "只缺电池白名单时，它挡在采集前面",
+            listOf(AuthItem.BATTERY),
+            AuthGuide.blockingCapture(statuses(AuthItem.BATTERY, AuthItem.SCREEN_CAPTURE)),
+        )
+        assertTrue(
+            "电池白名单没加 ⇒ 也不能说「只剩采集」（那时一键拉起会把用户带走、回来还得再进一次系统设置）",
+            !AuthGuide.captureIsTheOnlyMissing(statuses(AuthItem.BATTERY, AuthItem.SCREEN_CAPTURE)),
+        )
+
         assertFalse(
             "采集自己**不算**自己的挡路项（否则永远拉不起来）",
             AuthGuide.blockingCapture(onlyCapture).contains(AuthItem.SCREEN_CAPTURE),

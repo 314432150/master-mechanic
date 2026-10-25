@@ -16,6 +16,16 @@ enum class AuthItem {
     SCREEN_CAPTURE,
     RESIDENT,
     NOTIFICATIONS,
+
+    /**
+     * **加入电池优化白名单**（2026-10-25 用户口径："保持后台运行"）。
+     *
+     * 为什么它算"授权项"而不是普通设置：vivo / 各家省电策略会在后台几十分钟后**冻结进程**，
+     * 表现是"守护还在、但识别与点击整段不动"（用户视角＝没反应）。系统给的唯一解法就是这条白名单。
+     * 它同样**不由我们写**（`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 只是把确认框端到用户面前，
+     * 移除更是只能去系统页）⇒ 授权页按"系统权限"那一类处理：未授权给「去加入」，已加入只报状态。
+     */
+    BATTERY,
 }
 
 /**
@@ -29,6 +39,8 @@ val AUTHORIZATION_DISPLAY_ORDER: List<AuthItem> = listOf(
     AuthItem.ACCESSIBILITY,
     AuthItem.RESIDENT,
     AuthItem.NOTIFICATIONS,
+    // 电池白名单排在采集之前：它是"办完就不用再回来"的那种，而采集一点就跳去游戏（必须最后）
+    AuthItem.BATTERY,
     AuthItem.SCREEN_CAPTURE,
 )
 

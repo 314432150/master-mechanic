@@ -5,6 +5,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.PowerManager
 import android.view.accessibility.AccessibilityManager
 import androidx.core.content.ContextCompat
 import com.example.mastermechanic.log.MmLog
@@ -31,6 +32,8 @@ object AuthorizationChecks {
                     // 常驻守护（2026-09-20 起算必备项）：跑号与自动关弹窗都靠它
                     AuthItem.RESIDENT -> residentState(context)
                     AuthItem.NOTIFICATIONS -> notificationState(context)
+                    // 电池优化白名单（2026-10-25）：系统省电策略会在后台冻结进程 ⇒ 表现为"整段不动"
+                    AuthItem.BATTERY -> batteryState(context)
                 },
             )
         }
@@ -87,5 +90,22 @@ object AuthorizationChecks {
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED -> AuthState.GRANTED
         else -> AuthState.MISSING
+    }
+
+    /**
+     * **是否已在电池优化白名单里**（2026-10-25）。
+     *
+     * 读的是系统的 `PowerManager.isIgnoringBatteryOptimizations`，不是我们自己的开关 ——
+     * 用户可能在系统设置里手动加/撤，只有这一份读数是真的。
+     * 取不到 PowerManager 时按"缺"处理（与其它项同一条纪律：检查失败一律不静默通过，FR-08）。
+     */
+    fun batteryState(context: Context): AuthState {
+        val power = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            ?: return AuthState.MISSING
+        return if (power.isIgnoringBatteryOptimizations(context.packageName)) {
+            AuthState.GRANTED
+        } else {
+            AuthState.MISSING
+        }
     }
 }

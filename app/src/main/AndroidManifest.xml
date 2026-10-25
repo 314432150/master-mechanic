@@ -3,6 +3,12 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- **加入电池优化白名单**（2026-10-25 用户口径："保持后台运行"）：只有拿到这条权限，
+         `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 才能直接弹出系统确认框；
+         否则只能把用户丢到电池优化列表里自己翻（vivo 上那一层很深）。
+         它**不是**运行时权限：不发弹窗、安装即"持有"，真正的开关在系统设置里 ⇒ 授权页只报状态 + 指路。
+         ⚠ 上架 Google Play 时这条需要申报理由；本项目不通过 Play 分发，故直接声明。 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- 流程开始 / 结束的震动反馈（2026-10-20 用户口径）：普通权限，安装即授，无需运行时申请。 -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
