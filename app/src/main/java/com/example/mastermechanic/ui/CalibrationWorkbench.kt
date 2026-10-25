@@ -77,6 +77,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -288,24 +289,43 @@ internal fun CalibrationWorkbench(
                             ),
                             pageCount = { FrameLoop.virtualCount(count) },
                         )
-                        LaunchedEffect(pagerState.currentPage, count) {
-                            val index = FrameLoop.indexOf(pagerState.currentPage, count)
-                            frameList.getOrNull(index)?.let { page ->
-                                if (page != selectedFrame) onSelectFrame(page)
-                            }
-                        }
-                        LaunchedEffect(selectedFrame, count) {
-                            if (!pagerState.isScrollInProgress) {
-                                val idx = frameList.indexOf(selectedFrame)
-                                // 走"离当前页最近的那一份"：跨首尾时只挪一格，不会倒着翻回整圈
-                                if (idx >= 0 &&
-                                    idx != FrameLoop.indexOf(pagerState.currentPage, count)
-                                ) {
-                                    pagerState.scrollToPage(
-                                        FrameLoop.nearestPage(pagerState.currentPage, idx, count),
-                                    )
+                        /**
+                         * 页 → 选择：**只在用户滑动结束时**回写，且只认 [PagerState.settledPage]。
+                         *
+                         * ## ⚠ 2026-10-25 用户报障：删除一帧后两帧以极快的速度无限来回切、画面狂闪
+                         *
+                         * 病根是这里的**双向反馈**：一条「页号 → 选择」、一条「选择 → 页号」。
+                         * 删除一帧后帧数变了 ⇒ 同一个页号 `modulo` 出来的帧**整体挪了一位** ⇒
+                         * "页号换算出 A ⇒ 选择变成 A ⇒ 又把页号挪到 A 的页 ⇒ 这一页换算出 B ⇒ …"
+                         * 两条效应互相当成"用户操作"，一轮轮互相推翻，看起来就是疯狂闪烁。
+                         *
+                         * 现在只有**用户真的滑完**（`isScrollInProgress` 落回 false）才会回写；
+                         * 程序滚动（下面的 `scrollToPage`）不会改变选择 —— 因果只剩单方向，结构上不可能自激。
+                         * 帧列表 / 选择都用 `rememberUpdatedState` 取**当下值**（不用组合期捕获的旧值），
+                         * 所以 `count` 也不必进 key —— 进 key 会在删除后重启一次、拿旧页号算出邻居帧（白白跳一帧）。
+                         */
+                        val latestSelected by rememberUpdatedState(selectedFrame)
+                        LaunchedEffect(pagerState) {
+                            snapshotFlow { pagerState.isScrollInProgress to pagerState.settledPage }
+                                .collect { (scrolling, page) ->
+                                    if (scrolling) return@collect
+                                    val list = frameList
+                                    if (list.isEmpty()) return@collect
+                                    val index = FrameLoop.indexOf(page, list.size)
+                                    list.getOrNull(index)?.let { frame ->
+                                        if (frame != latestSelected) onSelectFrame(frame)
+                                    }
                                 }
-                            }
+                        }
+                        // 选择 / 帧数变化（含删除后的重映射）→ 让页号跟上。
+                        // 这是**唯一**主动改页号的地方：改完之后的页号一定映射回 `selectedFrame`，
+                        // 所以上面那条即便被程序滚动惊醒，也只会读到"同一个帧"、不会再写回选择。
+                        LaunchedEffect(selectedFrame, count) {
+                            val idx = frameList.indexOf(selectedFrame)
+                            if (idx < 0) return@LaunchedEffect
+                            // 走"离当前页最近的那一份"：跨首尾时只挪一格，不会倒着翻回整圈
+                            val target = FrameLoop.nearestPage(pagerState.settledPage, idx, count)
+                            if (target != pagerState.settledPage) pagerState.scrollToPage(target)
                         }
                         HorizontalPager(
                             state = pagerState,
