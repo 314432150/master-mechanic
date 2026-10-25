@@ -4561,7 +4561,7 @@ class CaptureService : Service() {
             TAG,
             "单帧处理耗时统计: 连续 ${total.sampleCount} 帧，总 P95 ${total.p95DisplayMs}ms" +
                 "（灰度 ${gray?.p95DisplayMs}ms / 识别 ${detect?.p95DisplayMs}ms），" +
-                "平均 ${total.avgDisplayMs}ms，最大 ${total.maxDisplayMs}ms（NFR-01 阈值 20ms）",
+                "平均 ${total.avgDisplayMs}ms，最大 ${total.maxDisplayMs}ms（NFR-01 阈值 50ms，不以更快为目标）",
         )
     }
 
@@ -4634,6 +4634,11 @@ class CaptureService : Service() {
         val rounds = signalPhaseRounds
         val matchMs = signalPhaseTotalsMs.values.sum()
         val costMs = signalCostTotalMs.values.sum()
+        // ⚠ **先拷再清**（2026-10-25 修）：上一版 `rows` 是从**已 clear 的**累加器拷的 ⇒ 每行只剩
+        // `outside` 一项，coarse / prefix / refine 一条都打不出来。真机 10-25 复现：
+        // `分段耗时统计: 近 100 轮｜outside 0.5ms（0.17%）` —— 而"真机 coarse 到底占多少"
+        // 正是 N6-4（采样提速）值不值得做的决策依据，白丢了半年的数据。
+        val rows = LinkedHashMap(signalPhaseTotalsMs)
         signalPhaseTotalsMs.clear()
         signalCostTotalMs.clear()
         signalPhaseRounds = 0
@@ -4641,7 +4646,6 @@ class CaptureService : Service() {
 
         val outsideMs = (costMs - matchMs).coerceAtLeast(0.0)
         val denominator = matchMs + outsideMs
-        val rows = LinkedHashMap(signalPhaseTotalsMs)
         if (outsideMs > 0.0) rows[PHASE_KEY_OUTSIDE] = outsideMs
         val share = rows.entries
             .sortedByDescending { it.value }

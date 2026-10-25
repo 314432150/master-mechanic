@@ -12,7 +12,7 @@ import kotlin.math.sqrt
  * - 不做运行期多尺度：匹配尺度由标定确定。
  *
  * 性能结构（T1-10a）：朴素全窗匹配为「位置数 × 模板像素」量级（约 1e8 次乘加 / 帧），
- * 在目标设备上无法满足 NFR-01（< 20ms）。现改为两级匹配：
+ * 在目标设备上无法满足 NFR-01（< 50ms；2026-10-25 由 20ms 重述）。现改为两级匹配：
  * 1. 粗搜：按固定网格步进 [COARSE_STEP] 扫描，打分用「采样模板」（[SampleView] 按
  *    交错步长抽取，约 1/2 像素量）与窗口前缀和统计——粗搜分数为近似值，仅用于排序筛点，
  *    不参与判定；
@@ -28,10 +28,29 @@ object TemplateMatcher {
     /** 方差下限：低于此值的位置无相关性可言（近恒定区域），分数记 0。 */
     private const val VARIANCE_EPS = 1e-6
 
+    /**
+     * **内积用定点整数累加**（N6-5，2026-10-25）：`Σ round(t'×[FIXED_SCALE]) × p` 累到 Long，
+     * 最后一次性除回浮点。
+     *
+     * 为什么这么改：原循环每项要两次数值转换（`byte→int`、`int→double`）再做 FP 乘加，
+     * 真机上单条标志的耗时几乎全在这两个循环里（粗搜 72.8% / 精搜 21.9%，2026-10-25 真机分段）。
+     * 换成整数乘加后每项少 3~4 条指令 ⇒ 实测整轮识别明显下降（数字见 `docs/progress.md`）。
+     *
+     * 精度：量化误差 `1/(2×[FIXED_SCALE])` 个灰度级，模板面积 5000 时对分数的扰动约 **4e-8**
+     * （`TemplateMatcherOptimizedTest` 的容差是 1e-6；真机帧池上的判定漂移在 N6-5 条目里如实记）。
+     * **回退 = 改成 false**（逐字节回到旧的 double 累加，不改任何判定语义）。
+     */
+    private const val FIXED_POINT_DOT = true
+
     /** 粗搜网格步进（像素）：固定算法参数；步进 2 保证与真峰错位 ≤ 1px 时相关性仍显著。 */
     private const val COARSE_STEP = 2
 
-    /** 参与精搜的粗搜代表点数量上限：覆盖「真峰 + 若干竞争区域」场景（实验值）。 */
+    /**
+     * 参与精搜的粗搜代表点数量上限的**默认值**（= [CoarseSampling.FULL] 那一档）：覆盖「真峰 + 若干竞争区域」场景。
+     *
+     * N6-4（2026-10-25）起这个值可被 [CoarseSampling.topK] 覆盖：**标志**用 32（少一半精搜），
+     * **锚点恒用 64**（它要用位置算点击坐标）。见 [findPeaks] 的 `sampling` 参数。
+     */
     private const val COARSE_TOP_K = 64
 
     /**
@@ -59,15 +78,23 @@ object TemplateMatcher {
         templateHeight: Int,
         frameWidth: Int,
         frameHeight: Int,
+        /**
+         * 该记录的**采样步长**（N6-4）：标志可能走 3×3（[CoarseSampling.MARKER]），锚点恒 2。
+         * 不传时按生产默认 2 算 —— 既有调用点与单测的数值口径因此一字不变。
+         */
+        sampleStep: Int = 2,
     ): Long {
         if (templateWidth <= 0 || templateHeight <= 0 || frameWidth <= 0 || frameHeight <= 0) return 0L
+        if (sampleStep < 1) return 0L
         val bounds = window.pixelBounds(frameWidth, frameHeight)
         val spanX = bounds.x1 - bounds.x0
         val spanY = bounds.y1 - bounds.y0
         if (spanX < templateWidth || spanY < templateHeight) return 0L
         val positionsX = (spanX - templateWidth) / COARSE_STEP + 1
         val positionsY = (spanY - templateHeight) / COARSE_STEP + 1
-        val samples = (templateWidth.toLong() * templateHeight + 1) / 2
+        // 每位置采样点数 = ceil(w·h / step)（交错采样：行内按 step 抽，各行起点错开）
+        val area = templateWidth.toLong() * templateHeight
+        val samples = (area + sampleStep - 1) / sampleStep
         return positionsX.toLong() * positionsY * samples
     }
 
@@ -99,9 +126,14 @@ object TemplateMatcher {
         frameWidth: Int,
         frameHeight: Int,
         maxOps: Long = MATCH_OPS_BUDGET,
+        /** 该记录的采样步长（N6-4，口径与 [estimateCoarseOps] 一致）：不算对会白收窄窗口。 */
+        sampleStep: Int = 2,
     ): SearchWindow {
         if (frameWidth <= 0 || frameHeight <= 0 || templateWidth <= 0 || templateHeight <= 0) return window
-        if (estimateCoarseOps(window, templateWidth, templateHeight, frameWidth, frameHeight) <= maxOps) {
+        if (estimateCoarseOps(
+                window, templateWidth, templateHeight, frameWidth, frameHeight, sampleStep,
+            ) <= maxOps
+        ) {
             return window
         }
         val bounds = window.pixelBounds(frameWidth, frameHeight)
@@ -130,7 +162,7 @@ object TemplateMatcher {
         repeat(24) {
             val mid = (lo + hi) / 2
             val ops = estimateCoarseOps(
-                windowAt(mid), templateWidth, templateHeight, frameWidth, frameHeight,
+                windowAt(mid), templateWidth, templateHeight, frameWidth, frameHeight, sampleStep,
             )
             if (ops <= maxOps) lo = mid else hi = mid
         }
@@ -200,6 +232,11 @@ object TemplateMatcher {
      * 候选视为同一处、只保留最高分——最高与次高分构成「竞争位置」审计基础（§5-1/§5-2）。
      *
      * [probe] 只做分段计时（N6-1 归因用），默认 null。
+     *
+     * [sampling] **粗搜采样档**（N6-4，2026-10-25）：默认 [CoarseSampling.FULL] = 既有行为一字不变；
+     * 只有**标志**可以传稀疏档（锚点要用位置算点击坐标，必须全精度，见 [CoarseSampling]）。
+     * 它只改"每个位置取多少采样点 / 送几个代表点去精搜"，**不改判定规则、不改分数口径**
+     * （候选分数仍是精搜的全精度值，阈值与差距线输入不变）。
      */
     fun findPeaks(
         image: GrayImage,
@@ -207,6 +244,7 @@ object TemplateMatcher {
         window: SearchWindow,
         params: MatchParams,
         probe: MatchCostProbe? = null,
+        sampling: CoarseSampling = CoarseSampling.FULL,
     ): List<MatchPeak> {
         if (template.centeredSumSq <= VARIANCE_EPS) return emptyList() // 常量模板：无有效纹理
 
@@ -217,7 +255,7 @@ object TemplateMatcher {
 
         val prefixStarted = System.nanoTime()
         val prefix = WindowPrefixSums.build(image, bounds)
-        val sample = SampleView.of(template, image.width)
+        val sample = SampleView.of(template, image.width, sampling.sampleStep)
         val area = template.width * template.height
         probe?.phase(PHASE_PREFIX, msSince(prefixStarted), "窗口 ${bounds.x1 - bounds.x0}×${bounds.y1 - bounds.y0}")
 
@@ -243,7 +281,11 @@ object TemplateMatcher {
         // 代表点贪心：若直接取前 K 名，同一峰簇的邻近网格点会占满名额、漏掉远处的
         // 次强峰（多峰 / 竞争位置场景）；互距约束保证各峰簇均有代表点进入精搜。
         val pickStarted = System.nanoTime()
-        val anchors = selectRepresentatives(coarse, maxOf(params.peakMinDistance, COARSE_STEP), COARSE_TOP_K)
+        val anchors = selectRepresentatives(
+            coarse,
+            maxOf(params.peakMinDistance, COARSE_STEP),
+            sampling.topK,
+        )
         probe?.phase(PHASE_PICK, msSince(pickStarted), "候选 ${coarse.size} → 锚点 ${anchors.size}")
 
         // 精搜：锚点邻域内全精度重算（候选分数与穷举实现一致）
@@ -323,14 +365,28 @@ object TemplateMatcher {
     ): Double {
         val variance = windowVariance(prefix, bounds, x, y, sample.fullWidth, sample.fullHeight, area)
         if (variance / area < VARIANCE_EPS) return 0.0
-        var dot = 0.0
-        var rowStart = y * image.width + x
+        val pixels = image.pixels
         val offsets = sample.offsets
-        val centered = sample.centeredAt
-        for (i in offsets.indices) {
-            dot += centered[i] * (image.pixels[rowStart + offsets[i]].toInt() and 0xFF)
+        val rowStart = y * image.width + x
+        val denominator = sqrt(sample.sumSq * variance)
+        if (FIXED_POINT_DOT) {
+            // 定点整数乘加（N6-5）：省掉每项「byte→int→double」两次转换
+            val centered = sample.centeredFixed
+            var dot = 0L
+            for (i in offsets.indices) {
+                dot += centered[i].toLong() * (pixels[rowStart + offsets[i]].toInt() and 0xFF)
+            }
+            // 扣掉 DC 项（量化偏差之和 × 窗口均值）：不扣就会把帧的整体亮度算进分子
+            val meanP = windowSum(prefix, bounds, x, y, sample.fullWidth, sample.fullHeight) /
+                area.toDouble()
+            return ((dot - meanP * sample.fixedSum) / FIXED_SCALE) / denominator
         }
-        return dot / sqrt(sample.sumSq * variance)
+        val centered = sample.centeredAt
+        var dot = 0.0
+        for (i in offsets.indices) {
+            dot += centered[i] * (pixels[rowStart + offsets[i]].toInt() and 0xFF)
+        }
+        return dot / denominator
     }
 
     /**
@@ -348,22 +404,55 @@ object TemplateMatcher {
         val area = template.width * template.height
         val variance = windowVariance(prefix, bounds, x, y, template.width, template.height, area)
         if (variance / area < VARIANCE_EPS) return 0.0
+        val pixels = image.pixels
+        val width = image.width
+        val denominator = sqrt(template.centeredSumSq * variance)
+        // dot = Σ t'·p；因 Σt' = 0，它等于 Σ t'·(p − p̄)，即 NCC 分子
+        if (FIXED_POINT_DOT) {
+            // 定点整数乘加（N6-5）：精搜占单条耗时约 22%，与粗搜同一把刀
+            val centered = template.centeredFixed
+            var dot = 0L
+            var rowStart = y * width + x
+            var ti = 0
+            for (ty in 0 until template.height) {
+                var i = rowStart
+                for (tx in 0 until template.width) {
+                    dot += centered[ti].toLong() * (pixels[i].toInt() and 0xFF)
+                    i++
+                    ti++
+                }
+                rowStart += width
+            }
+            // 扣掉 DC 项（量化偏差之和 × 窗口均值）：不扣就会把帧的整体亮度算进分子
+            val meanP = windowSum(prefix, bounds, x, y, template.width, template.height) /
+                area.toDouble()
+            return ((dot - meanP * template.centeredFixedSum) / FIXED_SCALE) / denominator
+        }
         val centered = template.centered
         var dot = 0.0
-        var rowStart = y * image.width + x
+        var rowStart = y * width + x
         var ti = 0
         for (ty in 0 until template.height) {
             var i = rowStart
             for (tx in 0 until template.width) {
-                dot += centered[ti] * (image.pixels[i].toInt() and 0xFF)
+                dot += centered[ti] * (pixels[i].toInt() and 0xFF)
                 i++
                 ti++
             }
-            rowStart += image.width
+            rowStart += width
         }
-        // dot = Σ t'·p；因 Σt' = 0，它等于 Σ t'·(p − p̄)，即 NCC 分子
-        return dot / sqrt(template.centeredSumSq * variance)
+        return dot / denominator
     }
+
+    /** 帧窗口像素和（与 [windowVariance] 同源前缀和）：定点内积扣 DC 项要用它。 */
+    private fun windowSum(
+        prefix: WindowPrefixSums,
+        bounds: PixelBounds,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+    ): Long = prefix.rectSum(x - bounds.x0, y - bounds.y0, width, height)
 
     /** 帧窗口的未归一化方差（Σ(p − p̄)² = Σp² − (Σp)²/n；整数前缀和精确累加）。 */
     private fun windowVariance(
@@ -460,51 +549,64 @@ internal class SampleView(
     val centeredAt: DoubleArray,
     /** Σ centeredAt²（粗搜分母的模板项）。 */
     val sumSq: Double,
+    /**
+     * [centeredAt] 的**定点整数版**（×[FIXED_SCALE]）：粗搜内积用它做整数乘加（N6-5）。
+     * 与 [Template.centeredFixed] 同一口径，精度见 [FIXED_SCALE]。
+     */
+    val centeredFixed: IntArray,
+    /** `Σ centeredFixed`（量化舍入偏差不为 0，内积最后要按窗口均值扣掉 DC 项）。 */
+    val fixedSum: Long,
     val fullWidth: Int,
     val fullHeight: Int,
 ) {
     companion object {
-        /** 采样步长：交错半采样（约 1/2 像素量参与粗搜）。 */
+        /** 采样步长默认值：交错半采样（约 1/2 像素量参与粗搜）。 */
         private const val STEP = 2
 
         /**
-         * 交错半采样（T1-10a）：偶行取偶列、奇行取奇列——纯「偶偶」抽取会整列漏掉
-         * 奇列上的 1px 周期特征（细线等）；交错后任一 2×2 邻域至少命中 1 个采样点。
+         * 交错采样（T1-10a；步长可配，N6-4）：偶行取偶列、奇行取奇列——纯「偶偶」抽取会整列漏掉
+         * 奇列上的 1px 周期特征（细线等）；交错后任一 `step×step` 邻域至少命中 1 个采样点。
          *
          * 去均值按**采样子集自身**计算（ΣcenteredAt = 0 精确）：若沿用全模板均值，
          * 采样点 Σc ≠ 0 会给粗搜分子引入 t̄ · Σc 系统性偏移项，破坏排序可信度。
+         *
+         * @param step 采样步长：2 = 交错半采样（生产默认）、3 = 3×3（只给标志，见 [CoarseSampling]）
          */
-        fun of(template: Template, imageWidth: Int): SampleView {
+        fun of(template: Template, imageWidth: Int, step: Int = STEP): SampleView {
             var count = 0
             for (ty in 0 until template.height) {
-                var tx = ty % STEP
+                var tx = ty % step
                 while (tx < template.width) {
                     count++
-                    tx += STEP
+                    tx += step
                 }
             }
             val offsets = IntArray(count)
             val values = DoubleArray(count)
             var k = 0
             for (ty in 0 until template.height) {
-                var tx = ty % STEP
+                var tx = ty % step
                 while (tx < template.width) {
                     offsets[k] = ty * imageWidth + tx
                     values[k] = (template.pixels[ty * template.width + tx].toInt() and 0xFF).toDouble()
                     k++
-                    tx += STEP
+                    tx += step
                 }
             }
             var mean = 0.0
             for (v in values) mean += v
             mean /= count
             var sq = 0.0
+            val fixed = IntArray(count)
+            var fixedSum = 0L
             for (i in 0 until count) {
                 val c = values[i] - mean
                 values[i] = c
+                fixed[i] = Math.round(c * FIXED_SCALE).toInt()
+                fixedSum += fixed[i]
                 sq += c * c
             }
-            return SampleView(offsets, values, sq, template.width, template.height)
+            return SampleView(offsets, values, sq, fixed, fixedSum, template.width, template.height)
         }
     }
 }

@@ -6,6 +6,7 @@ import com.example.mastermechanic.decision.PopupWatchExpectedSignals
 import com.example.mastermechanic.decision.RecognitionLoop
 import com.example.mastermechanic.decision.SignalStateMapping
 import com.example.mastermechanic.decision.UiState
+import com.example.mastermechanic.recognition.CoarseSampling
 import com.example.mastermechanic.recognition.MatchParams
 import com.example.mastermechanic.recognition.SearchWindow
 import com.example.mastermechanic.recognition.SignalSpec
@@ -228,9 +229,15 @@ class CalibrationData(
             templateHeight = biggest.height,
             frameWidth = frameWidth,
             frameHeight = frameHeight,
+            // 采样档必须跟着角色走（N6-4）：标志少算 4.5 倍，按 2 估会白收窄窗口、丢掉抗漂移的余量
+            sampleStep = samplingOf(entry.role).sampleStep,
         )
         return if (capped === entry.window) entry else entry.copy(window = capped)
     }
+
+    /** 按角色取粗搜采样档（N6-4）：标志 [CoarseSampling.MARKER]，锚点**恒** [CoarseSampling.FULL]。 */
+    fun samplingOf(role: SignalRole): CoarseSampling =
+        if (role == SignalRole.MARKER) CoarseSampling.MARKER else CoarseSampling.FULL
 
     /**
      * 一条记录的**固定余量重算**（见 [tightenedWindows]）：只收"可证居中"的轴，
@@ -456,9 +463,14 @@ class CalibrationData(
         }
     }
 
-    /** 标志规格（识别循环的输入；顺序 = 产物声明顺序）。 */
+    /**
+     * 标志规格（识别循环的输入；顺序 = 产物声明顺序）。
+     *
+     * ⚠ **标志用 [CoarseSampling.MARKER] 这一档粗搜采样**（N6-4，2026-10-25）：标志只回答
+     * "这个界面在不在"，采样稀一点不影响这个结论；锚点则不许可（见 [CoarseSampling] 的说明）。
+     */
     fun markerSpecs(): List<SignalSpec> =
-        signals.filter { it.role == SignalRole.MARKER }.map { spec(it) }
+        signals.filter { it.role == SignalRole.MARKER }.map { spec(it, CoarseSampling.MARKER) }
 
     /**
      * 按当前状态启用：该状态声明的锚点名。
@@ -472,11 +484,22 @@ class CalibrationData(
         // 必须按角色先筛：一个 ID 可能同时有标志与锚点两条记录，各自模板/窗口都可能不同
         val byId = signals.filter { it.role == SignalRole.ANCHOR }.associateBy { it.id }
         return anchorsFor(state).map { id ->
-            spec(requireNotNull(byId[id]) { "锚点「$id」不在产物里（构造校验应已拦截）" })
+            // 锚点**恒**全精度采样：它要用匹配位置算点击坐标（N6-4 的边界，见 CoarseSampling）
+            spec(
+                requireNotNull(byId[id]) { "锚点「$id」不在产物里（构造校验应已拦截）" },
+                CoarseSampling.FULL,
+            )
         }
     }
 
-    private fun spec(entry: SignalEntry): SignalSpec = SignalSpec(entry.id, entry.window, entry.templates)
+    /**
+     * 一条记录 → 匹配规格。
+     *
+     * [sampling] **必须由调用方按角色给**（标志 [CoarseSampling.MARKER] / 锚点 [CoarseSampling.FULL]）：
+     * 这里不给默认值，是因为"漏传"会静默地让锚点吃到稀疏采样 ⇒ 点击坐标漂 1~2px。
+     */
+    private fun spec(entry: SignalEntry, sampling: CoarseSampling): SignalSpec =
+        SignalSpec(entry.id, entry.window, entry.templates, sampling)
 
     companion object {
 

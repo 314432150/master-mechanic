@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class RecognitionLoop(
     private val signals: List<SignalSpec>,
-    params: MatchParams,
+    private val params: MatchParams,
     private val mapping: SignalStateMapping,
     /**
      * 期望集合来源（T2-1）：每轮只搜它注入的信号名，空集 = 不搜；搜索集合外的信号
@@ -383,9 +383,11 @@ class RecognitionLoop(
          * - 定值而非按核数自适应，避免"同一产物在不同设备上跑出不同调度"这类难查差异
          *   （并行不改判定结果，但定值让排障时的耗时对照更可比）。
          *
-         * ⚠ **待真机复核**（2026-10-18）：6 个 worker 是否让游戏掉帧/异常发烫，以及
-         * "单条 80~110ms 的底噪 = worker 之间抢 CPU/内存带"那条推断是否成立
-         * （坐实办法：并行度 1 vs 3 vs 6 的同帧逐信号耗时对照）。
+         * ✅ **2026-10-25 真机复核完毕，否掉了"底噪 = worker 抢 CPU/内存带宽"那条推断**：
+         * 并行度 1 / 3 / 6 的同帧逐信号对照实测单条均 **74.7 / 70.0 / 76.1ms（×1.02）**，
+         * 整轮 **299 → 130 → 100ms** ⇒ 并行度只决定"几批"，**单条那 70~76ms 是单线程的固有成本**。
+         * ⇒ 再调调度不会更快，只能动算法（见 `plans/m6-nfr-hardening.md` §1.4 的 N6-4）。
+         * （当时的取证探针是一次性的，量完即删；原始数据在 `docs/progress.md` 2026-10-25 那条。）
          */
         const val DEFAULT_MATCH_PARALLELISM = 6
 

@@ -5,7 +5,8 @@ import kotlin.math.roundToInt
 /**
  * 单帧处理耗时统计器（纯逻辑，JVM 可测）：按连续 [windowSize] 帧为一窗汇总。
  *
- * T1-9 接入帧管线，承载 NFR-01 的测量口径（真机连续 100 帧统计 P95 < 20ms）：
+ * T1-9 接入帧管线，承载 NFR-01 的测量口径（真机连续 100 帧统计 P95 < 50ms；2026-10-25 用户重述，20 → 50ms
+ * 并明确"不以更快为目标"）：
  * 每满一窗输出一次 [TimingSummary] 并自动开始下一窗（样本不跨窗累积）。
  */
 class FrameTimingStats(private val windowSize: Int = WINDOW_SIZE) {

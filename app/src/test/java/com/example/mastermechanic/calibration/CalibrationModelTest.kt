@@ -3,6 +3,7 @@ package com.example.mastermechanic.calibration
 import com.example.mastermechanic.decision.ExpectedSignals
 import com.example.mastermechanic.decision.UiState
 import com.example.mastermechanic.patrol.PatrolAnchors
+import com.example.mastermechanic.recognition.CoarseSampling
 import com.example.mastermechanic.recognition.MatchParams
 import com.example.mastermechanic.recognition.SearchWindow
 import com.example.mastermechanic.recognition.SyntheticImages
@@ -440,6 +441,37 @@ class CalibrationModelTest {
         val loop = data.toLoop(ExpectedSignals.ALL)
         assertEquals(UiState.UNKNOWN, loop.process(image, isForeground = true).state)
         assertEquals(UiState.FARM, loop.process(image, isForeground = true).transition!!.to)
+    }
+
+    @Test
+    fun markersSampleSparselyWhileAnchorsStayExact() {
+        // N6-4（2026-10-25）：**标志**可以用稀疏粗搜采样（它只回答"这个界面在不在"），
+        // **锚点**必须全精度 —— 它要用匹配位置算**点击坐标**，位置漂 1~2px 就是点偏。
+        // 这条分叉一旦被"顺手统一成同一档"，点击就会开始偏移，而界面上看不出原因 ⇒ 钉死它。
+        val product = data(
+            signals = listOf(
+                signal("farm_e1"),
+                CalibrationData.SignalEntry("farm_exit", fullWindow, listOf(template(3)), SignalRole.ANCHOR),
+            ),
+            rules = listOf(
+                CalibrationData.StateRule(UiState.FARM, listOf("farm_e1"), listOf("farm_exit")),
+            ),
+        )
+
+        assertEquals("标志走 MARKER 档", CoarseSampling.MARKER, product.markerSpecs().single().sampling)
+        assertEquals(
+            "锚点必须全精度",
+            CoarseSampling.FULL,
+            product.anchorSpecs(UiState.FARM).single().sampling,
+        )
+        assertTrue(
+            "MARKER 档确实比 FULL 稀（否则这条分叉没有任何收益）",
+            CoarseSampling.MARKER.sampleStep > CoarseSampling.FULL.sampleStep,
+        )
+        assertTrue(
+            "代表点也不多于 FULL：${CoarseSampling.MARKER.topK}",
+            CoarseSampling.MARKER.topK <= CoarseSampling.FULL.topK,
+        )
     }
 }
 
