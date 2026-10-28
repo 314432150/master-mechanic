@@ -207,7 +207,8 @@ class AnchorLocator(
             right = x1.toDouble() / gray.width,
             bottom = y1.toDouble() / gray.height,
         )
-        val narrowed = SignalSpec(spec.name, window, spec.templates)
+        // 采样档跟着原规格走（N6-4）：这里重跑的是**同一条**锚点，跨窗口换档会让两处口径不一致
+        val narrowed = SignalSpec(spec.name, window, spec.templates, spec.sampling)
         val record = SignalDetector(listOf(narrowed), params).detectSignal(gray, narrowed)
         return hitOf(narrowed, record)
     }

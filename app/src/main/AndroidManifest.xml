@@ -3,6 +3,19 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- **已移除 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`**（2026-10-25，用户口径）：那一版是为了弹
+         「是否允许应用始终在后台运行？」的系统确认框；但 vivo 上真正会冻结进程的是厂商层
+         （「智能控制 / 允许后台耗电」），而实测**在厂商页设置后系统层会自动同步** ⇒ 那个弹框只是多一层。
+         现在「后台运行」直接打开 `ACTION_IGNORE_BATTERY_OPTIMIZATIONS_SETTINGS`（vivo 落到「后台耗电管理」，
+         原生 Android 落到电池优化列表），不需要任何权限。 -->
+    <!-- **无障碍自愈**（2026-10-25，见 `ADR-010` + `auth/AccessibilitySelfHeal.kt`）：
+         `development` 级权限，**只能**由 `adb shell pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS`
+         授予（普通 / release 包同样有效，GKD 走的就是这条）。覆盖安装会**保留**，卸载重装才需重授。
+         没有它时 App 行为与从前一字不差（授权页照旧引导用户手点），有了它则冷启动能自己把无障碍开起来
+         —— 这是真机反复踩的"重装后无障碍失效"的唯一自动解。⚠ 上架 Google Play 时需单独评估。 -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <!-- 流程开始 / 结束的震动反馈（2026-10-20 用户口径）：普通权限，安装即授，无需运行时申请。 -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

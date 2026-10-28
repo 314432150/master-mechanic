@@ -75,6 +75,11 @@ internal fun ArtifactSectionHeader(
                     onClick = onOpenWorkbench,
                     enabled = framesExist,
                     modifier = Modifier.fillMaxWidth(),
+                    // 2026-10-25 用户报（系统浅色模式）：tonal 的容器色与卡片底色几乎同一片浅色，
+                    // 按钮看上去"陷进背景里"，找不到入口。⇒ 描一圈 outline 把边界画出来：
+                    // **仍是最弱的 tonal**（不抢"回来看清单"的视线，那条 UX 口径不变），
+                    // 只是让它一眼可见；深色模式下 outline 同样可见，观感不变。
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 ) {
                     Text(text = stringResource(R.string.calibration_workbench_open))
                 }

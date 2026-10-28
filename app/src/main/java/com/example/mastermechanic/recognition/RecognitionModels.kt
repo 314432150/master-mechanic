@@ -19,6 +19,16 @@ class GrayImage(val width: Int, val height: Int, val pixels: ByteArray) {
 }
 
 /**
+ * **定点乘加的放大倍数**（N6-5，2026-10-25）：内积热循环把去均值序列换成整数做乘加。
+ *
+ * 为什么是 4096：量化误差 = `1/(2×scale)` 个灰度级，逐项误差在 `√n` 项上随机累积。
+ * 取 256 时在 `n≈5000` 的模板上误差约 **1e-6 量级**（正好压着 `TemplateMatcherOptimizedTest`
+ * 的 `SCORE_TOLERANCE = 1e-6`，太险）；4096 把它压到 **~4e-8**，同时
+ * `255×4096 = 1.04M` 仍在 Int 内、累加用 Long 不溢出。
+ */
+internal const val FIXED_SCALE = 4096
+
+/**
  * 标志模板：标定阶段从目标设备画面采集的灰度小块；同一标志可配置多个模板（ADR-003）。
  * 构造时预计算均值与去均值数据（NCC 分子分母的常量项），匹配期间不再重复计算。
  */
@@ -34,19 +44,43 @@ class Template(val width: Int, val height: Int, val pixels: ByteArray) {
     /** Σ(centered²)：NCC 分母的模板项。 */
     internal val centeredSumSq: Double
 
+    /**
+     * [centered] 的**定点整数版**（×[FIXED_SCALE]，四舍五入）：内积热循环用它做整数乘加（N6-5）。
+     *
+     * 为什么值得：原循环每项要一次 `byte→int` + 一次 `int→double` 转换再做 FP 乘加（≈6~7 条指令），
+     * 换成立即数与整数乘加 ≈3 条（`i2l` / `smull` / `add`）⇒ 真机整轮识别明显下降
+     * （实测见 `docs/progress.md` 2026-10-25 的 N6-5 条目）。精度见 [FIXED_SCALE]。
+     */
+    internal val centeredFixed: IntArray
+
+    /**
+     * `Σ [centeredFixed]`（**不是 0**：定点量化有舍入偏差）。
+     *
+     * 内积最后要减掉 `帧窗口均值 × 这个和`，把"帧的整体偏亮/偏暗"（DC 项）精确扣掉 ——
+     * 不扣的话，舍入偏差会与帧的亮度基准相乘，把分数抬高/压低到 **1e-5** 量级
+     * （真机等价性单测实测：1.0000083 vs 1.0000000，超过了 1e-6 容差）。
+     */
+    internal val centeredFixedSum: Long
+
     init {
         val n = pixels.size
         var sum = 0.0
         for (i in 0 until n) sum += pixels[i].toInt() and 0xFF
         val mean = sum / n
         val c = DoubleArray(n)
+        val fixed = IntArray(n)
+        var fixedSum = 0L
         var sq = 0.0
         for (i in 0 until n) {
             val v = (pixels[i].toInt() and 0xFF) - mean
             c[i] = v
+            fixed[i] = Math.round(v * FIXED_SCALE).toInt()
+            fixedSum += fixed[i]
             sq += v * v
         }
         centered = c
+        centeredFixed = fixed
+        centeredFixedSum = fixedSum
         centeredSumSq = sq
     }
 }
@@ -135,8 +169,67 @@ data class MatchParams(
     }
 }
 
+/**
+ * **粗搜采样档**（N6-4，2026-10-25）：粗搜"每个候选位置取多少个采样点"与"送几个代表点去精搜"。
+ *
+ * ## 为什么必须按角色分叉，而不是全局调
+ *
+ * 粗搜分数**只用于排序**（不参与判定），所以采样变稀只影响"真峰能不能排进前 K"。对**标志**
+ * 来说这没关系——它只回答"这个界面在不在"，位置漂 1~2px 无人在意；对**锚点**不行：
+ * 锚点要用匹配位置算**点击坐标**（红线 3 的同一件纪律：不挑"最像的"），位置一漂就是点偏。
+ * ⇒ 标志走 [SPARSE]，锚点**恒**走 [FULL]。
+ *
+ * ## 依据（2026-10-25 真机已确认的两条前提）
+ *
+ * ① 单条信号耗时是**单线程固有成本**、与并行度无关（p1/p3/p6 单条均 74.7/70.0/76.1ms）
+ * ⇒ 桌面探针量到的加速比**能迁移**到真机；② 粗搜占单条成本的大头（N6-1 桌面归因 coarse 78.7%）。
+ * 但"采样能不能变稀"最终只由**判定不漂**决定（离线门槛 `N6SamplingProbeTest` + 真机逐信号 P95）。
+ */
+data class CoarseSampling(
+    /** 采样步长：2 = 交错半采样（约 `w·h/2` 个采样点），3 = 3×3（约 `w·h/9`）。 */
+    val sampleStep: Int,
+    /** 送进精搜的代表点上限（每个代表点再在自己的 ±1px 邻域做全精度重算）。 */
+    val topK: Int,
+) {
+    init {
+        require(sampleStep >= 2) { "采样步长至少 2（取 1 等于全采样，不是「稀疏」）：$sampleStep" }
+        require(topK >= 1) { "代表点至少 1 个：$topK" }
+    }
+
+    companion object {
+        /** 生产默认，也是**锚点唯一允许的档**：交错半采样 + 64 个代表点。 */
+        val FULL = CoarseSampling(sampleStep = 2, topK = 64)
+
+        /** 只稀疏采样、代表点不减（用来把"采样"与"代表点数"两笔收益拆开算）。 */
+        val SPARSE_WIDE = CoarseSampling(sampleStep = 3, topK = 64)
+
+        /** 标志的目标档：3×3 采样 + 32 个代表点。 */
+        val SPARSE = CoarseSampling(sampleStep = 3, topK = 32)
+
+        /**
+         * **标志当前生效的档**（2026-10-25 已翻到 [SPARSE]）。
+         *
+         * 离线门槛已过（`N6SamplingProbeTest`：真机产物 12 条标志 × 25 帧真机画面，
+         * **判定漂移 0/300**、best 分数最大只掉 0.0026、标志整体每帧 167.6 → 108.6ms = ×1.54）。
+         * 回退 = 改回 [FULL]，一行；锚点不受影响（它们恒用 [FULL]）。
+         */
+        val MARKER: CoarseSampling = SPARSE
+    }
+}
+
 /** 信号规格：一个界面标志 = 名称 + 搜索窗口 + 一个或多个模板。 */
-class SignalSpec(val name: String, val window: SearchWindow, val templates: List<Template>) {
+class SignalSpec(
+    val name: String,
+    val window: SearchWindow,
+    val templates: List<Template>,
+    /**
+     * 粗搜采样档（N6-4）：标志传 [CoarseSampling.MARKER]，锚点**必须**用 [CoarseSampling.FULL]。
+     *
+     * 默认 [CoarseSampling.FULL] 是刻意的：所有既有构造点（探针 / 单测 / 旧路径）行为一字不变，
+     * 分叉只发生在"从产物装配信号"的那两处（`CalibrationData.markerSpecs` / `anchorSpecs`）。
+     */
+    val sampling: CoarseSampling = CoarseSampling.FULL,
+) {
     init {
         require(name.isNotBlank()) { "信号名称不得为空" }
         require(templates.isNotEmpty()) { "信号至少需要一个模板" }

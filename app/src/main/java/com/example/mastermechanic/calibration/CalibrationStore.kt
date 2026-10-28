@@ -143,11 +143,13 @@ object CalibrationStore {
             ) {
                 return@mapNotNull null
             }
+            // 采样步长跟着角色走（N6-4）：标志已是 3×3，按 2 算会把"收窄了多少"夸大 4.5 倍
+            val step = raw.samplingOf(before.role).sampleStep
             val opsBefore = TemplateMatcher.estimateCoarseOps(
-                before.window, biggest.width, biggest.height, raw.frameWidth, raw.frameHeight,
+                before.window, biggest.width, biggest.height, raw.frameWidth, raw.frameHeight, step,
             )
             val opsAfter = TemplateMatcher.estimateCoarseOps(
-                entry.window, biggest.width, biggest.height, runtime.frameWidth, runtime.frameHeight,
+                entry.window, biggest.width, biggest.height, runtime.frameWidth, runtime.frameHeight, step,
             )
             Triple(before.id, opsBefore, opsAfter)
         }.sortedByDescending { it.second }
@@ -242,6 +244,8 @@ object CalibrationStore {
             if (biggest == null) continue
             val ops = TemplateMatcher.estimateCoarseOps(
                 entry.window, biggest.width, biggest.height, artifact.frameWidth, artifact.frameHeight,
+                // 采样步长按角色取（N6-4）：榜单回答"框得离不离谱"，口径必须与运行时同一档
+                artifact.samplingOf(entry.role).sampleStep,
             )
             if (ops < heavyOps) continue
             val text = "${entry.id}（${entry.role.label}，模板 ${biggest.width}×${biggest.height}，${ops / 1_000_000}M）"

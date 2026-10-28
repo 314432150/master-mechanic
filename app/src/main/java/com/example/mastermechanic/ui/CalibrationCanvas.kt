@@ -164,6 +164,14 @@ internal fun InteractiveFrameCanvas(
      * 视口因此变矮 ⇒ 画面在"整屏减去底栏"的区域里居中 ⇒ **1 倍时整体偏高了**（底栏越高偏得越多）。
      */
     bottomInsetPx: Int = 0,
+    /**
+     * 浏览态**双指捏合**送进来的倍数与焦点（2026-10-25 用户需求："双指捏合帧直接进入框选模式"）。
+     *
+     * 捏合既是"进框选"的手势、也是"放大到那个小标志"的动作 —— 若进框选后回到 1 倍，
+     * 用户还得再捏一次才框得准（等于白捏一下）。这里把倍数与焦点接过来、**一次性**套用，
+     * 之后就归用户自己（复位 / 再捏都照旧，不再被种子覆盖）。
+     */
+    seed: PinchSeed? = null,
     modifier: Modifier = Modifier,
 ) {
     // 显示层变换（重置于画布重建）：只影响显示与手势坐标换算，不改选框比例语义
@@ -193,6 +201,27 @@ internal fun InteractiveFrameCanvas(
     // 帧尺寸也走"最新值"通道：手势协程的 key 改成 Unit 后，这里不能再直接读 `info`
     //（否则协程拿到的是启动那一刻的 info，换帧后仍按旧帧算"最小可拉框"）
     val latestFrameSize = rememberUpdatedState(info.frameWidth to info.frameHeight)
+    // 捏合种子**只套用一次**：等视口量出来（`fit` 非空）再算 —— 首次组合时 `viewportSize` 还是 Zero，
+    // 那时 `fit` 为空，算出来的平移量是垃圾值（画面会被顶到看不见的地方）。
+    // 之后用户自己捏 / 点「适应画面」都不再被种子覆盖（`seedApplied`）。
+    var seedApplied by remember(info) { mutableStateOf(false) }
+    LaunchedEffect(seed, fit) {
+        if (!seedApplied && seed != null && !fit.isEmpty) {
+            transform = FrameEditMath.zoomBy(
+                transform = ViewTransform(),
+                focusX = fit.left + seed.focusX * fit.width,
+                focusY = fit.top + seed.focusY * fit.height,
+                zoom = seed.scale,
+                panX = 0f,
+                panY = 0f,
+                fit = fit,
+                viewWidth = viewportSize.width.toFloat(),
+                viewHeight = viewportSize.height.toFloat(),
+                minVisiblePx = minVisiblePx,
+            )
+            seedApplied = true
+        }
+    }
 
     Box(modifier = modifier) {
         Box(
@@ -693,6 +722,75 @@ internal fun FrameThumb(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
+        }
+    }
+}
+
+/**
+ * 浏览态双指捏合带进框选的**倍数与焦点**（2026-10-25 用户需求："双指捏合帧直接进入框选模式"）。
+ *
+ * 焦点是**画面内**的比例（0..1，相对适配矩形），不是整屏像素：浏览态的大图和框选画布是两个
+ * 不同的组合，画布要等自己的视口量出来才换算出平移量（见 `InteractiveFrameCanvas` 的 `seed`）。
+ */
+internal data class PinchSeed(
+    /** 进框选后要套用的倍数（≥1；<1 会被 [FrameEditMath.zoomBy] 夹回 1 倍，即"捏小 = 不放大"）。 */
+    val scale: Float,
+    /** 焦点在画面内的横向位置（0 = 左边缘，1 = 右边缘）。 */
+    val focusX: Float,
+    /** 焦点在画面内的纵向位置（0 = 上边缘，1 = 下边缘）。 */
+    val focusY: Float,
+)
+
+/** 捏开多少才算"用户要捏"：手指间距的相对变化（同时还要超过系统滑动阈值，见下）。 */
+private const val PINCH_START_STEP = 0.06f
+
+/**
+ * 浏览态**双指捏合 ⇒ 直接进框选**的手势探测（2026-10-25 用户需求）。
+ *
+ * ## 为什么这么写
+ *
+ * - **只认两根手指同时按下**：单指一律不消费 —— 翻页要靠它（`HorizontalPager` 只跟第一根手指）。
+ * - **一出现两指就消费掉**：否则捏合时翻页器会顺带把页翻掉（它跟的是第一根手指的位移）。
+ *   消费位置变化会让它的拖拽判定当场取消 —— 这正是"捏合不翻页"要的结果。
+ * - **捏开了才回调**：两指刚落下就切成框选的话，`scale` 恒为 1，用户会以为"捏合没反应"。
+ *   判据 = 间距变化超过 `touchSlop`，且不少于起始间距的 [PINCH_START_STEP]
+ *   （两指挨得很近时几像素抖动就能过 `touchSlop`，必须按比例再兜一层）。
+ * - **不自己写 `awaitEachGesture`**：与画布那条手势同一个理由（2026-09-29 真机 ANR 记录，
+ *   见 `InteractiveFrameCanvas` 里那段注释），这里只挂真实事件、没有事件就挂起。
+ */
+internal fun Modifier.pinchToSelect(
+    onPinch: (viewport: IntSize, centroid: Offset, scale: Float) -> Unit,
+): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) {
+            var baseDistance = 0f
+            var fired = false
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val pressed = event.changes.filter { it.pressed }
+                if (pressed.isEmpty()) break
+                if (pressed.size < 2) {
+                    // 回到单指（或本来就单指）：间距基线作废，下一次"第二根手指落下"重新量
+                    if (!fired) baseDistance = 0f
+                    continue
+                }
+                pressed.forEach { it.consume() }
+                if (fired) continue
+                val distance = (pressed[0].position - pressed[1].position).getDistance()
+                if (baseDistance <= 0f) {
+                    baseDistance = distance.coerceAtLeast(1f)
+                    continue
+                }
+                if (abs(distance - baseDistance) <=
+                    maxOf(viewConfiguration.touchSlop, baseDistance * PINCH_START_STEP)
+                ) {
+                    continue
+                }
+                fired = true
+                val centroid = pressed.fold(Offset.Zero) { acc, c -> acc + c.position } /
+                    pressed.size.toFloat()
+                onPinch(size, centroid, distance / baseDistance)
+            }
         }
     }
 }

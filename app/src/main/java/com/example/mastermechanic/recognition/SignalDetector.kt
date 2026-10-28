@@ -48,7 +48,10 @@ class SignalDetector(private val signals: List<SignalSpec>, private val params: 
             TemplateMatcher.effectiveSuppressRadius(params, it.width, it.height)
         }
         val peaks = signal.templates
-            .flatMap { TemplateMatcher.findPeaks(image, it, signal.window, params, probe) }
+            .flatMap {
+                // 采样档随信号走（N6-4）：标志可以是稀疏档，锚点恒全精度（见 [CoarseSampling]）
+                TemplateMatcher.findPeaks(image, it, signal.window, params, probe, signal.sampling)
+            }
             .let { TemplateMatcher.suppressPeaks(it, radius) }
         return DetectionRecord(signal.name, judge(peaks), peaks.firstOrNull(), peaks.getOrNull(1))
     }

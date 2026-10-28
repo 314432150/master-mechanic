@@ -22,4 +22,5 @@ fun authItemLabelRes(item: AuthItem): Int = when (item) {
     AuthItem.SCREEN_CAPTURE -> R.string.auth_capture_label
     AuthItem.RESIDENT -> R.string.auth_resident_label
     AuthItem.NOTIFICATIONS -> R.string.auth_notifications_label
+    AuthItem.BATTERY -> R.string.auth_battery_label
 }

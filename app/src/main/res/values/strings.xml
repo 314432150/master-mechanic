@@ -149,27 +149,94 @@
          所以 `picker_cancel` / `picker_confirm` / `picker_to_pick` 三条**已删除**（零死文案守卫会盯着）。 -->
 
 
-    <!-- 授权流（M0-T0-2） -->
-    <string name="auth_title">授权状态</string>
-    <string name="auth_subtitle">以下授权全部就绪后程序才能正常工作；缺失项会明确提示，不会静默跳过。</string>
+    <!-- 授权流（M0-T0-2）。2026-10-25（M5-U6 收口）：改成**引导式四步**，标题由壳出
+         （`nav_auth` = 授权与权限）⇒ 页内大标题 `auth_title` 已删；一句要点 + 四步进度 + "下一步：X"。 -->
+    <!-- 步数**由代码传进来**（`AUTHORIZATION_DISPLAY_ORDER.size`）：2026-10-25 加电池白名单时，
+         硬编码的"四步"当场就过期了 —— 这种数字不再写死在文案里。 -->
+    <string name="auth_subtitle">按顺序办完 %1$d 步即可；屏幕采集放在最后 —— 一授权画面就切到游戏。</string>
     <string name="auth_accessibility_label">无障碍服务</string>
     <string name="auth_accessibility_desc">用于点击注入、悬浮窗与前台判定，是核心授权</string>
     <string name="auth_accessibility_action">去开启</string>
     <string name="auth_capture_label">屏幕采集</string>
-    <string name="auth_capture_desc">识别游戏画面用。必须选「共享一个应用」并选中游戏：选「整个屏幕」会把我们的悬浮窗一起拍进画面 —— 菜单一展开就盖住识别目标，判定直接变成「认不出当前画面」。点它会跳到游戏，所以放在最后。</string>
+    <!-- 2026-10-25 收到 60 字以内（ADR-009 决策三：超 60 字必须折叠）：原句 ≈110 字，
+         作为**当前步骤卡片的描述**会把五步里的最后一行挤出第一屏。两个硬信息一个不丢：
+         「共享一个应用 + 选中游戏」、「点它会跳到游戏所以放最后」。 -->
+    <string name="auth_capture_desc">必须选「共享一个应用」并选中游戏；选「整个屏幕」会把悬浮窗拍进画面，判定直接失效。点它会跳到游戏，所以放最后。</string>
     <string name="auth_capture_action">授予采集权限</string>
-    <string name="auth_capture_action_stop">停止采集</string>
-    <string name="auth_capture_status_granted">采集中</string>
-    <string name="auth_capture_status_missing">未授权</string>
+    <!-- **行内「去办」按钮**（只给系统权限的**未授权**态，2026-10-25 定稿）：
+         这两项 App 既撤不了也开不了，只能把人送走 ⇒ 未授权时用按钮（指向明确），已授权时**只显示状态文本**
+         （确实无事可做）。我们自己的两项（守护 / 采集）两个方向都能执行 ⇒ 用开关，不用这两个词。 -->
+    <string name="auth_row_action_enable">去开启</string>
+    <string name="auth_row_action_authorize">去授权</string>
+    <string name="auth_row_action_battery">去加入</string>
+    <!-- **命令授权**弹窗（2026-10-25 用户口径："应当引导用户可以选择手动授权和进行 adb WRITE_SECURE_SETTINGS 授权"，
+         形态照 GKD 那一版：一条命令、可复制）。没有这条权限时，无障碍那颗开关点了就弹这个。 -->
+    <string name="auth_grant_title">命令授权</string>
+    <string name="auth_grant_step1">1. 有一台装了 adb 的电脑（Windows / macOS / Linux 都行）</string>
+    <string name="auth_grant_step2">2. 手机开启「开发者选项 → USB 调试」，用数据线连上电脑</string>
+    <string name="auth_grant_step3">3. 在电脑终端里运行下面这条命令</string>
+    <string name="auth_grant_note">授权后 App 能自己开关无障碍；覆盖安装仍然有效，只有卸载重装才需再跑一次。</string>
+    <string name="auth_grant_copy">复制命令</string>
+    <string name="auth_grant_copied">已复制</string>
+    <string name="auth_grant_manual">去手动授权</string>
+    <string name="auth_grant_close">关闭</string>
+    <!-- 弹窗开着时一直在轮询权限；这句告诉用户"不用回来点，检测到就自动继续" -->
+    <string name="auth_grant_waiting">正在等待授权…检测到后会自动继续</string>
+    <!-- 权限"从无到有"的那一刻给一句回执（2026-10-25 用户实测："成功了，但是手机上一点提示都没有"） -->
+    <string name="auth_toast_grant_ok">命令授权已生效：无障碍现在可以直接开关</string>
+    <!-- **开关的回执**（2026-10-25 用户："打开关闭权限要加一个 toast 提示"）：
+         那颗开关改的是**系统设置**，界面上只有颜色/位置变化，一句 Toast 才算"真回执"。
+         失败也要说（多半是系统没采纳），否则用户会以为开关卡住了。 -->
+    <string name="auth_toast_accessibility_on">无障碍已开启</string>
+    <string name="auth_toast_accessibility_off">无障碍已关闭</string>
+    <string name="auth_toast_accessibility_failed">没能修改，请在系统设置里手动处理</string>
+    <!-- 守护 / 采集的开关回执（2026-10-25 用户："启动/停止权限都应该有 toast 提示"）：
+         这两项是我们自己的服务，状态变化在界面上只有开关位置变化，一句 Toast 才算办完的回执。 -->
+    <string name="auth_toast_resident_on">常驻守护已启动</string>
+    <string name="auth_toast_resident_off">常驻守护已停止</string>
+    <string name="auth_toast_capture_on">屏幕采集已启动</string>
+    <string name="auth_toast_capture_off">屏幕采集已停止</string>
+    <!-- 通知 / 后台运行没有开关，只能在系统页里改 ⇒ 用"状态变化即提示"补回执
+         （2026-10-26 用户："为什么通知权限和后台运行权限状态变化没有提示"）。 -->
+    <string name="auth_toast_notifications_on">通知已开启</string>
+    <string name="auth_toast_notifications_off">通知已关闭</string>
+    <string name="auth_toast_battery_on">后台运行已允许</string>
+    <string name="auth_toast_battery_off">后台运行已取消</string>
+    <!-- **电池优化白名单**（2026-10-25 用户口径："加入电池优化白名单，保持后台运行"）。
+         vivo 的省电策略会在后台把进程整段冻结 —— 用户看到的是"程序还在、但一动不动"，
+         所以它必须和授权并列在引导里，而不是藏在设置页。 -->
+    <!-- 2026-10-25 改名为「后台运行」：用户视角要的是"别被冻结"，不是"进某个白名单"。
+         ⚠ 界面标题与步进条短名同步改（步进条那格只有 ~66dp，用两字「后台」）。 -->
+    <string name="auth_battery_label">后台运行</string>
+    <!-- **步进条专用短名**（2026-10-25）：五列时每列只有 ~66dp，「电池优化白名单」会折成
+         "电池优化白 / 名单" 两行、把整条撑高一倍。步进条只用来认位置，行内仍用全名。 -->
+    <string name="auth_step_accessibility">无障碍</string>
+    <string name="auth_step_resident">守护</string>
+    <string name="auth_step_notifications">通知</string>
+    <string name="auth_step_battery">后台</string>
+    <string name="auth_step_capture">采集</string>
+    <string name="auth_battery_desc">省电策略会在后台冻结进程，表现为「程序还在、但整段不动」。加入白名单后后台才稳。</string>
+    <string name="auth_battery_action">允许后台运行</string>
+    <!-- 2026-10-25 改写：这行显示的**只是 AOSP 那一层**（`isIgnoringBatteryOptimizations`），
+         所以文案必须说清"系统层"，否则和 vivo「后台耗电管理」的"智能控制"对不上时会误导。 -->
+    <string name="auth_chip_whitelisted">已允许</string>
+    <string name="auth_battery_missing">未允许</string>
+    <string name="auth_row_action_settings">去设置</string>
+    <!-- 2026-10-25 真机实测后改写：把 vivo「后台耗电管理」设为「允许后台耗电」**会同时写进系统白名单**
+         （`dumpsys deviceidle whitelist` 里出现了本应用）⇒ 两个入口是联动的、一次动作两层都设好。
+         原句"要到系统设置里另设一遍"是错的（当时还没验证），会在界面上误导。
+         仍然写清"我们读不到厂商层"这个事实，但不该再暗示"要设两遍"。 -->
+    <string name="auth_battery_vendor_hint">厂商「后台耗电管理」那一层 App 读不到，但在那边设为「允许后台耗电」后，这里会自动同步成「已允许」。</string>
+    <string name="auth_battery_no_settings">没找到系统的电池设置页，请手动打开「设置 → 电池」</string>
+    <!-- 状态文本（2026-10-25）：
+         - 未授权：只有**当前步骤那张卡**会显示（行内未授权由按钮/开关表达）；
+         - 已开启：系统权限那两项（无障碍 / 通知）已授权时**只显示这一句**，没有动作。 -->
+    <string name="auth_chip_missing">未授权</string>
+    <string name="auth_chip_enabled">已开启</string>
     <string name="auth_notifications_label">通知</string>
     <string name="auth_notifications_desc">用于展示常驻运行状态，避免「什么都不发生」的静默失败</string>
     <string name="auth_notifications_action">允许通知</string>
-    <string name="auth_notifications_status_granted">已允许</string>
-    <string name="auth_notifications_status_missing">未允许</string>
-    <string name="auth_status_enabled">已开启</string>
-    <string name="auth_status_disabled">未开启</string>
     <string name="auth_summary_ready">全部就绪</string>
-    <string name="auth_summary_missing">还缺：%1$s</string>
     <!-- **采集永远最后一步**（2026-10-02 用户原话："一同意就跳转到游戏了，此时无障碍和守护可能还没启动，
          又要切换回 app 来启动这两项"）⇒ 前面还有缺项时，采集卡自己写明该先办什么，
          自动拉起那条路被挡住时也用另一句把话说明白（不许静默）。判据见 `AuthGuide`。 -->
@@ -178,12 +245,8 @@
 
     <!-- 常驻服务（M0-T0-4；2026-09-20 起为**必备项**，走与其他授权同一张卡；标签上不再标"（必需）"） -->
     <string name="auth_resident_label">常驻守护</string>
-    <string name="resident_status_running">运行中</string>
-    <string name="resident_status_stopped">未启动</string>
     <string name="resident_desc">换号 / 拜访请求由它接收、点击由它放行；不启动时整个自动化都不动作。切后台或熄屏不会中断。</string>
-    <string name="resident_notify_warning">通知不可见：通知权限未开启，运行状态将仅在本页可见。</string>
     <string name="resident_action_start">启动守护</string>
-    <string name="resident_action_stop">停止</string>
     <string name="resident_channel_name">运行状态</string>
     <string name="resident_channel_desc">常驻展示后台守护是否在运行，便于随时确认程序未被中止</string>
     <string name="resident_notification_title">MasterMechanic 守护运行中</string>
@@ -399,7 +462,6 @@
     <string name="accessibility_service_description">用于代替手动重复操作：点击由本服务执行，不会读取或修改游戏数据。</string>
 
     <!-- 识别标定（M1-T1-5） -->
-    <string name="auth_open_calibration">识别标定</string>
     <!-- M5-U5：入口页首屏只留 1 行要点（标题由壳给：`nav_calibration` = 标定）；原来 ≈120 字的长副标题
          （`calibration_subtitle`）拆成下面三条，搬进「说明」弹层（验收 V2：超 60 字必须默认收起）。 -->
     <!-- ⚠ 这一行**不要写成分隔符串**（首版写成「采样本 › 全屏框选 › 落盘为产物」，用户 2026-10-02：
@@ -450,7 +512,9 @@
     <string name="calibration_frame_restore_failed">恢复失败：这一帧已不在暂存里（暂存只留最近 20 帧）</string>
     <string name="calibration_workbench_open">打开标定工作台</string>
     <string name="calibration_workbench_title">标定工作台</string>
-    <string name="calibration_workbench_done">完成</string>
+    <!-- 2026-10-25 用户口径：这颗按钮**只负责关掉工作台**，真正的"完成"是顶部那条「✓ 写入 xxx」
+         （写完就已经落盘了）。叫「完成」会让人以为还有点一下才算保存 ⇒ 改叫「返回」。 -->
+    <string name="calibration_workbench_back">返回</string>
     <string name="calibration_workbench_frame_index">%1$d / %2$d 帧</string>
     <string name="calibration_workbench_select">框选</string>
     <string name="calibration_workbench_cancel">✕</string>
@@ -478,12 +542,14 @@
          与 `calibration_annotate_hint_icon` 已删）⇒ 入口改成「用法」二字按钮，正文拆成下面六条
          （一条一句、每条 ≤60 字），工作台右上角常驻 1 行要点由 `calibration_browse_hint_short` 承担。 -->
     <string name="calibration_usage">用法</string>
-    <string name="calibration_browse_hint_short">左右滑换帧 · 点「框选」建框 · 双指缩放</string>
-    <string name="calibration_usage_gestures">浏览：左右滑换帧。框选：拖空白建框、拖框内移动、拖白线缩放、点左上 ✕ 清除重画。</string>
+    <!-- 2026-10-25 用户新增：首尾循环换帧 + 双指捏合直接进框选 ⇒ 浏览态这行要点同步改口径
+         （仍是一行、≤24 字；「点框选建框」不再写，底部那颗按钮自解释）。 -->
+    <string name="calibration_browse_hint_short">左右滑换帧（首尾循环）· 双指捏合直接进框选</string>
+    <string name="calibration_usage_gestures">浏览：左右滑换帧（首尾循环），双指捏合直接进框选。框选：拖空白建框、拖框内移动、拖白线缩放、点 ✕ 清除。</string>
     <string name="calibration_usage_write">「所属界面」选这个元素属于谁；「记录类型」可多选 —— 标志判界面、锚点定点击位置。</string>
     <string name="calibration_usage_purpose">勾了锚点、而该界面有多个可点控件时，还要选「锚点用途」；两样都要就两个都勾。</string>
     <string name="calibration_usage_color">框线颜色：标志红、锚点青、两个都勾是红青双线、都没勾是琥珀黄（还没决定写什么）。</string>
-    <string name="calibration_usage_zoom">双指缩放 / 平移画面，点下方倍数回到适应大小；尽量只框目标本身与稳定背景。</string>
+    <string name="calibration_usage_zoom">框选里双指缩放 / 平移画面，点下方倍数回到适应大小；尽量只框目标本身与稳定背景。</string>
     <string name="calibration_usage_delete">帧条上滑或下滑删掉这一帧（会先问一次，删错点「撤销」找回）。</string>
     <string name="calibration_hint_close">知道了</string>
     <string name="calibration_zoom_value">画面 ×%1$s</string>
@@ -499,7 +565,7 @@
          （换号 = 切换当前账号所在区服，添加服务器 = 维护清单数据）⇒ 放一级，不藏在「换号 → 选服务器」里。 -->
     <string name="floating_menu_glyph_capture">＋</string>
     <string name="floating_menu_capture_servers">添加这一屏的服务器</string>
-    <string name="capture_servers_wrong_screen">当前画面不是选服页（现在识别到「%1$s」）—— 请停在服务器列表页（能看见那几行区服名），等状态显示「服务器列表」后再点一次。这一次**一个字节都没写**。</string>
+    <string name="capture_servers_wrong_screen">当前画面不是选服页（现在识别到「%1$s」）—— 请停在服务器列表页（能看见那几行区服名），等状态显示「服务器列表」后再点一次。这一次一个字节都没写。</string>
     <!-- 「读当前屏幕」只有**一个**按钮（用户 2026-09-25 口径："重读这一屏"与"继续添加"是同一个功能，
          统一成一个、名字也要说清它读的是**当前屏幕**）：滚没滚都由用户决定，程序不区分。 -->
     <string name="floating_menu_capture_more">再读一屏</string>
@@ -605,7 +671,6 @@
          任何一条没人用的文案都会让它变红（V3「零死文案」）。 -->
 
     <!-- 服务器清单（M3-T3-9 / FR-10） -->
-    <string name="auth_open_server_list">服务器</string>
     <!-- ⚠ `server_title` / `server_back` / `server_about_close` 三条**已删**（M5-U4）：
          页头（标题 + 返回）收进壳（ADR-009 决策五），「说明」改成底部弹层后也不需要"知道了"按钮。
          零死文案守卫生效时会盯着这一类。 -->
@@ -681,7 +746,6 @@
 
 
     <!-- 好友清单（M3-T3-8 / FR-07「拜访 → 指定好友」三级列表的数据源，2026-09-15 用户口径「独立维护」） -->
-    <string name="auth_open_friend_list">好友</string>
     <string name="friend_list_count">好友（%1$d 条）</string>
     <string name="friend_add">添加好友</string>
     <!-- 「说明」（M5-U4，与区服清单同一个版式）：**一段一句 + 行首标签 + 每句 ≤60 字**，

@@ -1,8 +1,13 @@
 package com.example.mastermechanic
 
 import android.content.Intent
+import android.content.res.Configuration
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.ui.graphics.toArgb
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.mutableIntStateOf
@@ -41,6 +46,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // **窗口底色对齐动态取色**（2026-10-25 用户报："关闭通知后返回 app 会先出现一帧白屏"）。
+        // 主题里那块 `windowBackground` 只能写死一个近似值；这里按**本机实际配色**再覆盖一次，
+        // 于是"窗口已显示、Compose 还没画第一帧"的那一瞬间与第一帧同色，看不出切换。
+        //
+        // ⚠ 必须取 `background` 而**不是** `surface`（2026-10-26 用户报"白屏变灰屏"）：
+        // `Scaffold` 的默认容器色是 `colorScheme.background`，而 surface 在动态取色下通常**更深一点**
+        // ⇒ 用 surface 会得到"灰一下"。
+        runCatching {
+            val night = (resources.configuration.uiMode and
+                Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            val scheme = if (night) dynamicDarkColorScheme(this) else dynamicLightColorScheme(this)
+            window.setBackgroundDrawable(ColorDrawable(scheme.background.toArgb()))
+        }
         enableEdgeToEdge()
         // 本页**可能**就是被"一键重新授权"那条 Intent 唤起 / 重建的（另一条路见 [onNewIntent]）
         if (intent?.getBooleanExtra(EXTRA_REAUTH_CAPTURE, false) == true) pendingReauth.intValue++

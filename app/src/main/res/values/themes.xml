@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.MasterMechanic" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.MasterMechanic" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- **启动/重建时的窗口底色**（2026-10-25）：不设的话系统给纯白，而界面是动态取色，
+             返回 App 时会先闪一帧白的（用户报障）。见 `values/colors.xml` 的说明。 -->
+        <item name="android:windowBackground">@color/mm_window_background</item>
+    </style>
 </resources>

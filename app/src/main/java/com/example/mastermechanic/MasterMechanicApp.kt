@@ -3,6 +3,7 @@ package com.example.mastermechanic
 import android.app.Application
 import com.example.mastermechanic.log.MainThreadWatchdog
 import com.example.mastermechanic.log.MmLog
+import com.example.mastermechanic.service.ResidentService
 
 /**
  * 应用入口（T2-7）：只做最轻量的初始化 —— 把业务日志的**落盘通道**装上。
@@ -34,5 +35,9 @@ class MasterMechanicApp : Application() {
         // 没有栈就只能猜。见 [MainThreadWatchdog]。
         MainThreadWatchdog.start()
         MmLog.i("MM-Log", "日志落盘已启用：${MmLog.currentFile()?.absolutePath ?: "（路径未就绪）"}")
+        // **常驻守护的冷启动恢复**（2026-10-25 用户报障："每次重启 app 后都会重置"）：
+        // 服务是 START_STICKY，被系统回收会自己回来；但进程被杀 / 覆盖安装后没人拉起它。
+        // 这里按"用户上次是否要求它开着"补一次（失败只记日志，见 `ResidentService.restoreIfDesired`）。
+        ResidentService.restoreIfDesired(this)
     }
 }
